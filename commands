@@ -1,0 +1,1 @@
+pyinstaller --noconfirm --clean --onedir --name whatsapp_send_msg --collect-all pandas --collect-all openpyxl --collect-all selenium --collect-all webdriver_manager main.py
