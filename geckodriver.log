@@ -1,0 +1,68 @@
+1674742630856	geckodriver	INFO	Listening on 127.0.0.1:50467
+1674742661737	geckodriver	INFO	Listening on 127.0.0.1:50490
+1674742817793	geckodriver	INFO	Listening on 127.0.0.1:50561
+1674742913263	geckodriver	INFO	Listening on 127.0.0.1:50587
+1674742997988	geckodriver	INFO	Listening on 127.0.0.1:50649
+1674743237528	geckodriver	INFO	Listening on 127.0.0.1:50731
+1674743240580	mozrunner::runner	INFO	Running command: "C:\\Program Files\\Mozilla Firefox\\firefox.exe" "--marionette" "--remote-debugging-port" "50732" "--remote-allow-hosts" "localhost" "-no-remote" "-profile" "C:\\Users\\MAURIC~1.FUR\\AppData\\Local\\Temp\\rust_mozprofilevZBHlj"
+1674743241783	Marionette	INFO	Marionette enabled
+Dynamically enable window occlusion 0
+1674743241789	Marionette	INFO	Listening on port 50739
+Read port: 50739
+WebDriver BiDi listening on ws://127.0.0.1:50732
+1674743242021	RemoteAgent	WARN	TLS certificate errors will be ignored for this session
+console.warn: SearchSettings: "get: No settings file exists, new profile?" (new NotFoundError("Could not open the file at C:\\Users\\MAURIC~1.FUR\\AppData\\Local\\Temp\\rust_mozprofilevZBHlj\\search.json.mozlz4", (void 0)))
+DevTools listening on ws://127.0.0.1:50732/devtools/browser/fd7e8ea4-1d50-496f-819d-dd83ce8ae426
+1674743334884	Marionette	INFO	Stopped listening on port 50739
+Dynamically enable window occlusion 1
+console.warn: TopSitesFeed: Failed to fetch data from Contile server: NetworkError when attempting to fetch resource.
+1674743338513	geckodriver	INFO	Listening on 127.0.0.1:50787
+1674743341582	mozrunner::runner	INFO	Running command: "C:\\Program Files\\Mozilla Firefox\\firefox.exe" "--marionette" "--remote-debugging-port" "50788" "--remote-allow-hosts" "localhost" "-no-remote" "-profile" "C:\\Users\\MAURIC~1.FUR\\AppData\\Local\\Temp\\rust_mozprofilednXa0M"
+1674743341987	Marionette	INFO	Marionette enabled
+Dynamically enable window occlusion 0
+1674743341993	Marionette	INFO	Listening on port 50795
+Read port: 50795
+WebDriver BiDi listening on ws://127.0.0.1:50788
+1674743342215	RemoteAgent	WARN	TLS certificate errors will be ignored for this session
+console.warn: SearchSettings: "get: No settings file exists, new profile?" (new NotFoundError("Could not open the file at C:\\Users\\MAURIC~1.FUR\\AppData\\Local\\Temp\\rust_mozprofilednXa0M\\search.json.mozlz4", (void 0)))
+DevTools listening on ws://127.0.0.1:50788/devtools/browser/ce7562df-9800-4d12-98db-ff60bc20362d
+JavaScript error: https://web.whatsapp.com/serviceworker.js, line 1: TypeError: Cache.put: Cache got basic response with bad status 206 while trying to add request https://web.whatsapp.com/sequential-ptt-end_62ed28be622237546fd39f9468a76a49.mp3
+JavaScript error: https://web.whatsapp.com/serviceworker.js, line 1: TypeError: Cache.put: Cache got basic response with bad status 206 while trying to add request https://web.whatsapp.com/sequential-ptt-middle_7fa161964e93db72b8d00ae22189d75f.mp3
+console.error: "Error while calling actor 'pagestyle's method 'getLayout'" "node is null"
+console.error: (new TypeError("node is null", "resource://devtools/server/actors/page-style.js", 1007))
+console.error: (new TypeError("parent is null", "resource://devtools/client/inspector/shared/style-change-tracker.js", 67))
+TypeError: parent is null: canMutationImpactCurrentStyles@resource://devtools/client/inspector/shared/style-change-tracker.js:67:24
+onMutations@resource://devtools/client/inspector/shared/style-change-tracker.js:84:41
+_emit@resource://devtools/shared/event-emitter.js:242:32
+emit@resource://devtools/shared/event-emitter.js:186:18
+emit@resource://devtools/shared/event-emitter.js:330:18
+getMutations@resource://devtools/client/fronts/walker.js:313:10
+
+console.error: (new TypeError("container.node.targetFront is null", "resource://devtools/client/inspector/markup/markup.js", 2398))
+console.error: (new TypeError("container.node.targetFront is null", "resource://devtools/client/inspector/markup/markup.js", 2398))
+console.error: (new TypeError("container.node.targetFront is null", "resource://devtools/client/inspector/markup/markup.js", 2398))
+console.error: (new TypeError("container.node.targetFront is null", "resource://devtools/client/inspector/markup/markup.js", 2398))
+console.error: (new Error("Protocol error (TypeError): node is null from: server0.conn0.windowGlobal4294967298/pagestyle23 (resource://devtools/server/actors/page-style.js:1007:5)", "resource://devtools/shared/protocol/Front.js", 383))
+er	INFO	Running command: "C:\\Program Files\\Mozilla Firefox\\firefox.exe" "--marionette" "--remote-debugging-port" "50987" "--remote-allow-hosts" "localhost" "-no-remote" "-profile" "C:\\Users\\MAURIC~1.FUR\\AppData\\Local\\Temp\\rust_mozprofileAy7ZMd"
+1674743727986	Marionette	INFO	Marionette enabled
+Dynamically enable window occlusion 0
+1674743727991	Marionette	INFO	Listening on port 50994
+Read port: 50994
+WebDriver BiDi listening on ws://127.0.0.1:50987
+1674743728202	RemoteAgent	WARN	TLS certificate errors will be ignored for this session
+console.warn: SearchSettings: "get: No settings file exists, new profile?" (new NotFoundError("Could not open the file at C:\\Users\\MAURIC~1.FUR\\AppData\\Local\\Temp\\rust_mozprofileAy7ZMd\\search.json.mozlz4", (void 0)))
+DevTools listening on ws://127.0.0.1:50987/devtools/browser/1f1b5ae3-efed-43a2-a086-730f19849d9d
+1674743845356	geckodriver	INFO	Listening on 127.0.0.1:51079
+1674743848386	mozrunner::runner	INFO	Running command: "C:\\Program Files\\Mozilla Firefox\\firefox.exe" "--marionette" "--remote-debugging-port" "51080" "--remote-allow-hosts" "localhost" "-no-remote" "-profile" "C:\\Users\\MAURIC~1.FUR\\AppData\\Local\\Temp\\rust_mozprofilekYSdYC"
+1674743848800	Marionette	INFO	Marionette enabled
+Dynamically enable window occlusion 0
+1674743848808	Marionette	INFO	Listening on port 51087
+Read port: 51087
+WebDriver BiDi listening on ws://127.0.0.1:51080
+1674743849028	RemoteAgent	WARN	TLS certificate errors will be ignored for this session
+console.warn: SearchSettings: "get: No settings file exists, new profile?" (new NotFoundError("Could not open the file at C:\\Users\\MAURIC~1.FUR\\AppData\\Local\\Temp\\rust_mozprofilekYSdYC\\search.json.mozlz4", (void 0)))
+DevTools listening on ws://127.0.0.1:51080/devtools/browser/3be51fae-d92d-4ece-ad44-6f5ebaf6ce32
+JavaScript error: https://web.whatsapp.com/serviceworker.js, line 1: TypeError: Cache.put: Cache got basic response with bad status 206 while trying to add request https://web.whatsapp.com/sequential-ptt-end_62ed28be622237546fd39f9468a76a49.mp3
+JavaScript error: https://web.whatsapp.com/serviceworker.js, line 1: TypeError: Cache.put: Cache got basic response with bad status 206 while trying to add request https://web.whatsapp.com/sequential-ptt-middle_7fa161964e93db72b8d00ae22189d75f.mp3
+1674743939705	Marionette	INFO	Stopped listening on port 51087
+Dynamically enable window occlusion 1
