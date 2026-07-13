@@ -1,0 +1,1002 @@
+2026-07-12 14:35:37 | INFO | ======================================================================
+2026-07-12 14:35:37 | INFO | NOVA SESSÃO INICIADA
+2026-07-12 14:35:37 | INFO | Horário: 2026-07-12 14:35:37
+2026-07-12 14:35:37 | INFO | Python: 3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]
+2026-07-12 14:35:37 | INFO | SO: Windows 11 (AMD64)
+2026-07-12 14:35:37 | INFO | Diretório: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb
+2026-07-12 14:35:37 | INFO | ======================================================================
+2026-07-12 14:35:37 | INFO | Planilha restaurada do upload anterior.
+2026-07-12 14:35:46 | INFO | Planilha carregada: 2 contatos (0 pendentes, 2 enviados, 0 inválidos)
+2026-07-12 14:35:48 | INFO | Configuração atualizada: 5 msgs/rodada, 3 rodadas, intervalo 30min, horário 8h-18h
+2026-07-12 14:35:50 | INFO | ----------------------------------------
+2026-07-12 14:35:50 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 14:35:50 | INFO |   msgs_por_rodada: 5
+2026-07-12 14:35:50 | INFO |   total_rodadas: 3
+2026-07-12 14:35:50 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 14:35:50 | INFO |   hora_inicio: 8
+2026-07-12 14:35:50 | INFO |   hora_fim: 18
+2026-07-12 14:35:50 | INFO |   skip_weekends: True
+2026-07-12 14:35:50 | INFO |   delay_min: 15
+2026-07-12 14:35:50 | INFO |   delay_max: 30
+2026-07-12 14:35:50 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 14:35:50 | INFO |   Contatos: 2 total, 0 pendentes, 2 enviados, 0 inválidos
+2026-07-12 14:35:50 | INFO | ----------------------------------------
+2026-07-12 14:35:50 | INFO | Iniciando navegador Chrome...
+2026-07-12 14:35:50 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 14:35:50 | INFO | Selenium versão: 4.46.0
+2026-07-12 14:35:50 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 14:35:54 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 14:35:54 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 14:35:54 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 14:35:57 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 14:36:07 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 14:36:07 | INFO | Fora do horário comercial. Aguardando próximo horário...
+2026-07-12 14:36:20 | INFO | Parada solicitada. Finalizando após mensagem atual...
+2026-07-12 14:36:20 | INFO | Solicitação de parada enviada. Aguardando finalização...
+2026-07-12 14:36:21 | INFO | 🛑 Envio interrompido pelo usuário.
+2026-07-12 14:36:21 | INFO | Fechando navegador...
+2026-07-12 14:36:24 | INFO | Navegador fechado.
+2026-07-12 14:36:33 | INFO | Configuração atualizada: 5 msgs/rodada, 3 rodadas, intervalo 30min, horário 8h-18h
+2026-07-12 14:36:35 | INFO | ----------------------------------------
+2026-07-12 14:36:35 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 14:36:35 | INFO |   msgs_por_rodada: 5
+2026-07-12 14:36:35 | INFO |   total_rodadas: 3
+2026-07-12 14:36:35 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 14:36:35 | INFO |   hora_inicio: 8
+2026-07-12 14:36:35 | INFO |   hora_fim: 18
+2026-07-12 14:36:35 | INFO |   skip_weekends: False
+2026-07-12 14:36:35 | INFO |   delay_min: 15
+2026-07-12 14:36:35 | INFO |   delay_max: 30
+2026-07-12 14:36:35 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 14:36:35 | INFO |   Contatos: 2 total, 0 pendentes, 2 enviados, 0 inválidos
+2026-07-12 14:36:35 | INFO | ----------------------------------------
+2026-07-12 14:36:35 | INFO | Iniciando navegador Chrome...
+2026-07-12 14:36:35 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 14:36:35 | INFO | Selenium versão: 4.46.0
+2026-07-12 14:36:35 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 14:36:37 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 14:36:37 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 14:36:37 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 14:36:39 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 14:36:49 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 14:36:49 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 14:36:49 | INFO | [SKIP] 2 já enviados, 0 inválidos — pulando.
+2026-07-12 14:36:49 | INFO | ✅ Todos os contatos já foram processados!
+2026-07-12 14:36:49 | INFO | 🎉 Envio finalizado! Total enviado: 0 mensagens
+2026-07-12 14:36:49 | INFO | Fechando navegador...
+2026-07-12 14:36:52 | INFO | Navegador fechado.
+2026-07-12 15:35:10 | INFO | ======================================================================
+2026-07-12 15:35:10 | INFO | NOVA SESSÃO INICIADA
+2026-07-12 15:35:10 | INFO | Horário: 2026-07-12 15:35:10
+2026-07-12 15:35:10 | INFO | Python: 3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]
+2026-07-12 15:35:10 | INFO | SO: Windows 11 (AMD64)
+2026-07-12 15:35:10 | INFO | Diretório: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb
+2026-07-12 15:35:10 | INFO | ======================================================================
+2026-07-12 15:35:10 | INFO | Planilha restaurada do upload anterior.
+2026-07-12 15:35:28 | INFO | ----------------------------------------
+2026-07-12 15:35:28 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 15:35:28 | INFO |   msgs_por_rodada: 5
+2026-07-12 15:35:28 | INFO |   total_rodadas: 3
+2026-07-12 15:35:28 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 15:35:28 | INFO |   hora_inicio: 8
+2026-07-12 15:35:28 | INFO |   hora_fim: 18
+2026-07-12 15:35:28 | INFO |   skip_weekends: True
+2026-07-12 15:35:28 | INFO |   delay_min: 15
+2026-07-12 15:35:28 | INFO |   delay_max: 30
+2026-07-12 15:35:28 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 15:35:28 | INFO |   Contatos: 2 total, 0 pendentes, 2 enviados, 0 inválidos
+2026-07-12 15:35:28 | INFO | ----------------------------------------
+2026-07-12 15:35:28 | INFO | Iniciando navegador Chrome...
+2026-07-12 15:35:28 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 15:35:28 | INFO | Selenium versão: 4.46.0
+2026-07-12 15:35:28 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 15:35:31 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 15:35:31 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 15:35:31 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 15:35:33 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 15:35:43 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 15:35:43 | INFO | Fora do horário comercial. Aguardando próximo horário...
+2026-07-12 15:35:51 | INFO | Parada solicitada. Finalizando após mensagem atual...
+2026-07-12 15:35:51 | INFO | Solicitação de parada enviada. Aguardando finalização...
+2026-07-12 15:35:51 | INFO | 🛑 Envio interrompido pelo usuário.
+2026-07-12 15:35:51 | INFO | Fechando navegador...
+2026-07-12 15:35:54 | INFO | Navegador fechado.
+2026-07-12 15:35:57 | INFO | Configuração atualizada: 5 msgs/rodada, 3 rodadas, intervalo 30min, horário 8h-18h
+2026-07-12 15:36:03 | INFO | ----------------------------------------
+2026-07-12 15:36:03 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 15:36:03 | INFO |   msgs_por_rodada: 5
+2026-07-12 15:36:03 | INFO |   total_rodadas: 3
+2026-07-12 15:36:03 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 15:36:03 | INFO |   hora_inicio: 8
+2026-07-12 15:36:03 | INFO |   hora_fim: 18
+2026-07-12 15:36:03 | INFO |   skip_weekends: False
+2026-07-12 15:36:03 | INFO |   delay_min: 15
+2026-07-12 15:36:03 | INFO |   delay_max: 30
+2026-07-12 15:36:03 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 15:36:03 | INFO |   Contatos: 2 total, 0 pendentes, 2 enviados, 0 inválidos
+2026-07-12 15:36:03 | INFO | ----------------------------------------
+2026-07-12 15:36:03 | INFO | Iniciando navegador Chrome...
+2026-07-12 15:36:03 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 15:36:03 | INFO | Selenium versão: 4.46.0
+2026-07-12 15:36:03 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 15:36:06 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 15:36:06 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 15:36:06 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 15:36:07 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 15:36:17 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 15:36:17 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 15:36:17 | INFO | [SKIP] Cleide — já enviado, pulando.
+2026-07-12 15:36:17 | INFO | [SKIP] Mauricio — já enviado, pulando.
+2026-07-12 15:36:17 | INFO | ✅ Todos os contatos já foram processados!
+2026-07-12 15:36:17 | INFO | 🎉 Envio finalizado! Total enviado: 0 mensagens
+2026-07-12 15:36:17 | INFO | Fechando navegador...
+2026-07-12 15:36:20 | INFO | Navegador fechado.
+2026-07-12 15:43:27 | INFO | Planilha carregada: 2 contatos (0 pendentes, 2 enviados, 0 inválidos)
+2026-07-12 15:44:34 | INFO | ======================================================================
+2026-07-12 15:44:34 | INFO | NOVA SESSÃO INICIADA
+2026-07-12 15:44:34 | INFO | Horário: 2026-07-12 15:44:34
+2026-07-12 15:44:34 | INFO | Python: 3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]
+2026-07-12 15:44:34 | INFO | SO: Windows 11 (AMD64)
+2026-07-12 15:44:34 | INFO | Diretório: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb
+2026-07-12 15:44:34 | INFO | ======================================================================
+2026-07-12 15:44:34 | INFO | Planilha restaurada do upload anterior.
+2026-07-12 15:44:44 | INFO | Planilha carregada: 2 contatos (0 pendentes, 2 enviados, 0 inválidos)
+2026-07-12 15:45:17 | INFO | Planilha carregada: 2 contatos (0 pendentes, 2 enviados, 0 inválidos)
+2026-07-12 15:45:45 | INFO | ======================================================================
+2026-07-12 15:45:45 | INFO | NOVA SESSÃO INICIADA
+2026-07-12 15:45:45 | INFO | Horário: 2026-07-12 15:45:45
+2026-07-12 15:45:45 | INFO | Python: 3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]
+2026-07-12 15:45:45 | INFO | SO: Windows 11 (AMD64)
+2026-07-12 15:45:45 | INFO | Diretório: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb
+2026-07-12 15:45:45 | INFO | ======================================================================
+2026-07-12 15:45:46 | INFO | Planilha restaurada do upload anterior.
+2026-07-12 15:45:55 | INFO | Planilha carregada: 2 contatos (0 pendentes, 2 enviados, 0 inválidos)
+2026-07-12 15:53:07 | INFO | Configuração atualizada: 5 msgs/rodada, 3 rodadas, intervalo 30min, horário 8h-18h
+2026-07-12 15:53:08 | INFO | Contatos atualizados via editor: 2 contatos (2 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 15:53:08 | INFO | ----------------------------------------
+2026-07-12 15:53:08 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 15:53:08 | INFO |   msgs_por_rodada: 5
+2026-07-12 15:53:08 | INFO |   total_rodadas: 3
+2026-07-12 15:53:08 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 15:53:08 | INFO |   hora_inicio: 8
+2026-07-12 15:53:08 | INFO |   hora_fim: 18
+2026-07-12 15:53:08 | INFO |   skip_weekends: True
+2026-07-12 15:53:08 | INFO |   delay_min: 15
+2026-07-12 15:53:08 | INFO |   delay_max: 30
+2026-07-12 15:53:08 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 15:53:08 | INFO |   Contatos: 2 total, 2 pendentes, 0 enviados, 0 inválidos
+2026-07-12 15:53:08 | INFO | ----------------------------------------
+2026-07-12 15:53:08 | INFO | Iniciando navegador Chrome...
+2026-07-12 15:53:08 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 15:53:08 | INFO | Selenium versão: 4.46.0
+2026-07-12 15:53:08 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 15:53:11 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 15:53:11 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 15:53:11 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 15:53:13 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 15:53:22 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 15:53:22 | INFO | Fora do horário comercial. Aguardando próximo horário...
+2026-07-12 15:53:30 | INFO | Parada solicitada. Finalizando após mensagem atual...
+2026-07-12 15:53:30 | INFO | Solicitação de parada enviada. Aguardando finalização...
+2026-07-12 15:53:30 | INFO | 🛑 Envio interrompido pelo usuário.
+2026-07-12 15:53:30 | INFO | Fechando navegador...
+2026-07-12 15:53:34 | INFO | Navegador fechado.
+2026-07-12 15:53:36 | INFO | Configuração atualizada: 5 msgs/rodada, 3 rodadas, intervalo 30min, horário 8h-18h
+2026-07-12 15:53:43 | INFO | Contatos atualizados via editor: 2 contatos (2 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 15:53:43 | INFO | ----------------------------------------
+2026-07-12 15:53:43 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 15:53:43 | INFO |   msgs_por_rodada: 5
+2026-07-12 15:53:43 | INFO |   total_rodadas: 3
+2026-07-12 15:53:43 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 15:53:43 | INFO |   hora_inicio: 8
+2026-07-12 15:53:43 | INFO |   hora_fim: 18
+2026-07-12 15:53:43 | INFO |   skip_weekends: False
+2026-07-12 15:53:43 | INFO |   delay_min: 15
+2026-07-12 15:53:43 | INFO |   delay_max: 30
+2026-07-12 15:53:43 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 15:53:43 | INFO |   Contatos: 2 total, 2 pendentes, 0 enviados, 0 inválidos
+2026-07-12 15:53:43 | INFO | ----------------------------------------
+2026-07-12 15:53:43 | INFO | Iniciando navegador Chrome...
+2026-07-12 15:53:43 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 15:53:43 | INFO | Selenium versão: 4.46.0
+2026-07-12 15:53:43 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 15:53:45 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 15:53:45 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 15:53:45 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 15:53:46 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 15:53:56 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 15:53:56 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 15:53:56 | INFO | Enviando para Cleide (199959473333)...
+2026-07-12 15:54:25 | WARNING | Número inválido (timeout): Cleide (199959473333)
+2026-07-12 15:54:25 | INFO | ❌ Cleide (199959473333) — número inválido ou não encontrado no WhatsApp, marcado como inválido.
+2026-07-12 15:54:25 | INFO | Aguardando 20s antes da próxima mensagem...
+2026-07-12 15:54:45 | INFO | Enviando para Mauricio (5519994229146)...
+2026-07-12 15:55:02 | INFO | ✅ Mauricio — mensagem enviada com sucesso.
+2026-07-12 15:55:02 | INFO | 📊 Rodada 1 finalizada: 1 mensagens enviadas
+2026-07-12 15:55:02 | INFO | Todos os contatos foram processados.
+2026-07-12 15:55:02 | INFO | 🎉 Envio finalizado! Total enviado: 1 mensagens
+2026-07-12 15:55:02 | INFO | Fechando navegador...
+2026-07-12 15:55:05 | INFO | Navegador fechado.
+2026-07-12 15:55:18 | INFO | Contatos atualizados via editor: 2 contatos (0 pendentes, 1 enviados, 1 inválidos)
+2026-07-12 15:56:17 | INFO | Contatos atualizados via editor: 3 contatos (1 pendentes, 1 enviados, 1 inválidos)
+2026-07-12 15:56:40 | INFO | Contatos atualizados via editor: 3 contatos (1 pendentes, 1 enviados, 1 inválidos)
+2026-07-12 15:56:40 | INFO | ----------------------------------------
+2026-07-12 15:56:40 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 15:56:40 | INFO |   msgs_por_rodada: 5
+2026-07-12 15:56:40 | INFO |   total_rodadas: 3
+2026-07-12 15:56:40 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 15:56:40 | INFO |   hora_inicio: 8
+2026-07-12 15:56:40 | INFO |   hora_fim: 18
+2026-07-12 15:56:40 | INFO |   skip_weekends: False
+2026-07-12 15:56:40 | INFO |   delay_min: 15
+2026-07-12 15:56:40 | INFO |   delay_max: 30
+2026-07-12 15:56:40 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 15:56:40 | INFO |   Contatos: 3 total, 1 pendentes, 1 enviados, 1 inválidos
+2026-07-12 15:56:40 | INFO | ----------------------------------------
+2026-07-12 15:56:40 | INFO | Iniciando navegador Chrome...
+2026-07-12 15:56:40 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 15:56:40 | INFO | Selenium versão: 4.46.0
+2026-07-12 15:56:40 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 15:56:43 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 15:56:43 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 15:56:43 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 15:56:44 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 15:56:54 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 15:56:54 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 15:56:54 | INFO | [SKIP] Mauricio — já enviado, pulando.
+2026-07-12 15:56:54 | INFO | [SKIP] Cleide — número inválido, pulando.
+2026-07-12 15:56:54 | INFO | Enviando para Rodolfo (19992263173)...
+2026-07-12 15:57:11 | INFO | ✅ Rodolfo — mensagem enviada com sucesso.
+2026-07-12 15:57:11 | INFO | 📊 Rodada 1 finalizada: 1 mensagens enviadas
+2026-07-12 15:57:11 | INFO | Todos os contatos foram processados.
+2026-07-12 15:57:11 | INFO | 🎉 Envio finalizado! Total enviado: 1 mensagens
+2026-07-12 15:57:11 | INFO | Fechando navegador...
+2026-07-12 15:57:14 | INFO | Navegador fechado.
+2026-07-12 16:05:29 | INFO | Contatos atualizados via editor: 3 contatos (1 pendentes, 2 enviados, 0 inválidos)
+2026-07-12 16:08:54 | INFO | Planilha carregada: 2 contatos (1 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 16:08:59 | INFO | Contatos atualizados via editor: 2 contatos (1 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 16:11:54 | INFO | Contatos atualizados via editor: 2 contatos (1 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 16:14:38 | INFO | Contatos atualizados via editor: 2 contatos (1 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 16:14:49 | INFO | Contatos atualizados via editor: 1 contatos (1 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:16:29 | INFO | Contatos atualizados via editor: 2 contatos (2 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:16:36 | INFO | Contatos atualizados via editor: 2 contatos (2 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:16:36 | INFO | ----------------------------------------
+2026-07-12 16:16:36 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 16:16:36 | INFO |   msgs_por_rodada: 5
+2026-07-12 16:16:36 | INFO |   total_rodadas: 3
+2026-07-12 16:16:36 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 16:16:36 | INFO |   hora_inicio: 8
+2026-07-12 16:16:36 | INFO |   hora_fim: 18
+2026-07-12 16:16:36 | INFO |   skip_weekends: False
+2026-07-12 16:16:36 | INFO |   delay_min: 15
+2026-07-12 16:16:36 | INFO |   delay_max: 30
+2026-07-12 16:16:36 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 16:16:36 | INFO |   Contatos: 2 total, 2 pendentes, 0 enviados, 0 inválidos
+2026-07-12 16:16:36 | INFO | ----------------------------------------
+2026-07-12 16:16:36 | INFO | Iniciando navegador Chrome...
+2026-07-12 16:16:36 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 16:16:36 | INFO | Selenium versão: 4.46.0
+2026-07-12 16:16:36 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 16:16:38 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 16:16:38 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 16:16:38 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 16:16:39 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 16:16:50 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 16:16:50 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 16:16:50 | INFO | Enviando para Mauricio (5519994229146)...
+2026-07-12 16:17:08 | INFO | ✅ Mauricio — mensagem enviada com sucesso.
+2026-07-12 16:17:08 | INFO | Aguardando 22s antes da próxima mensagem...
+2026-07-12 16:17:30 | INFO | Enviando para Cleide (19995947333)...
+2026-07-12 16:17:51 | INFO | ✅ Cleide — mensagem enviada com sucesso.
+2026-07-12 16:17:51 | INFO | 📊 Rodada 1 finalizada: 2 mensagens enviadas
+2026-07-12 16:17:51 | INFO | Todos os contatos foram processados.
+2026-07-12 16:17:51 | INFO | 🎉 Envio finalizado! Total enviado: 2 mensagens
+2026-07-12 16:17:51 | INFO | Fechando navegador...
+2026-07-12 16:17:54 | INFO | Navegador fechado.
+2026-07-12 16:18:18 | INFO | Contatos atualizados via editor: 2 contatos (2 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:18:30 | INFO | Contatos atualizados via editor: 2 contatos (2 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:18:30 | INFO | ----------------------------------------
+2026-07-12 16:18:30 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 16:18:30 | INFO |   msgs_por_rodada: 5
+2026-07-12 16:18:30 | INFO |   total_rodadas: 3
+2026-07-12 16:18:30 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 16:18:30 | INFO |   hora_inicio: 8
+2026-07-12 16:18:30 | INFO |   hora_fim: 18
+2026-07-12 16:18:30 | INFO |   skip_weekends: False
+2026-07-12 16:18:30 | INFO |   delay_min: 15
+2026-07-12 16:18:30 | INFO |   delay_max: 30
+2026-07-12 16:18:30 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 16:18:30 | INFO |   Contatos: 2 total, 2 pendentes, 0 enviados, 0 inválidos
+2026-07-12 16:18:30 | INFO | ----------------------------------------
+2026-07-12 16:18:30 | INFO | Iniciando navegador Chrome...
+2026-07-12 16:18:30 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 16:18:30 | INFO | Selenium versão: 4.46.0
+2026-07-12 16:18:30 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 16:18:34 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 16:18:34 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 16:18:34 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 16:18:36 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 16:18:46 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 16:18:46 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 16:18:46 | INFO | Enviando para Mauricio (5519994229146)...
+2026-07-12 16:18:58 | INFO | Parada solicitada. Finalizando após mensagem atual...
+2026-07-12 16:18:58 | INFO | Solicitação de parada enviada. Aguardando finalização...
+2026-07-12 16:19:04 | INFO | ✅ Mauricio — mensagem enviada com sucesso.
+2026-07-12 16:19:04 | INFO | 📊 Rodada 1 finalizada: 1 mensagens enviadas
+2026-07-12 16:19:04 | INFO | 🛑 Envio interrompido pelo usuário.
+2026-07-12 16:19:04 | INFO | Fechando navegador...
+2026-07-12 16:19:07 | INFO | Navegador fechado.
+2026-07-12 16:25:19 | INFO | Contatos atualizados via editor: 2 contatos (2 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:25:41 | INFO | Configuração atualizada: 5 msgs/rodada, 3 rodadas, intervalo 30min, horário 8h-18h
+2026-07-12 16:26:30 | INFO | Contatos atualizados via editor: 2 contatos (2 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:26:30 | INFO | ----------------------------------------
+2026-07-12 16:26:30 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 16:26:30 | INFO |   msgs_por_rodada: 5
+2026-07-12 16:26:30 | INFO |   total_rodadas: 3
+2026-07-12 16:26:30 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 16:26:30 | INFO |   hora_inicio: 8
+2026-07-12 16:26:30 | INFO |   hora_fim: 18
+2026-07-12 16:26:30 | INFO |   skip_weekends: True
+2026-07-12 16:26:30 | INFO |   delay_min: 15
+2026-07-12 16:26:30 | INFO |   delay_max: 30
+2026-07-12 16:26:30 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 16:26:30 | INFO |   Contatos: 2 total, 2 pendentes, 0 enviados, 0 inválidos
+2026-07-12 16:26:30 | INFO | ----------------------------------------
+2026-07-12 16:26:30 | INFO | Iniciando navegador Chrome...
+2026-07-12 16:26:30 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 16:26:30 | INFO | Selenium versão: 4.46.0
+2026-07-12 16:26:30 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 16:26:32 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 16:26:32 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 16:26:32 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 16:26:37 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 16:26:51 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 16:26:51 | INFO | Fora do horário comercial. Aguardando próximo horário...
+2026-07-12 16:27:39 | INFO | Parada solicitada. Finalizando após mensagem atual...
+2026-07-12 16:27:39 | INFO | Solicitação de parada enviada. Aguardando finalização...
+2026-07-12 16:27:39 | INFO | 🛑 Envio interrompido pelo usuário.
+2026-07-12 16:27:39 | INFO | Fechando navegador...
+2026-07-12 16:27:42 | INFO | Navegador fechado.
+2026-07-12 16:29:16 | INFO | Contatos atualizados via editor: 2 contatos (2 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:29:16 | INFO | ----------------------------------------
+2026-07-12 16:29:16 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 16:29:16 | INFO |   msgs_por_rodada: 5
+2026-07-12 16:29:16 | INFO |   total_rodadas: 3
+2026-07-12 16:29:16 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 16:29:16 | INFO |   hora_inicio: 8
+2026-07-12 16:29:16 | INFO |   hora_fim: 18
+2026-07-12 16:29:16 | INFO |   skip_weekends: True
+2026-07-12 16:29:16 | INFO |   delay_min: 15
+2026-07-12 16:29:16 | INFO |   delay_max: 30
+2026-07-12 16:29:16 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 16:29:16 | INFO |   Contatos: 2 total, 2 pendentes, 0 enviados, 0 inválidos
+2026-07-12 16:29:16 | INFO | ----------------------------------------
+2026-07-12 16:29:16 | INFO | Iniciando navegador Chrome...
+2026-07-12 16:29:16 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 16:29:16 | INFO | Selenium versão: 4.46.0
+2026-07-12 16:29:16 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 16:29:19 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 16:29:19 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 16:29:19 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 16:29:20 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 16:29:28 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 16:29:28 | INFO | Fora do horário comercial. Aguardando próximo horário...
+2026-07-12 16:31:46 | INFO | Configuração atualizada: 5 msgs/rodada, 3 rodadas, intervalo 30min, horário 8h-18h
+2026-07-12 16:31:49 | INFO | Parada solicitada. Finalizando após mensagem atual...
+2026-07-12 16:31:49 | INFO | Solicitação de parada enviada. Aguardando finalização...
+2026-07-12 16:31:50 | INFO | 🛑 Envio interrompido pelo usuário.
+2026-07-12 16:31:50 | INFO | Fechando navegador...
+2026-07-12 16:31:52 | INFO | Navegador fechado.
+2026-07-12 16:32:35 | INFO | Contatos atualizados via editor: 3 contatos (3 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:33:15 | INFO | Contatos atualizados via editor: 4 contatos (4 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:36:04 | INFO | ======================================================================
+2026-07-12 16:36:04 | INFO | NOVA SESSÃO INICIADA
+2026-07-12 16:36:04 | INFO | Horário: 2026-07-12 16:36:04
+2026-07-12 16:36:04 | INFO | Python: 3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]
+2026-07-12 16:36:04 | INFO | SO: Windows 11 (AMD64)
+2026-07-12 16:36:04 | INFO | Diretório: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb
+2026-07-12 16:36:04 | INFO | ======================================================================
+2026-07-12 16:36:04 | INFO | Planilha restaurada do upload anterior.
+2026-07-12 16:36:24 | INFO | Contatos atualizados via editor: 4 contatos (4 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:36:24 | INFO | ----------------------------------------
+2026-07-12 16:36:24 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 16:36:24 | INFO |   msgs_por_rodada: 5
+2026-07-12 16:36:24 | INFO |   total_rodadas: 3
+2026-07-12 16:36:24 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 16:36:24 | INFO |   hora_inicio: 8
+2026-07-12 16:36:24 | INFO |   hora_fim: 18
+2026-07-12 16:36:24 | INFO |   skip_weekends: True
+2026-07-12 16:36:24 | INFO |   delay_min: 15
+2026-07-12 16:36:24 | INFO |   delay_max: 30
+2026-07-12 16:36:24 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 16:36:24 | INFO |   Contatos: 4 total, 4 pendentes, 0 enviados, 0 inválidos
+2026-07-12 16:36:24 | INFO | ----------------------------------------
+2026-07-12 16:36:24 | INFO | Iniciando navegador Chrome...
+2026-07-12 16:36:24 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 16:36:24 | INFO | Selenium versão: 4.46.0
+2026-07-12 16:36:24 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 16:36:26 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 16:36:26 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 16:36:26 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 16:36:30 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 16:36:39 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 16:36:39 | INFO | Fora do horário comercial. Aguardando próximo horário...
+2026-07-12 16:37:30 | INFO | Parada solicitada. Finalizando após mensagem atual...
+2026-07-12 16:37:30 | INFO | Solicitação de parada enviada. Aguardando finalização...
+2026-07-12 16:37:31 | INFO | 🛑 Envio interrompido pelo usuário.
+2026-07-12 16:37:31 | INFO | Fechando navegador...
+2026-07-12 16:37:34 | INFO | Navegador fechado.
+2026-07-12 16:38:15 | INFO | Configuração atualizada: 5 msgs/rodada, 3 rodadas, intervalo 30min, horário 8h-18h
+2026-07-12 16:38:19 | INFO | Contatos atualizados via editor: 4 contatos (4 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:38:19 | INFO | ----------------------------------------
+2026-07-12 16:38:19 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 16:38:19 | INFO |   msgs_por_rodada: 5
+2026-07-12 16:38:19 | INFO |   total_rodadas: 3
+2026-07-12 16:38:19 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 16:38:19 | INFO |   hora_inicio: 8
+2026-07-12 16:38:19 | INFO |   hora_fim: 18
+2026-07-12 16:38:19 | INFO |   skip_weekends: False
+2026-07-12 16:38:19 | INFO |   delay_min: 15
+2026-07-12 16:38:19 | INFO |   delay_max: 30
+2026-07-12 16:38:19 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 16:38:19 | INFO |   Contatos: 4 total, 4 pendentes, 0 enviados, 0 inválidos
+2026-07-12 16:38:19 | INFO | ----------------------------------------
+2026-07-12 16:38:19 | INFO | Iniciando navegador Chrome...
+2026-07-12 16:38:19 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 16:38:19 | INFO | Selenium versão: 4.46.0
+2026-07-12 16:38:19 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 16:38:21 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 16:38:21 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 16:38:21 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 16:38:23 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 16:38:31 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 16:38:31 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 16:38:31 | INFO | Enviando para Mauricio (5519994229146)...
+2026-07-12 16:38:47 | INFO | ✅ Mauricio — mensagem enviada com sucesso.
+2026-07-12 16:38:47 | INFO | Aguardando 20s antes da próxima mensagem...
+2026-07-12 16:39:07 | INFO | Enviando para Cleide (19995947333)...
+2026-07-12 16:39:27 | INFO | ✅ Cleide — mensagem enviada com sucesso.
+2026-07-12 16:39:27 | INFO | Aguardando 21s antes da próxima mensagem...
+2026-07-12 16:39:48 | INFO | Enviando para Rodolfo (19992263173)...
+2026-07-12 16:40:05 | INFO | ✅ Rodolfo — mensagem enviada com sucesso.
+2026-07-12 16:40:05 | INFO | Aguardando 17s antes da próxima mensagem...
+2026-07-12 16:40:22 | INFO | Enviando para Mauricio (19994229146)...
+2026-07-12 16:40:39 | INFO | ✅ Mauricio — mensagem enviada com sucesso.
+2026-07-12 16:40:39 | INFO | 📊 Rodada 1 finalizada: 4 mensagens enviadas
+2026-07-12 16:40:39 | INFO | Todos os contatos foram processados.
+2026-07-12 16:40:39 | INFO | 🎉 Envio finalizado! Total enviado: 4 mensagens
+2026-07-12 16:40:39 | INFO | Fechando navegador...
+2026-07-12 16:40:42 | INFO | Navegador fechado.
+2026-07-12 16:41:25 | INFO | ======================================================================
+2026-07-12 16:41:25 | INFO | NOVA SESSÃO INICIADA
+2026-07-12 16:41:25 | INFO | Horário: 2026-07-12 16:41:25
+2026-07-12 16:41:25 | INFO | Python: 3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]
+2026-07-12 16:41:25 | INFO | SO: Windows 11 (AMD64)
+2026-07-12 16:41:25 | INFO | Diretório: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb
+2026-07-12 16:41:25 | INFO | ======================================================================
+2026-07-12 16:41:26 | INFO | Planilha restaurada do upload anterior.
+2026-07-12 16:41:39 | INFO | Contatos atualizados via editor: 4 contatos (4 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:41:43 | INFO | Contatos atualizados via editor: 4 contatos (4 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:41:43 | INFO | ----------------------------------------
+2026-07-12 16:41:43 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 16:41:43 | INFO |   msgs_por_rodada: 5
+2026-07-12 16:41:43 | INFO |   total_rodadas: 3
+2026-07-12 16:41:43 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 16:41:43 | INFO |   hora_inicio: 8
+2026-07-12 16:41:43 | INFO |   hora_fim: 18
+2026-07-12 16:41:43 | INFO |   skip_weekends: True
+2026-07-12 16:41:43 | INFO |   delay_min: 15
+2026-07-12 16:41:43 | INFO |   delay_max: 30
+2026-07-12 16:41:43 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 16:41:43 | INFO |   Contatos: 4 total, 4 pendentes, 0 enviados, 0 inválidos
+2026-07-12 16:41:43 | INFO | ----------------------------------------
+2026-07-12 16:41:43 | INFO | Iniciando navegador Chrome...
+2026-07-12 16:41:43 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 16:41:43 | INFO | Selenium versão: 4.46.0
+2026-07-12 16:41:43 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 16:41:46 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 16:41:46 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 16:41:46 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 16:41:48 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 16:41:57 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 16:41:57 | INFO | Fora do horário comercial. Aguardando próximo horário...
+2026-07-12 16:42:01 | INFO | Parada solicitada. Finalizando após mensagem atual...
+2026-07-12 16:42:01 | INFO | Solicitação de parada enviada. Aguardando finalização...
+2026-07-12 16:42:03 | INFO | 🛑 Envio interrompido pelo usuário.
+2026-07-12 16:42:03 | INFO | Fechando navegador...
+2026-07-12 16:42:05 | INFO | Configuração atualizada: 5 msgs/rodada, 3 rodadas, intervalo 30min, horário 8h-18h
+2026-07-12 16:42:06 | INFO | Navegador fechado.
+2026-07-12 16:42:12 | INFO | Contatos atualizados via editor: 4 contatos (4 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 16:42:12 | INFO | ----------------------------------------
+2026-07-12 16:42:12 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 16:42:12 | INFO |   msgs_por_rodada: 5
+2026-07-12 16:42:12 | INFO |   total_rodadas: 3
+2026-07-12 16:42:12 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 16:42:12 | INFO |   hora_inicio: 8
+2026-07-12 16:42:12 | INFO |   hora_fim: 18
+2026-07-12 16:42:12 | INFO |   skip_weekends: False
+2026-07-12 16:42:12 | INFO |   delay_min: 15
+2026-07-12 16:42:12 | INFO |   delay_max: 30
+2026-07-12 16:42:12 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 16:42:12 | INFO |   Contatos: 4 total, 4 pendentes, 0 enviados, 0 inválidos
+2026-07-12 16:42:12 | INFO | ----------------------------------------
+2026-07-12 16:42:12 | INFO | Iniciando navegador Chrome...
+2026-07-12 16:42:12 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 16:42:12 | INFO | Selenium versão: 4.46.0
+2026-07-12 16:42:12 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 16:42:14 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 16:42:14 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 16:42:14 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 16:42:17 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 16:42:26 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 16:42:26 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 16:42:26 | INFO | Enviando para Mauricio (5519994229146)...
+2026-07-12 16:42:42 | INFO | ✅ Mauricio — mensagem enviada com sucesso.
+2026-07-12 16:42:42 | INFO | Aguardando 29s antes da próxima mensagem...
+2026-07-12 16:43:11 | INFO | Enviando para Cleide (19995947333)...
+2026-07-12 16:43:28 | INFO | ✅ Cleide — mensagem enviada com sucesso.
+2026-07-12 16:43:28 | INFO | Aguardando 29s antes da próxima mensagem...
+2026-07-12 16:43:56 | INFO | Enviando para Rodolfo (19992263173)...
+2026-07-12 16:43:56 | INFO | Parada solicitada. Finalizando após mensagem atual...
+2026-07-12 16:43:56 | INFO | Solicitação de parada enviada. Aguardando finalização...
+2026-07-12 16:44:12 | INFO | ✅ Rodolfo — mensagem enviada com sucesso.
+2026-07-12 16:44:12 | INFO | 📊 Rodada 1 finalizada: 3 mensagens enviadas
+2026-07-12 16:44:12 | INFO | 🛑 Envio interrompido pelo usuário.
+2026-07-12 16:44:12 | INFO | Fechando navegador...
+2026-07-12 16:44:15 | INFO | Navegador fechado.
+2026-07-12 16:45:10 | INFO | Contatos atualizados via editor: 4 contatos (3 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 16:45:13 | INFO | Contatos atualizados via editor: 4 contatos (3 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 16:45:13 | INFO | ----------------------------------------
+2026-07-12 16:45:13 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 16:45:13 | INFO |   msgs_por_rodada: 5
+2026-07-12 16:45:13 | INFO |   total_rodadas: 3
+2026-07-12 16:45:13 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 16:45:13 | INFO |   hora_inicio: 8
+2026-07-12 16:45:13 | INFO |   hora_fim: 18
+2026-07-12 16:45:13 | INFO |   skip_weekends: False
+2026-07-12 16:45:13 | INFO |   delay_min: 15
+2026-07-12 16:45:13 | INFO |   delay_max: 30
+2026-07-12 16:45:13 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 16:45:13 | INFO |   Contatos: 4 total, 3 pendentes, 1 enviados, 0 inválidos
+2026-07-12 16:45:13 | INFO | ----------------------------------------
+2026-07-12 16:45:13 | INFO | Iniciando navegador Chrome...
+2026-07-12 16:45:13 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 16:45:13 | INFO | Selenium versão: 4.46.0
+2026-07-12 16:45:13 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 16:45:15 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 16:45:15 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 16:45:15 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 16:45:17 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 16:45:26 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 16:45:26 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 16:45:26 | INFO | [SKIP] Rodolfo — já enviado, pulando.
+2026-07-12 16:45:26 | INFO | Enviando para Mauricio (5519994229146)...
+2026-07-12 16:45:43 | INFO | ✅ Mauricio — mensagem enviada com sucesso.
+2026-07-12 16:45:43 | INFO | Aguardando 24s antes da próxima mensagem...
+2026-07-12 16:46:07 | INFO | Enviando para Cleide (19995947333)...
+2026-07-12 16:46:24 | INFO | ✅ Cleide — mensagem enviada com sucesso.
+2026-07-12 16:46:24 | INFO | Aguardando 26s antes da próxima mensagem...
+2026-07-12 16:46:51 | INFO | Enviando para Mauricio (199942291466)...
+2026-07-12 16:47:19 | WARNING | Número inválido (timeout): Mauricio (199942291466)
+2026-07-12 16:47:19 | INFO | ❌ Mauricio (199942291466) — número inválido ou não encontrado no WhatsApp, marcado como inválido.
+2026-07-12 16:47:19 | INFO | 📊 Rodada 1 finalizada: 2 mensagens enviadas
+2026-07-12 16:47:19 | INFO | Todos os contatos foram processados.
+2026-07-12 16:47:19 | INFO | 🎉 Envio finalizado! Total enviado: 2 mensagens
+2026-07-12 16:47:19 | INFO | Fechando navegador...
+2026-07-12 16:47:22 | INFO | Navegador fechado.
+2026-07-12 16:48:07 | INFO | Contatos atualizados via editor: 4 contatos (1 pendentes, 3 enviados, 0 inválidos)
+2026-07-12 16:48:11 | INFO | Contatos atualizados via editor: 4 contatos (2 pendentes, 2 enviados, 0 inválidos)
+2026-07-12 16:48:16 | INFO | Contatos atualizados via editor: 4 contatos (2 pendentes, 2 enviados, 0 inválidos)
+2026-07-12 16:48:16 | INFO | ----------------------------------------
+2026-07-12 16:48:16 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 16:48:16 | INFO |   msgs_por_rodada: 5
+2026-07-12 16:48:16 | INFO |   total_rodadas: 3
+2026-07-12 16:48:16 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 16:48:16 | INFO |   hora_inicio: 8
+2026-07-12 16:48:16 | INFO |   hora_fim: 18
+2026-07-12 16:48:16 | INFO |   skip_weekends: False
+2026-07-12 16:48:16 | INFO |   delay_min: 15
+2026-07-12 16:48:16 | INFO |   delay_max: 30
+2026-07-12 16:48:16 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 16:48:16 | INFO |   Contatos: 4 total, 2 pendentes, 2 enviados, 0 inválidos
+2026-07-12 16:48:16 | INFO | ----------------------------------------
+2026-07-12 16:48:16 | INFO | Iniciando navegador Chrome...
+2026-07-12 16:48:16 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 16:48:16 | INFO | Selenium versão: 4.46.0
+2026-07-12 16:48:16 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 16:48:18 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 16:48:18 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 16:48:18 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 16:48:21 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 16:48:30 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 16:48:30 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 16:48:30 | INFO | [SKIP] Cleide — já enviado, pulando.
+2026-07-12 16:48:30 | INFO | [SKIP] Rodolfo — já enviado, pulando.
+2026-07-12 16:48:30 | INFO | Enviando para Mauricio (5519994229146)...
+2026-07-12 16:48:46 | INFO | ✅ Mauricio — mensagem enviada com sucesso.
+2026-07-12 16:48:46 | INFO | Aguardando 16s antes da próxima mensagem...
+2026-07-12 16:49:02 | INFO | Enviando para Mauricio (19994229146)...
+2026-07-12 16:49:18 | INFO | ✅ Mauricio — mensagem enviada com sucesso.
+2026-07-12 16:49:18 | INFO | 📊 Rodada 1 finalizada: 2 mensagens enviadas
+2026-07-12 16:49:19 | INFO | Todos os contatos foram processados.
+2026-07-12 16:49:19 | INFO | 🎉 Envio finalizado! Total enviado: 2 mensagens
+2026-07-12 16:49:19 | INFO | Fechando navegador...
+2026-07-12 16:49:21 | INFO | Navegador fechado.
+2026-07-12 16:49:53 | INFO | Contatos atualizados via editor: 4 contatos (0 pendentes, 4 enviados, 0 inválidos)
+2026-07-12 16:50:03 | INFO | Contatos atualizados via editor: 1 contatos (0 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 16:50:16 | INFO | Contatos atualizados via editor: 1 contatos (0 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 16:50:22 | INFO | Contatos atualizados via editor: 1 contatos (0 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 17:07:13 | INFO | Contatos atualizados via editor: 1 contatos (0 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 17:07:13 | INFO | ----------------------------------------
+2026-07-12 17:07:13 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 17:07:13 | INFO |   msgs_por_rodada: 5
+2026-07-12 17:07:13 | INFO |   total_rodadas: 3
+2026-07-12 17:07:13 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 17:07:13 | INFO |   hora_inicio: 8
+2026-07-12 17:07:13 | INFO |   hora_fim: 18
+2026-07-12 17:07:13 | INFO |   skip_weekends: False
+2026-07-12 17:07:13 | INFO |   delay_min: 15
+2026-07-12 17:07:13 | INFO |   delay_max: 30
+2026-07-12 17:07:13 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 17:07:13 | INFO |   Contatos: 1 total, 0 pendentes, 1 enviados, 0 inválidos
+2026-07-12 17:07:13 | INFO | ----------------------------------------
+2026-07-12 17:07:13 | INFO | Iniciando navegador Chrome...
+2026-07-12 17:07:13 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 17:07:13 | INFO | Selenium versão: 4.46.0
+2026-07-12 17:07:13 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 17:07:16 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 17:07:16 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 17:07:16 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 17:07:17 | INFO | Parada solicitada. Finalizando após mensagem atual...
+2026-07-12 17:07:17 | INFO | Solicitação de parada enviada. Aguardando finalização...
+2026-07-12 17:07:18 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 17:07:31 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 17:07:31 | INFO | Fechando navegador...
+2026-07-12 17:07:34 | INFO | Navegador fechado.
+2026-07-12 17:10:36 | INFO | ======================================================================
+2026-07-12 17:10:36 | INFO | NOVA SESSÃO INICIADA
+2026-07-12 17:10:36 | INFO | Horário: 2026-07-12 17:10:36
+2026-07-12 17:10:36 | INFO | Python: 3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]
+2026-07-12 17:10:36 | INFO | SO: Windows 11 (AMD64)
+2026-07-12 17:10:36 | INFO | Diretório: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb
+2026-07-12 17:10:36 | INFO | ======================================================================
+2026-07-12 17:10:37 | INFO | Planilha restaurada do upload anterior.
+2026-07-12 17:10:43 | INFO | Configuração atualizada: 5 msgs/rodada, 3 rodadas, intervalo 30min, horário 8h-18h
+2026-07-12 17:10:47 | INFO | Contatos atualizados via editor: 1 contatos (0 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 17:10:47 | INFO | ----------------------------------------
+2026-07-12 17:10:47 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 17:10:47 | INFO |   msgs_por_rodada: 5
+2026-07-12 17:10:47 | INFO |   total_rodadas: 3
+2026-07-12 17:10:47 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 17:10:47 | INFO |   hora_inicio: 8
+2026-07-12 17:10:47 | INFO |   hora_fim: 18
+2026-07-12 17:10:47 | INFO |   skip_weekends: False
+2026-07-12 17:10:47 | INFO |   delay_min: 15
+2026-07-12 17:10:47 | INFO |   delay_max: 30
+2026-07-12 17:10:47 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 17:10:47 | INFO |   Contatos: 1 total, 0 pendentes, 1 enviados, 0 inválidos
+2026-07-12 17:10:47 | INFO | ----------------------------------------
+2026-07-12 17:10:47 | INFO | Iniciando navegador Chrome...
+2026-07-12 17:10:47 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 17:10:47 | INFO | Selenium versão: 4.46.0
+2026-07-12 17:10:47 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 17:10:50 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 17:10:50 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 17:10:50 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 17:10:51 | INFO | Parada solicitada. Finalizando após mensagem atual...
+2026-07-12 17:10:51 | INFO | Solicitação de parada enviada. Aguardando finalização...
+2026-07-12 17:10:52 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 17:11:02 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 17:11:02 | INFO | 🛑 Envio interrompido pelo usuário.
+2026-07-12 17:11:02 | INFO | Fechando navegador...
+2026-07-12 17:11:05 | INFO | Navegador fechado.
+2026-07-12 17:11:27 | INFO | Contatos atualizados via editor: 1 contatos (0 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 17:11:27 | INFO | ----------------------------------------
+2026-07-12 17:11:27 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 17:11:27 | INFO |   msgs_por_rodada: 5
+2026-07-12 17:11:27 | INFO |   total_rodadas: 3
+2026-07-12 17:11:27 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 17:11:27 | INFO |   hora_inicio: 8
+2026-07-12 17:11:27 | INFO |   hora_fim: 18
+2026-07-12 17:11:27 | INFO |   skip_weekends: False
+2026-07-12 17:11:27 | INFO |   delay_min: 15
+2026-07-12 17:11:27 | INFO |   delay_max: 30
+2026-07-12 17:11:27 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 17:11:27 | INFO |   Contatos: 1 total, 0 pendentes, 1 enviados, 0 inválidos
+2026-07-12 17:11:27 | INFO | ----------------------------------------
+2026-07-12 17:11:27 | INFO | Iniciando navegador Chrome...
+2026-07-12 17:11:27 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 17:11:27 | INFO | Selenium versão: 4.46.0
+2026-07-12 17:11:27 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 17:11:30 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 17:11:30 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 17:11:30 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 17:11:33 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 17:11:43 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 17:11:43 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 17:11:43 | INFO | [SKIP] Mauricio — já enviado, pulando.
+2026-07-12 17:11:43 | INFO | ✅ Todos os contatos já foram processados!
+2026-07-12 17:11:43 | INFO | 🎉 Envio finalizado! Total enviado: 0 mensagens
+2026-07-12 17:11:43 | INFO | Fechando navegador...
+2026-07-12 17:11:46 | INFO | Navegador fechado.
+2026-07-12 17:15:14 | INFO | Contatos atualizados via editor: 1 contatos (0 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 17:17:48 | INFO | Contatos atualizados via editor: 1 contatos (0 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 17:17:53 | INFO | Contatos atualizados via editor: 2 contatos (1 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 17:18:08 | INFO | Contatos atualizados via editor: 2 contatos (1 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 17:18:09 | INFO | Contatos atualizados via editor: 2 contatos (1 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 17:18:09 | INFO | ----------------------------------------
+2026-07-12 17:18:09 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 17:18:09 | INFO |   msgs_por_rodada: 5
+2026-07-12 17:18:09 | INFO |   total_rodadas: 3
+2026-07-12 17:18:09 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 17:18:09 | INFO |   hora_inicio: 8
+2026-07-12 17:18:09 | INFO |   hora_fim: 18
+2026-07-12 17:18:09 | INFO |   skip_weekends: False
+2026-07-12 17:18:09 | INFO |   delay_min: 15
+2026-07-12 17:18:09 | INFO |   delay_max: 30
+2026-07-12 17:18:09 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 17:18:10 | INFO |   Contatos: 2 total, 1 pendentes, 1 enviados, 0 inválidos
+2026-07-12 17:18:10 | INFO | ----------------------------------------
+2026-07-12 17:18:10 | INFO | Iniciando navegador Chrome...
+2026-07-12 17:18:10 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 17:18:10 | INFO | Selenium versão: 4.46.0
+2026-07-12 17:18:10 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 17:18:13 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 17:18:13 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 17:18:13 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 17:18:16 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 17:18:27 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 17:18:27 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 17:18:27 | INFO | [SKIP] Mauricio — já enviado, pulando.
+2026-07-12 17:18:27 | INFO | Enviando para asdasd (nan)...
+2026-07-12 17:18:58 | WARNING | Número inválido (timeout): asdasd (nan)
+2026-07-12 17:18:58 | INFO | ❌ asdasd (nan) — número inválido ou não encontrado no WhatsApp, marcado como inválido.
+2026-07-12 17:18:58 | INFO | 📊 Rodada 1 finalizada: 0 mensagens enviadas
+2026-07-12 17:18:58 | INFO | Todos os contatos foram processados.
+2026-07-12 17:18:58 | INFO | 🎉 Envio finalizado! Total enviado: 0 mensagens
+2026-07-12 17:18:58 | INFO | Fechando navegador...
+2026-07-12 17:19:01 | INFO | Navegador fechado.
+2026-07-12 17:22:32 | INFO | Contatos atualizados via editor: 2 contatos (1 pendentes, 0 enviados, 1 inválidos)
+2026-07-12 17:25:40 | INFO | Contatos atualizados via editor: 3 contatos (3 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 17:26:36 | INFO | Contatos atualizados via editor: 3 contatos (3 pendentes, 0 enviados, 0 inválidos)
+2026-07-12 17:26:36 | INFO | ----------------------------------------
+2026-07-12 17:26:36 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 17:26:36 | INFO |   msgs_por_rodada: 5
+2026-07-12 17:26:36 | INFO |   total_rodadas: 3
+2026-07-12 17:26:36 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 17:26:36 | INFO |   hora_inicio: 8
+2026-07-12 17:26:36 | INFO |   hora_fim: 18
+2026-07-12 17:26:36 | INFO |   skip_weekends: False
+2026-07-12 17:26:36 | INFO |   delay_min: 15
+2026-07-12 17:26:36 | INFO |   delay_max: 30
+2026-07-12 17:26:36 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 17:26:36 | INFO |   Contatos: 3 total, 3 pendentes, 0 enviados, 0 inválidos
+2026-07-12 17:26:36 | INFO | ----------------------------------------
+2026-07-12 17:26:36 | INFO | Iniciando navegador Chrome...
+2026-07-12 17:26:36 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 17:26:36 | INFO | Selenium versão: 4.46.0
+2026-07-12 17:26:36 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 17:26:40 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 17:26:40 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 17:26:40 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 17:26:43 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 17:26:55 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 17:26:55 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 17:26:55 | INFO | Enviando para Mauricio (5519994229146.0)...
+2026-07-12 17:27:24 | WARNING | Número inválido (timeout): Mauricio (5519994229146.0)
+2026-07-12 17:27:24 | INFO | ❌ Mauricio (5519994229146.0) — número inválido ou não encontrado no WhatsApp, marcado como inválido.
+2026-07-12 17:27:24 | INFO | Aguardando 18s antes da próxima mensagem...
+2026-07-12 17:27:42 | INFO | Enviando para asdasd (nan)...
+2026-07-12 17:28:13 | WARNING | Número inválido (timeout): asdasd (nan)
+2026-07-12 17:28:13 | INFO | ❌ asdasd (nan) — número inválido ou não encontrado no WhatsApp, marcado como inválido.
+2026-07-12 17:28:13 | INFO | Aguardando 26s antes da próxima mensagem...
+2026-07-12 17:28:39 | INFO | Enviando para Cleide (199959473333.0)...
+2026-07-12 17:29:07 | WARNING | Número inválido (timeout): Cleide (199959473333.0)
+2026-07-12 17:29:07 | INFO | ❌ Cleide (199959473333.0) — número inválido ou não encontrado no WhatsApp, marcado como inválido.
+2026-07-12 17:29:07 | INFO | 📊 Rodada 1 finalizada: 0 mensagens enviadas
+2026-07-12 17:29:07 | INFO | Todos os contatos foram processados.
+2026-07-12 17:29:07 | INFO | 🎉 Envio finalizado! Total enviado: 0 mensagens
+2026-07-12 17:29:07 | INFO | Fechando navegador...
+2026-07-12 17:29:10 | INFO | Navegador fechado.
+2026-07-12 17:29:51 | INFO | Contatos atualizados via editor: 5 contatos (2 pendentes, 0 enviados, 3 inválidos)
+2026-07-12 17:29:52 | INFO | Contatos atualizados via editor: 5 contatos (2 pendentes, 0 enviados, 3 inválidos)
+2026-07-12 17:29:52 | INFO | ----------------------------------------
+2026-07-12 17:29:52 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 17:29:52 | INFO |   msgs_por_rodada: 5
+2026-07-12 17:29:52 | INFO |   total_rodadas: 3
+2026-07-12 17:29:52 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 17:29:52 | INFO |   hora_inicio: 8
+2026-07-12 17:29:52 | INFO |   hora_fim: 18
+2026-07-12 17:29:52 | INFO |   skip_weekends: False
+2026-07-12 17:29:52 | INFO |   delay_min: 15
+2026-07-12 17:29:52 | INFO |   delay_max: 30
+2026-07-12 17:29:52 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 17:29:52 | INFO |   Contatos: 5 total, 2 pendentes, 0 enviados, 3 inválidos
+2026-07-12 17:29:52 | INFO | ----------------------------------------
+2026-07-12 17:29:52 | INFO | Iniciando navegador Chrome...
+2026-07-12 17:29:52 | INFO | Selenium versão: 4.46.0
+2026-07-12 17:29:52 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 17:29:52 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 17:29:55 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 17:29:55 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 17:29:55 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 17:29:57 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 17:30:07 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 17:30:07 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 17:30:07 | INFO | [SKIP] Mauricio — número inválido, pulando.
+2026-07-12 17:30:07 | INFO | [SKIP] asdasd — número inválido, pulando.
+2026-07-12 17:30:07 | INFO | [SKIP] Cleide — número inválido, pulando.
+2026-07-12 17:30:08 | INFO | Enviando para Mauricio (19994229146.0)...
+2026-07-12 17:30:36 | WARNING | Número inválido (timeout): Mauricio (19994229146.0)
+2026-07-12 17:30:36 | INFO | ❌ Mauricio (19994229146.0) — número inválido ou não encontrado no WhatsApp, marcado como inválido.
+2026-07-12 17:30:36 | INFO | Aguardando 24s antes da próxima mensagem...
+2026-07-12 17:31:01 | INFO | Enviando para Mauricio 1 (5519994229146.0)...
+2026-07-12 17:31:30 | WARNING | Número inválido (timeout): Mauricio 1 (5519994229146.0)
+2026-07-12 17:31:30 | INFO | ❌ Mauricio 1 (5519994229146.0) — número inválido ou não encontrado no WhatsApp, marcado como inválido.
+2026-07-12 17:31:30 | INFO | 📊 Rodada 1 finalizada: 0 mensagens enviadas
+2026-07-12 17:31:30 | INFO | Todos os contatos foram processados.
+2026-07-12 17:31:30 | INFO | 🎉 Envio finalizado! Total enviado: 0 mensagens
+2026-07-12 17:31:30 | INFO | Fechando navegador...
+2026-07-12 17:31:33 | INFO | Navegador fechado.
+2026-07-12 17:31:44 | INFO | Contatos atualizados via editor: 5 contatos (2 pendentes, 0 enviados, 3 inválidos)
+2026-07-12 17:31:48 | INFO | Contatos atualizados via editor: 5 contatos (2 pendentes, 0 enviados, 3 inválidos)
+2026-07-12 17:31:48 | INFO | ----------------------------------------
+2026-07-12 17:31:48 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 17:31:48 | INFO |   msgs_por_rodada: 5
+2026-07-12 17:31:48 | INFO |   total_rodadas: 3
+2026-07-12 17:31:48 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 17:31:48 | INFO |   hora_inicio: 8
+2026-07-12 17:31:48 | INFO |   hora_fim: 18
+2026-07-12 17:31:48 | INFO |   skip_weekends: False
+2026-07-12 17:31:48 | INFO |   delay_min: 15
+2026-07-12 17:31:48 | INFO |   delay_max: 30
+2026-07-12 17:31:48 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 17:31:48 | INFO |   Contatos: 5 total, 2 pendentes, 0 enviados, 3 inválidos
+2026-07-12 17:31:48 | INFO | ----------------------------------------
+2026-07-12 17:31:48 | INFO | Iniciando navegador Chrome...
+2026-07-12 17:31:48 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 17:31:48 | INFO | Selenium versão: 4.46.0
+2026-07-12 17:31:48 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 17:31:50 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 17:31:50 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 17:31:50 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 17:31:52 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 17:32:01 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 17:32:01 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 17:32:01 | INFO | [SKIP] Mauricio — número inválido, pulando.
+2026-07-12 17:32:01 | INFO | [SKIP] asdasd — número inválido, pulando.
+2026-07-12 17:32:01 | INFO | [SKIP] Cleide — número inválido, pulando.
+2026-07-12 17:32:01 | INFO | Enviando para Mauricio (19994229146.0)...
+2026-07-12 17:32:29 | WARNING | Número inválido (timeout): Mauricio (19994229146.0)
+2026-07-12 17:32:29 | INFO | ❌ Mauricio (19994229146.0) — número inválido ou não encontrado no WhatsApp, marcado como inválido.
+2026-07-12 17:32:29 | INFO | Aguardando 18s antes da próxima mensagem...
+2026-07-12 17:32:47 | INFO | Enviando para Mauricio 1 (5519994229146.0)...
+2026-07-12 17:32:54 | INFO | Parada solicitada. Finalizando após mensagem atual...
+2026-07-12 17:32:54 | INFO | Solicitação de parada enviada. Aguardando finalização...
+2026-07-12 17:33:16 | WARNING | Número inválido (timeout): Mauricio 1 (5519994229146.0)
+2026-07-12 17:33:16 | INFO | ❌ Mauricio 1 (5519994229146.0) — número inválido ou não encontrado no WhatsApp, marcado como inválido.
+2026-07-12 17:33:16 | INFO | 📊 Rodada 1 finalizada: 0 mensagens enviadas
+2026-07-12 17:33:16 | INFO | Todos os contatos foram processados.
+2026-07-12 17:33:16 | INFO | 🛑 Envio interrompido pelo usuário.
+2026-07-12 17:33:16 | INFO | Fechando navegador...
+2026-07-12 17:33:19 | INFO | Navegador fechado.
+2026-07-12 17:35:33 | INFO | Contatos atualizados via editor: 8 contatos (5 pendentes, 0 enviados, 3 inválidos)
+2026-07-12 17:35:48 | INFO | Configuração atualizada: 10 msgs/rodada, 3 rodadas, intervalo 30min, horário 8h-18h
+2026-07-12 17:35:51 | INFO | Contatos atualizados via editor: 8 contatos (5 pendentes, 0 enviados, 3 inválidos)
+2026-07-12 17:35:51 | INFO | ----------------------------------------
+2026-07-12 17:35:51 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 17:35:51 | INFO |   msgs_por_rodada: 10
+2026-07-12 17:35:51 | INFO |   total_rodadas: 3
+2026-07-12 17:35:51 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 17:35:51 | INFO |   hora_inicio: 8
+2026-07-12 17:35:51 | INFO |   hora_fim: 18
+2026-07-12 17:35:51 | INFO |   skip_weekends: False
+2026-07-12 17:35:51 | INFO |   delay_min: 15
+2026-07-12 17:35:51 | INFO |   delay_max: 30
+2026-07-12 17:35:51 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 17:35:51 | INFO |   Contatos: 8 total, 5 pendentes, 0 enviados, 3 inválidos
+2026-07-12 17:35:51 | INFO | ----------------------------------------
+2026-07-12 17:35:51 | INFO | Iniciando navegador Chrome...
+2026-07-12 17:35:51 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 17:35:51 | INFO | Selenium versão: 4.46.0
+2026-07-12 17:35:51 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 17:35:54 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 17:35:54 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 17:35:54 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 17:35:57 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 17:36:06 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 17:36:06 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 17:36:06 | INFO | [SKIP] Mauricio — número inválido, pulando.
+2026-07-12 17:36:06 | INFO | [SKIP] asdasd — número inválido, pulando.
+2026-07-12 17:36:06 | INFO | [SKIP] Cleide — número inválido, pulando.
+2026-07-12 17:36:06 | INFO | Enviando para Mauricio (19994229146)...
+2026-07-12 17:36:21 | INFO | ✅ Mauricio — mensagem enviada com sucesso.
+2026-07-12 17:36:21 | INFO | Aguardando 25s antes da próxima mensagem...
+2026-07-12 17:36:47 | INFO | Enviando para Mauricio 1 (5519994229146)...
+2026-07-12 17:37:02 | INFO | ✅ Mauricio 1 — mensagem enviada com sucesso.
+2026-07-12 17:37:02 | INFO | Aguardando 15s antes da próxima mensagem...
+2026-07-12 17:37:17 | INFO | Enviando para Mauricio 2 (19 994229146)...
+2026-07-12 17:37:33 | INFO | ✅ Mauricio 2 — mensagem enviada com sucesso.
+2026-07-12 17:37:33 | INFO | Aguardando 16s antes da próxima mensagem...
+2026-07-12 17:37:49 | INFO | Enviando para Mauricio123 (55 19 994229146)...
+2026-07-12 17:38:06 | INFO | ✅ Mauricio123 — mensagem enviada com sucesso.
+2026-07-12 17:38:06 | INFO | Aguardando 28s antes da próxima mensagem...
+2026-07-12 17:38:34 | INFO | Enviando para mauricio (1999422-9146)...
+2026-07-12 17:38:50 | INFO | ✅ mauricio — mensagem enviada com sucesso.
+2026-07-12 17:38:50 | INFO | 📊 Rodada 1 finalizada: 5 mensagens enviadas
+2026-07-12 17:38:50 | INFO | Todos os contatos foram processados.
+2026-07-12 17:38:50 | INFO | 🎉 Envio finalizado! Total enviado: 5 mensagens
+2026-07-12 17:38:50 | INFO | Fechando navegador...
+2026-07-12 17:38:53 | INFO | Navegador fechado.
+2026-07-12 19:46:11 | INFO | Contatos atualizados via editor: 9 contatos (1 pendentes, 5 enviados, 3 inválidos)
+2026-07-12 19:46:13 | INFO | Contatos atualizados via editor: 9 contatos (1 pendentes, 5 enviados, 3 inválidos)
+2026-07-12 19:46:13 | INFO | ----------------------------------------
+2026-07-12 19:46:13 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 19:46:13 | INFO |   msgs_por_rodada: 10
+2026-07-12 19:46:13 | INFO |   total_rodadas: 3
+2026-07-12 19:46:13 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 19:46:13 | INFO |   hora_inicio: 8
+2026-07-12 19:46:13 | INFO |   hora_fim: 18
+2026-07-12 19:46:13 | INFO |   skip_weekends: False
+2026-07-12 19:46:13 | INFO |   delay_min: 15
+2026-07-12 19:46:13 | INFO |   delay_max: 30
+2026-07-12 19:46:13 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 19:46:14 | INFO |   Contatos: 9 total, 1 pendentes, 5 enviados, 3 inválidos
+2026-07-12 19:46:14 | INFO | ----------------------------------------
+2026-07-12 19:46:14 | INFO | Iniciando navegador Chrome...
+2026-07-12 19:46:14 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 19:46:14 | INFO | Selenium versão: 4.46.0
+2026-07-12 19:46:14 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 19:46:28 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 19:46:28 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 19:46:28 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 19:46:33 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 19:46:52 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 19:46:53 | INFO | Fora do horário comercial. Aguardando próximo horário...
+2026-07-12 19:47:32 | INFO | Parada solicitada. Finalizando após mensagem atual...
+2026-07-12 19:47:32 | INFO | Solicitação de parada enviada. Aguardando finalização...
+2026-07-12 19:47:33 | INFO | 🛑 Envio interrompido pelo usuário.
+2026-07-12 19:47:33 | INFO | Fechando navegador...
+2026-07-12 19:47:38 | INFO | Navegador fechado.
+2026-07-12 19:47:38 | INFO | Configuração atualizada: 10 msgs/rodada, 3 rodadas, intervalo 30min, horário 8h-20h
+2026-07-12 19:47:39 | INFO | Contatos atualizados via editor: 9 contatos (1 pendentes, 5 enviados, 3 inválidos)
+2026-07-12 19:47:39 | INFO | ----------------------------------------
+2026-07-12 19:47:39 | INFO | INÍCIO DE ENVIO — Configurações:
+2026-07-12 19:47:39 | INFO |   msgs_por_rodada: 10
+2026-07-12 19:47:39 | INFO |   total_rodadas: 3
+2026-07-12 19:47:39 | INFO |   intervalo_rodadas_min: 30
+2026-07-12 19:47:39 | INFO |   hora_inicio: 8
+2026-07-12 19:47:39 | INFO |   hora_fim: 20
+2026-07-12 19:47:39 | INFO |   skip_weekends: False
+2026-07-12 19:47:39 | INFO |   delay_min: 15
+2026-07-12 19:47:39 | INFO |   delay_max: 30
+2026-07-12 19:47:39 | INFO |   Planilha: uploads\contatos.xlsx
+2026-07-12 19:47:39 | INFO |   Contatos: 9 total, 1 pendentes, 5 enviados, 3 inválidos
+2026-07-12 19:47:39 | INFO | ----------------------------------------
+2026-07-12 19:47:39 | INFO | Iniciando navegador Chrome...
+2026-07-12 19:47:39 | INFO | Envio iniciado. Aguardando escaneio do QR Code...
+2026-07-12 19:47:39 | INFO | Selenium versão: 4.46.0
+2026-07-12 19:47:39 | INFO | Chrome profile: C:\Users\mauri\OneDrive\Documentos\message_whatsapp\msgweb\chrome_profile
+2026-07-12 19:47:45 | INFO | ChromeDriver instalado via webdriver-manager
+2026-07-12 19:47:45 | INFO | Chrome versão: 150.0.7871.102
+2026-07-12 19:47:45 | INFO | ChromeDriver versão: 150.0.7871.115 (25f5b661e5b08141ec24b17d1ce96c5ceb5828da-refs/branch-heads/7871@{#2956})
+2026-07-12 19:47:52 | INFO | WhatsApp Web aberto. Escaneie o QR Code no navegador...
+2026-07-12 19:48:08 | INFO | ✅ Login realizado com sucesso!
+2026-07-12 19:48:10 | INFO | 📤 Rodada 1/3 iniciada
+2026-07-12 19:48:13 | INFO | [SKIP] Mauricio — já enviado, pulando.
+2026-07-12 19:48:13 | INFO | [SKIP] Mauricio 1 — já enviado, pulando.
+2026-07-12 19:48:13 | INFO | [SKIP] Mauricio 2 — já enviado, pulando.
+2026-07-12 19:48:13 | INFO | [SKIP] Mauricio123 — já enviado, pulando.
+2026-07-12 19:48:13 | INFO | [SKIP] mauricio — já enviado, pulando.
+2026-07-12 19:48:13 | INFO | [SKIP] Mauricio — número inválido, pulando.
+2026-07-12 19:48:13 | INFO | [SKIP] asdasd — número inválido, pulando.
+2026-07-12 19:48:13 | INFO | [SKIP] Cleide — número inválido, pulando.
+2026-07-12 19:48:13 | INFO | Enviando para Cy (19998956611)...
+2026-07-12 19:48:51 | INFO | ✅ Cy — mensagem enviada com sucesso.
+2026-07-12 19:48:51 | INFO | 📊 Rodada 1 finalizada: 1 mensagens enviadas
+2026-07-12 19:48:52 | INFO | Todos os contatos foram processados.
+2026-07-12 19:48:52 | INFO | 🎉 Envio finalizado! Total enviado: 1 mensagens
+2026-07-12 19:48:52 | INFO | Fechando navegador...
+2026-07-12 19:48:57 | INFO | Navegador fechado.
+2026-07-12 20:00:04 | INFO | Contatos atualizados via editor: 1 contatos (0 pendentes, 1 enviados, 0 inválidos)
+2026-07-12 20:07:44 | INFO | Configuração atualizada: 10 msgs/rodada, 3 rodadas, intervalo 30min, horário 8h-18h

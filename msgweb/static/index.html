@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Automação</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .log-area {
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+        }
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .pulse-dot {
+            animation: pulse-dot 1.5s infinite;
+        }
+        details[open] .config-chevron {
+            transform: rotate(180deg);
+        }
+        details summary::-webkit-details-marker {
+            display: none;
+        }
+        details summary::marker {
+            display: none;
+            content: '';
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-3xl">
+
+        <!-- Header -->
+        <header class="mb-8">
+            <h1 class="text-2xl font-semibold text-gray-900">WhatsApp Automação</h1>
+            <p class="text-sm text-gray-500 mt-1">Envio automatizado de mensagens via WhatsApp Web</p>
+        </header>
+
+        <!-- Status -->
+        <section id="status-section" class="mb-5 bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
+            <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Status</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div class="bg-gray-50 rounded-md p-3 text-center border border-gray-100">
+                    <p class="text-xs text-gray-500">Estado</p>
+                    <p id="status-state" class="text-sm font-semibold text-gray-700 mt-1">Aguardando</p>
+                </div>
+                <div class="bg-gray-50 rounded-md p-3 text-center border border-gray-100">
+                    <p class="text-xs text-gray-500">Rodada</p>
+                    <p id="status-round" class="text-sm font-semibold text-gray-700 mt-1">0/0</p>
+                </div>
+                <div class="bg-gray-50 rounded-md p-3 text-center border border-gray-100">
+                    <p class="text-xs text-gray-500">Enviadas</p>
+                    <p id="status-sent" class="text-sm font-semibold text-green-700 mt-1">0</p>
+                </div>
+                <div class="bg-gray-50 rounded-md p-3 text-center border border-gray-100">
+                    <p class="text-xs text-gray-500">Pendentes</p>
+                    <p id="status-pending" class="text-sm font-semibold text-amber-700 mt-1">0</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Contatos (tabela editável) -->
+        <section id="contacts-section" class="mb-5 bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Contatos</h2>
+                <span id="contacts-count" class="text-xs text-gray-400"></span>
+            </div>
+
+            <div class="overflow-x-auto overflow-y-auto max-h-96 border border-gray-100 rounded-md">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-50 text-gray-500 sticky top-0 z-10">
+                        <tr>
+                            <th class="text-left px-3 py-2 font-medium">Pessoa</th>
+                            <th class="text-left px-3 py-2 font-medium">Número</th>
+                            <th class="text-left px-3 py-2 font-medium">Mensagem</th>
+                            <th class="text-center px-3 py-2 font-medium w-20">Status</th>
+                            <th class="text-center px-3 py-2 font-medium w-32">Data Envio</th>
+                            <th class="text-center px-2 py-2 font-medium w-10"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="contacts-tbody"></tbody>
+                </table>
+            </div>
+
+            <div class="flex items-center gap-3 mt-4">
+                <button onclick="addContactRow()"
+                    class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-md transition-colors">
+                    + Adicionar Contato
+                </button>
+                <button onclick="saveContacts()" id="btn-save-contacts"
+                    class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white text-sm font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                    Salvar Alterações
+                </button>
+                <input type="file" id="file-input" accept=".xlsx,.xls" class="hidden">
+                <button onclick="document.getElementById('file-input').click()" title="Carregar planilha .xlsx"
+                    class="ml-auto px-3 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-600 hover:text-gray-800 rounded-md transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m4-8l-4-4m0 0l-4 4m4-4v12"/>
+                    </svg>
+                </button>
+                <button onclick="downloadContacts()" id="btn-download-contacts" title="Baixar planilha atualizada"
+                    class="px-3 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-600 hover:text-gray-800 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                    </svg>
+                </button>
+            </div>
+            <p id="upload-status" class="mt-2 text-sm text-gray-400"></p>
+            <p id="contacts-status" class="mt-2 text-sm text-gray-400"></p>
+        </section>
+
+        <!-- Configuração (dropdown) -->
+        <section class="mb-5 bg-white rounded-lg border border-gray-200 shadow-sm">
+            <details id="config-details">
+                <summary class="px-5 py-4 cursor-pointer select-none flex items-center justify-between">
+                    <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Configuração</h2>
+                    <svg class="config-chevron h-4 w-4 text-gray-400 transition-transform" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </summary>
+                <div class="px-5 pb-5">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm text-gray-600 mb-1">Mensagens por Rodada</label>
+                            <input type="number" id="cfg-msgs" value="5" min="1" max="50"
+                                class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-600 mb-1">Total de Rodadas</label>
+                            <input type="number" id="cfg-rodadas" value="3" min="1" max="100"
+                                class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-600 mb-1">Intervalo entre Rodadas (min)</label>
+                            <input type="number" id="cfg-intervalo" value="30" min="1" max="480"
+                                class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
+                        </div>
+                        <div class="flex gap-3">
+                            <div class="flex-1">
+                                <label class="block text-sm text-gray-600 mb-1">Delay mín. entre msgs (s)</label>
+                                <input type="number" id="cfg-delay-min" value="15" min="1" max="300"
+                                    class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
+                            </div>
+                            <div class="flex-1">
+                                <label class="block text-sm text-gray-600 mb-1">Delay máx. entre msgs (s)</label>
+                                <input type="number" id="cfg-delay-max" value="30" min="1" max="300"
+                                    class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
+                            </div>
+                        </div>
+                        <div class="flex gap-3">
+                            <div class="flex-1">
+                                <label class="block text-sm text-gray-600 mb-1">Hora Início</label>
+                                <input type="number" id="cfg-hora-inicio" value="8" min="0" max="23"
+                                    class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
+                            </div>
+                            <div class="flex-1">
+                                <label class="block text-sm text-gray-600 mb-1">Hora Fim</label>
+                                <input type="number" id="cfg-hora-fim" value="18" min="0" max="23"
+                                    class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Checkbox fim de semana -->
+                    <div class="mt-4 pt-4 border-t border-gray-100">
+                        <label class="inline-flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="cfg-skip-weekends" checked
+                                class="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500">
+                            <span class="text-sm text-gray-700">Não enviar nos finais de semana</span>
+                        </label>
+                    </div>
+
+                    <button onclick="saveConfig()"
+                        class="mt-4 px-5 py-2 bg-gray-800 hover:bg-gray-700 text-white text-sm font-medium rounded-md transition-colors">
+                        Salvar Configuração
+                    </button>
+                    <p id="config-status" class="mt-2 text-sm text-gray-400"></p>
+                </div>
+            </details>
+        </section>
+
+        <!-- Controles -->
+        <section class="mb-5 bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
+            <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Controles</h2>
+            <div class="flex flex-col sm:flex-row gap-3">
+                <button onclick="startSending()" id="btn-start"
+                    class="flex-1 px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                    Iniciar Envio
+                </button>
+                <button onclick="stopSending()" id="btn-stop"
+                    class="flex-1 px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    disabled>
+                    Parar Envio
+                </button>
+            </div>
+            <p id="control-status" class="mt-2 text-sm text-gray-400"></p>
+        </section>
+
+        <!-- Log -->
+        <section class="bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Log</h2>
+                <button onclick="clearLogs()"
+                    class="text-xs text-gray-400 hover:text-gray-600 transition-colors">
+                    Limpar
+                </button>
+            </div>
+            <div id="log-area"
+                class="log-area bg-gray-900 text-gray-300 rounded-md p-4 h-56 overflow-y-auto">
+                <p class="text-gray-500">Aguardando atividade...</p>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="text-center mt-6 text-gray-400 text-xs">
+            <p>WhatsApp Automação Web</p>
+        </footer>
+    </div>
+
+    <script>
+        // --- State ---
+        let eventSource = null;
+        let currentState = 'aguardando';
+        let totalRodadas = 3;
+        let configLoaded = false;
+        let stopping = false;  // true enquanto aguarda a parada graceful concluir
+
+        // --- SSE Connection ---
+        function connectSSE() {
+            if (eventSource) eventSource.close();
+            eventSource = new EventSource('/events');
+
+            eventSource.addEventListener('status', (event) => {
+                const status = JSON.parse(event.data);
+                updateDashboard(status);
+            });
+
+            eventSource.addEventListener('log', (event) => {
+                addLogEntry(event.data);
+            });
+
+            eventSource.addEventListener('contact_update', (event) => {
+                const data = JSON.parse(event.data);
+                updateContactRowStatus(data.numero, data.status, data.data_envio);
+            });
+
+            eventSource.onerror = () => {
+                console.warn('SSE desconectado. Reconectando em 3s...');
+                setTimeout(connectSSE, 3000);
+            };
+        }
+
+        // --- Dashboard ---
+        function updateDashboard(status) {
+            currentState = status.state;
+            totalRodadas = status.config?.total_rodadas || 3;
+
+            const stateEl = document.getElementById('status-state');
+            const stateMap = {
+                'aguardando': { text: 'Aguardando', cls: 'text-gray-700' },
+                'waiting_qr': { text: 'Escaneie QR', cls: 'text-purple-700 pulse-dot' },
+                'enviando': { text: 'Enviando', cls: 'text-green-700 pulse-dot' },
+                'pausado': { text: 'Pausado', cls: 'text-amber-700' },
+                'finalizado': { text: 'Finalizado', cls: 'text-blue-700' },
+                'parado': { text: 'Parado', cls: 'text-red-700' },
+                'erro': { text: 'Erro', cls: 'text-red-700' },
+            };
+            const info = stateMap[status.state] || { text: status.state, cls: 'text-gray-700' };
+            stateEl.textContent = info.text;
+            stateEl.className = `text-sm font-semibold mt-1 ${info.cls}`;
+
+            document.getElementById('status-round').textContent = `${status.current_round}/${totalRodadas}`;
+            document.getElementById('status-sent').textContent = status.messages_sent;
+            document.getElementById('status-pending').textContent = status.total_pending;
+
+            const isRunning = ['waiting_qr', 'enviando', 'pausado'].includes(status.state);
+            // Se o envio terminou (não está mais rodando), reseta o estado de "parando"
+            if (!isRunning) {
+                stopping = false;
+            }
+            document.getElementById('btn-start').disabled = isRunning || stopping;
+            // Botão parar fica desabilitado se não está rodando OU se já foi solicitada a parada
+            document.getElementById('btn-stop').disabled = !isRunning || stopping;
+
+            // Desabilita edição de contatos durante o envio
+            const btnSaveContacts = document.getElementById('btn-save-contacts');
+            if (btnSaveContacts) btnSaveContacts.disabled = isRunning;
+            document.querySelectorAll('#contacts-tbody input').forEach(inp => {
+                inp.disabled = isRunning;
+            });
+            document.querySelectorAll('#contacts-tbody button').forEach(btn => {
+                btn.disabled = isRunning;
+                btn.style.pointerEvents = isRunning ? 'none' : '';
+                btn.style.opacity = isRunning ? '0.3' : '';
+            });
+
+            if (status.config) {
+                totalRodadas = status.config.total_rodadas;
+                // Só preenche os inputs na primeira carga para não atrapalhar edição
+                if (!configLoaded) {
+                    configLoaded = true;
+                    document.getElementById('cfg-msgs').value = status.config.msgs_por_rodada;
+                    document.getElementById('cfg-rodadas').value = status.config.total_rodadas;
+                    document.getElementById('cfg-intervalo').value = status.config.intervalo_rodadas_min;
+                    document.getElementById('cfg-hora-inicio').value = status.config.hora_inicio;
+                    document.getElementById('cfg-hora-fim').value = status.config.hora_fim;
+                    if ('skip_weekends' in status.config) {
+                        document.getElementById('cfg-skip-weekends').checked = status.config.skip_weekends;
+                    }
+                    if ('delay_min' in status.config) {
+                        document.getElementById('cfg-delay-min').value = status.config.delay_min;
+                    }
+                    if ('delay_max' in status.config) {
+                        document.getElementById('cfg-delay-max').value = status.config.delay_max;
+                    }
+                }
+            }
+        }
+
+        // --- Log ---
+        function addLogEntry(message) {
+            const logArea = document.getElementById('log-area');
+            if (logArea.querySelector('.text-gray-500')) {
+                logArea.innerHTML = '';
+            }
+            const entry = document.createElement('div');
+            // Cor baseada no conteúdo
+            if (message.includes('atualizados via editor') || message.includes('Configuração') || message.includes('Planilha')) {
+                entry.className = 'text-purple-400 mb-0.5';
+            } else if (message.includes('[SKIP]')) {
+                entry.className = 'text-yellow-400 mb-0.5';
+            } else if (message.includes('❌') || message.includes('ERRO') || message.includes('Erro') || message.includes('inválido ou não')) {
+                entry.className = 'text-red-400 mb-0.5';
+            } else {
+                entry.className = 'text-green-400 mb-0.5';
+            }
+            entry.textContent = message;
+            logArea.appendChild(entry);
+            logArea.scrollTop = logArea.scrollHeight;
+            while (logArea.children.length > 200) {
+                logArea.removeChild(logArea.firstChild);
+            }
+        }
+
+        function clearLogs() {
+            document.getElementById('log-area').innerHTML = '<p class="text-gray-500">Log limpo.</p>';
+        }
+
+        // --- Upload automático ---
+        async function uploadFile() {
+            const input = document.getElementById('file-input');
+            const statusEl = document.getElementById('upload-status');
+
+            if (!input.files.length) return;
+
+            const formData = new FormData();
+            formData.append('file', input.files[0]);
+
+            statusEl.textContent = 'Enviando...';
+            statusEl.className = 'mt-2 text-sm text-blue-600';
+
+            try {
+                const response = await fetch('/upload', { method: 'POST', body: formData });
+                const data = await response.json();
+
+                if (response.ok) {
+                    statusEl.textContent = `${input.files[0].name} carregada: ${data.total} contatos (${data.pendentes} pendentes)`;
+                    statusEl.className = 'mt-2 text-sm text-green-600';
+                    // Carrega os contatos na tabela editável
+                    loadContacts();
+                } else {
+                    statusEl.textContent = `Erro: ${data.detail}`;
+                    statusEl.className = 'mt-2 text-sm text-red-600';
+                }
+            } catch (err) {
+                statusEl.textContent = `Erro de conexão: ${err.message}`;
+                statusEl.className = 'mt-2 text-sm text-red-600';
+            }
+        }
+
+        // --- Contatos (tabela editável) ---
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str == null ? '' : String(str);
+            return div.innerHTML;
+        }
+
+        // Converte "2026-07-12 14:16:30" -> "12/07/2026 - 14:16"
+        function formatDataEnvio(raw) {
+            if (!raw) return '—';
+            const m = String(raw).trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+            if (!m) return escapeHtml(raw);
+            const [, ano, mes, dia, hora, min] = m;
+            return `${dia}/${mes}/${ano} - ${hora}:${min}`;
+        }
+
+        function statusBadgeHtml(enviado, invalido) {
+            if (invalido) return '<span class="text-xs text-red-600">Inválido</span>';
+            if (enviado) return '<span class="text-xs text-green-600">Enviado</span>';
+            return '<span class="text-xs text-amber-600">Pendente</span>';
+        }
+
+        function renderContactRow(contact) {
+            const tbody = document.getElementById('contacts-tbody');
+            const tr = document.createElement('tr');
+            tr.className = 'border-t border-gray-100 hover:bg-gray-50';
+
+            const processado = contact.enviado || contact.invalido;
+            // Botão de reenvio: só faz sentido para contatos já enviados ou inválidos
+            const resetBtn = `
+                <button onclick="resetContact(this)" title="Reenviar (limpa status e data)"
+                    class="contact-reset text-gray-300 hover:text-green-600 transition-colors text-base leading-none ${processado ? '' : 'hidden'}">&#8635;</button>`;
+
+            tr.innerHTML = `
+                <td class="px-2 py-1">
+                    <input type="text" value="${escapeHtml(contact.pessoa)}"
+                        class="contact-pessoa w-full border border-transparent hover:border-gray-200 focus:border-green-500 focus:ring-1 focus:ring-green-500 rounded px-2 py-1 text-sm focus:outline-none">
+                </td>
+                <td class="px-2 py-1">
+                    <input type="text" value="${escapeHtml(contact.numero)}"
+                        class="contact-numero w-full border border-transparent hover:border-gray-200 focus:border-green-500 focus:ring-1 focus:ring-green-500 rounded px-2 py-1 text-sm focus:outline-none">
+                </td>
+                <td class="px-2 py-1">
+                    <input type="text" value="${escapeHtml(contact.mensagem)}" title="${escapeHtml(contact.mensagem)}"
+                        oninput="this.title = this.value"
+                        class="contact-mensagem w-full border border-transparent hover:border-gray-200 focus:border-green-500 focus:ring-1 focus:ring-green-500 rounded px-2 py-1 text-sm focus:outline-none">
+                </td>
+                <td class="contact-status px-3 py-1 text-center">${statusBadgeHtml(contact.enviado, contact.invalido)}</td>
+                <td class="contact-data px-3 py-1 text-center text-xs text-gray-500">${formatDataEnvio(contact.data_envio)}</td>
+                <td class="px-2 py-1 text-center whitespace-nowrap">
+                    ${resetBtn}
+                    <button onclick="this.closest('tr').remove(); updateContactsCount();"
+                        class="text-gray-300 hover:text-red-500 transition-colors text-lg leading-none ml-2" title="Remover">&times;</button>
+                </td>
+            `;
+
+            // Guarda os flags de status na própria linha (data attributes)
+            tr.dataset.enviado = contact.enviado ? '1' : '0';
+            tr.dataset.invalido = contact.invalido ? '1' : '0';
+            tr.dataset.dataEnvio = contact.data_envio || '';
+
+            tbody.appendChild(tr);
+        }
+
+        // Reenvio: limpa Enviado, Invalido e DataEnvio para reprocessar na próxima execução
+        function resetContact(btn) {
+            const tr = btn.closest('tr');
+            tr.dataset.enviado = '0';
+            tr.dataset.invalido = '0';
+            tr.dataset.dataEnvio = '';
+            // Atualiza a exibição
+            tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(false, false);
+            tr.querySelector('.contact-data').textContent = '—';
+            btn.classList.add('hidden');
+            updateContactsCount();
+        }
+
+        // Atualiza o status de uma linha na tabela em tempo real via SSE
+        function updateContactRowStatus(numero, status, dataEnvio) {
+            const rows = document.querySelectorAll('#contacts-tbody tr');
+            // Normaliza: remove tudo que não é dígito para comparar
+            const numLimpo = String(numero).replace(/\D/g, '');
+            rows.forEach(tr => {
+                const inputNumero = tr.querySelector('.contact-numero');
+                if (!inputNumero) return;
+                const rowNum = inputNumero.value.replace(/\D/g, '');
+                // Compara os últimos dígitos (ignora código país que pode ou não estar)
+                if (rowNum === numLimpo || numLimpo.endsWith(rowNum) || rowNum.endsWith(numLimpo)) {
+                    if (status === 'enviado') {
+                        tr.dataset.enviado = '1';
+                        tr.dataset.invalido = '0';
+                        tr.dataset.dataEnvio = dataEnvio || '';
+                        tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(true, false);
+                        tr.querySelector('.contact-data').textContent = formatDataEnvio(dataEnvio);
+                    } else if (status === 'invalido') {
+                        tr.dataset.enviado = '0';
+                        tr.dataset.invalido = '1';
+                        tr.dataset.dataEnvio = '';
+                        tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(false, true);
+                        tr.querySelector('.contact-data').textContent = '—';
+                    }
+                    // Mostra botão de reenvio
+                    const resetBtn = tr.querySelector('.contact-reset');
+                    if (resetBtn) resetBtn.classList.remove('hidden');
+                    updateContactsCount();
+                }
+            });
+        }
+
+        function updateContactsCount() {
+            const rows = document.querySelectorAll('#contacts-tbody tr');
+            let enviados = 0, invalidos = 0;
+            rows.forEach(tr => {
+                if (tr.dataset.invalido === '1') invalidos++;
+                else if (tr.dataset.enviado === '1') enviados++;
+            });
+            const pendentes = rows.length - enviados - invalidos;
+            document.getElementById('contacts-count').textContent =
+                `${rows.length} contatos · ${pendentes} pendentes · ${enviados} enviados · ${invalidos} inválidos`;
+        }
+
+        async function loadContacts() {
+            try {
+                const response = await fetch('/contacts');
+                if (!response.ok) return;
+                const data = await response.json();
+
+                const tbody = document.getElementById('contacts-tbody');
+                tbody.innerHTML = '';
+                data.contacts.forEach(renderContactRow);
+                updateContactsCount();
+                document.getElementById('contacts-section').classList.remove('hidden');
+            } catch (err) {
+                console.warn('Erro ao carregar contatos:', err);
+            }
+        }
+
+        function addContactRow() {
+            renderContactRow({ pessoa: '', numero: '', mensagem: '', enviado: false, invalido: false, data_envio: '' });
+            updateContactsCount();
+            document.getElementById('contacts-section').classList.remove('hidden');
+            // Foca no campo Pessoa da nova linha
+            const rows = document.querySelectorAll('#contacts-tbody tr');
+            const lastRow = rows[rows.length - 1];
+            if (lastRow) lastRow.querySelector('.contact-pessoa').focus();
+        }
+
+        function collectContacts() {
+            const rows = document.querySelectorAll('#contacts-tbody tr');
+            const contacts = [];
+            rows.forEach(tr => {
+                contacts.push({
+                    pessoa: tr.querySelector('.contact-pessoa').value,
+                    numero: tr.querySelector('.contact-numero').value,
+                    mensagem: tr.querySelector('.contact-mensagem').value,
+                    enviado: tr.dataset.enviado === '1',
+                    invalido: tr.dataset.invalido === '1',
+                    data_envio: tr.dataset.dataEnvio || '',
+                });
+            });
+            return contacts;
+        }
+
+        async function saveContacts(silent = false) {
+            const statusEl = document.getElementById('contacts-status');
+            const contacts = collectContacts();
+
+            try {
+                const response = await fetch('/contacts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contacts }),
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    if (!silent) {
+                        statusEl.textContent = `Salvo: ${data.total} contatos (${data.pendentes} pendentes).`;
+                        statusEl.className = 'mt-2 text-sm text-green-600';
+                        setTimeout(() => { statusEl.textContent = ''; }, 3000);
+                    }
+                    updateContactsCount();
+                    return true;
+                } else {
+                    statusEl.textContent = `Erro: ${data.detail}`;
+                    statusEl.className = 'mt-2 text-sm text-red-600';
+                    return false;
+                }
+            } catch (err) {
+                statusEl.textContent = `Erro: ${err.message}`;
+                statusEl.className = 'mt-2 text-sm text-red-600';
+                return false;
+            }
+        }
+
+        // Baixa a planilha atualizada (salva as edições antes, se possível)
+        async function downloadContacts() {
+            const statusEl = document.getElementById('contacts-status');
+            const isRunning = ['waiting_qr', 'enviando', 'pausado'].includes(currentState);
+
+            // Salva as edições atuais antes de baixar (exceto durante o envio)
+            if (!isRunning) {
+                const saved = await saveContacts(true);
+                if (!saved) {
+                    statusEl.textContent = 'Erro ao salvar antes de baixar.';
+                    statusEl.className = 'mt-2 text-sm text-red-600';
+                    return;
+                }
+            }
+
+            // Dispara o download
+            window.location.href = '/download-contacts';
+            statusEl.textContent = 'Download iniciado.';
+            statusEl.className = 'mt-2 text-sm text-green-600';
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+        }
+
+        // --- Config ---
+        async function saveConfig() {
+            const statusEl = document.getElementById('config-status');
+
+            const config = {
+                msgs_por_rodada: parseInt(document.getElementById('cfg-msgs').value),
+                total_rodadas: parseInt(document.getElementById('cfg-rodadas').value),
+                intervalo_rodadas_min: parseInt(document.getElementById('cfg-intervalo').value),
+                hora_inicio: parseInt(document.getElementById('cfg-hora-inicio').value),
+                hora_fim: parseInt(document.getElementById('cfg-hora-fim').value),
+                skip_weekends: document.getElementById('cfg-skip-weekends').checked,
+                delay_min: parseInt(document.getElementById('cfg-delay-min').value),
+                delay_max: parseInt(document.getElementById('cfg-delay-max').value),
+            };
+
+            try {
+                const response = await fetch('/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config),
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    statusEl.textContent = 'Configuração salva.';
+                    statusEl.className = 'mt-2 text-sm text-green-600';
+                    totalRodadas = config.total_rodadas;
+                } else {
+                    statusEl.textContent = `Erro: ${data.detail}`;
+                    statusEl.className = 'mt-2 text-sm text-red-600';
+                }
+            } catch (err) {
+                statusEl.textContent = `Erro: ${err.message}`;
+                statusEl.className = 'mt-2 text-sm text-red-600';
+            }
+
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+        }
+
+        // --- Controles ---
+        async function startSending() {
+            const statusEl = document.getElementById('control-status');
+
+            // Salva as alterações da tabela de contatos antes de iniciar
+            const contactsSection = document.getElementById('contacts-section');
+            if (contactsSection && !contactsSection.classList.contains('hidden')) {
+                const saved = await saveContacts(true);
+                if (!saved) {
+                    statusEl.textContent = 'Erro ao salvar contatos. Envio cancelado.';
+                    statusEl.className = 'mt-2 text-sm text-red-600';
+                    return;
+                }
+            }
+
+            try {
+                const response = await fetch('/start', { method: 'POST' });
+                const data = await response.json();
+                if (response.ok) {
+                    statusEl.textContent = 'Envio iniciado. Escaneie o QR Code no navegador.';
+                    statusEl.className = 'mt-2 text-sm text-green-600';
+                    document.getElementById('btn-start').disabled = true;
+                    document.getElementById('btn-stop').disabled = false;
+                } else {
+                    statusEl.textContent = data.detail;
+                    statusEl.className = 'mt-2 text-sm text-red-600';
+                }
+            } catch (err) {
+                statusEl.textContent = `Erro: ${err.message}`;
+                statusEl.className = 'mt-2 text-sm text-red-600';
+            }
+        }
+
+        async function stopSending() {
+            const statusEl = document.getElementById('control-status');
+            const btnStop = document.getElementById('btn-stop');
+            // Desabilita imediatamente para evitar cliques repetidos
+            stopping = true;
+            btnStop.disabled = true;
+            try {
+                const response = await fetch('/stop', { method: 'POST' });
+                const data = await response.json();
+                if (response.ok) {
+                    statusEl.textContent = 'Parada solicitada. Finalizando envio atual...';
+                    statusEl.className = 'mt-2 text-sm text-amber-600';
+                } else {
+                    // Falhou: reabilita o botão
+                    stopping = false;
+                    statusEl.textContent = data.detail;
+                    statusEl.className = 'mt-2 text-sm text-red-600';
+                }
+            } catch (err) {
+                stopping = false;
+                statusEl.textContent = `Erro: ${err.message}`;
+                statusEl.className = 'mt-2 text-sm text-red-600';
+            }
+        }
+
+        // --- Event Listeners ---
+        document.getElementById('file-input').addEventListener('change', function() {
+            if (this.files.length) {
+                uploadFile();
+            }
+        });
+
+        // --- Initialize ---
+        document.addEventListener('DOMContentLoaded', () => {
+            connectSSE();
+            // Carrega contatos caso já exista planilha de sessão anterior
+            loadContacts();
+        });
+    </script>
+</body>
+</html>
