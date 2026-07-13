@@ -1,1 +1,10 @@
 pyinstaller --noconfirm --clean --onedir --name whatsapp_send_msg --collect-all pandas --collect-all openpyxl --collect-all selenium --collect-all webdriver_manager main.py
+
+https://www.python.org/ftp/python/3.13.12/python-3.13.12-amd64.exe
+python -m venv venv
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+venv/Scripts/activate
+pip install -r requirements.txt
+
+
+https://googlechromelabs.github.io/chrome-for-testing/
