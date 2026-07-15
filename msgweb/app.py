@@ -491,6 +491,7 @@ if __name__ == "__main__":
     import signal
     import sys
     import uvicorn
+    print('Acesse: http://localhost:8000')
 
     def force_exit(sig, frame):
         """Força encerramento no segundo CTRL+C."""

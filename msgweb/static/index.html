@@ -116,9 +116,12 @@
             <details id="config-details">
                 <summary class="px-5 py-4 cursor-pointer select-none flex items-center justify-between">
                     <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Configuração</h2>
-                    <svg class="config-chevron h-4 w-4 text-gray-400 transition-transform" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
-                    </svg>
+                    <div class="flex items-center gap-3">
+                        <span id="cfg-total-msgs-header" class="text-xs text-gray-400 font-medium"></span>
+                        <svg class="config-chevron h-4 w-4 text-gray-400 transition-transform" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+                        </svg>
+                    </div>
                 </summary>
                 <div class="px-5 pb-5">
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -172,10 +175,13 @@
                         </label>
                     </div>
 
-                    <button onclick="saveConfig()"
-                        class="mt-4 px-5 py-2 bg-gray-800 hover:bg-gray-700 text-white text-sm font-medium rounded-md transition-colors">
-                        Salvar Configuração
-                    </button>
+                    <div class="mt-4 flex items-center justify-between">
+                        <button onclick="saveConfig()"
+                            class="px-5 py-2 bg-gray-800 hover:bg-gray-700 text-white text-sm font-medium rounded-md transition-colors">
+                            Salvar Configuração
+                        </button>
+                        <span id="cfg-total-msgs" class="text-xs text-gray-400 font-medium"></span>
+                    </div>
                     <p id="config-status" class="mt-2 text-sm text-gray-400"></p>
                 </div>
             </details>
@@ -315,6 +321,7 @@
                     if ('delay_max' in status.config) {
                         document.getElementById('cfg-delay-max').value = status.config.delay_max;
                     }
+                    updateTotalMsgsCalc();
                 }
             }
         }
@@ -694,6 +701,65 @@
             }
         }
 
+        // --- Cálculo total de mensagens ---
+        function updateTotalMsgsCalc() {
+            const msgs = parseInt(document.getElementById('cfg-msgs').value) || 0;
+            const rodadas = parseInt(document.getElementById('cfg-rodadas').value) || 0;
+            const intervalo = parseInt(document.getElementById('cfg-intervalo').value) || 0;
+            const horaInicio = parseInt(document.getElementById('cfg-hora-inicio').value) || 0;
+            const horaFim = parseInt(document.getElementById('cfg-hora-fim').value) || 0;
+            const delayMin = parseInt(document.getElementById('cfg-delay-min').value) || 15;
+            const delayMax = parseInt(document.getElementById('cfg-delay-max').value) || 30;
+            const skipWeekends = document.getElementById('cfg-skip-weekends').checked;
+
+            const total = msgs * rodadas;
+
+            // Tempo estimado de envio por rodada (delay médio entre msgs)
+            const delayMedio = (delayMin + delayMax) / 2;
+            const tempoEnvioRodadaMin = (msgs * delayMedio) / 60; // em minutos
+
+            // Tempo total = envio de cada rodada + intervalos entre rodadas
+            const tempoTotalMin = (rodadas * tempoEnvioRodadaMin) + ((rodadas - 1) * intervalo);
+
+            // Janela diária disponível (em minutos)
+            const janelaHoras = horaFim > horaInicio ? (horaFim - horaInicio) : 0;
+            const janelaDiariaMin = janelaHoras * 60;
+
+            // Estimativa de dias necessários
+            let diasTexto = '';
+            if (janelaDiariaMin > 0 && tempoTotalMin > janelaDiariaMin) {
+                let diasUteis = Math.ceil(tempoTotalMin / janelaDiariaMin);
+                if (skipWeekends) {
+                    // Converte dias úteis em dias corridos (5 úteis = 7 corridos)
+                    const semanasCompletas = Math.floor(diasUteis / 5);
+                    const diasRestantes = diasUteis % 5;
+                    const diasCorridos = (semanasCompletas * 7) + diasRestantes;
+                    diasTexto = ` · ~${diasUteis} dia${diasUteis > 1 ? 's' : ''} útei${diasUteis > 1 ? 's' : 'l'}`;
+                } else {
+                    diasTexto = ` · ~${diasUteis} dia${diasUteis > 1 ? 's' : ''}`;
+                }
+            }
+
+            // Formatar tempo
+            let tempoTexto = '';
+            if (tempoTotalMin >= 60) {
+                const h = Math.floor(tempoTotalMin / 60);
+                const m = Math.round(tempoTotalMin % 60);
+                tempoTexto = m > 0 ? `${h}h${m}min` : `${h}h`;
+            } else {
+                tempoTexto = `${Math.round(tempoTotalMin)}min`;
+            }
+
+            const texto = `${total} msg · ~${tempoTexto}${diasTexto}`;
+
+            // Atualiza no header (visível sempre)
+            const headerEl = document.getElementById('cfg-total-msgs-header');
+            if (headerEl) headerEl.textContent = texto;
+            // Atualiza dentro do details também
+            const innerEl = document.getElementById('cfg-total-msgs');
+            if (innerEl) innerEl.textContent = texto;
+        }
+
         // --- Event Listeners ---
         document.getElementById('file-input').addEventListener('change', function() {
             if (this.files.length) {
@@ -701,11 +767,23 @@
             }
         });
 
+        // Recalcula total ao alterar qualquer campo de configuração relevante
+        document.getElementById('cfg-msgs').addEventListener('input', updateTotalMsgsCalc);
+        document.getElementById('cfg-rodadas').addEventListener('input', updateTotalMsgsCalc);
+        document.getElementById('cfg-intervalo').addEventListener('input', updateTotalMsgsCalc);
+        document.getElementById('cfg-delay-min').addEventListener('input', updateTotalMsgsCalc);
+        document.getElementById('cfg-delay-max').addEventListener('input', updateTotalMsgsCalc);
+        document.getElementById('cfg-hora-inicio').addEventListener('input', updateTotalMsgsCalc);
+        document.getElementById('cfg-hora-fim').addEventListener('input', updateTotalMsgsCalc);
+        document.getElementById('cfg-skip-weekends').addEventListener('change', updateTotalMsgsCalc);
+
         // --- Initialize ---
         document.addEventListener('DOMContentLoaded', () => {
             connectSSE();
             // Carrega contatos caso já exista planilha de sessão anterior
             loadContacts();
+            // Calcula total inicial
+            updateTotalMsgsCalc();
         });
     </script>
 </body>
