@@ -357,15 +357,21 @@ class WhatsAppSender:
         except Exception:
             pass  # Se falhar o scroll, segue normalmente
 
-    def _get_batch_size(self, msgs_por_rodada: int) -> int:
+    def _get_batch_size(self, msgs_por_rodada: int, compensacao: int = 0) -> int:
         """
-        Retorna o tamanho do batch com variação aleatória quando
-        comportamento humano está ativo (±1-2 mensagens).
+        Retorna o tamanho do batch para esta rodada.
+        
+        Quando comportamento humano está ativo, aplica variação de ±1-2 mas
+        leva em conta a compensação (débito/crédito de rodadas anteriores)
+        para garantir que o total final bata exatamente.
+        
+        compensacao: positivo = deve mandar a mais, negativo = deve mandar a menos
         """
+        base = msgs_por_rodada + compensacao
         if not self._human_behavior_enabled():
-            return msgs_por_rodada
+            return max(1, base)
         variacao = random.choice([-2, -1, 0, 1, 2])
-        return max(1, msgs_por_rodada + variacao)
+        return max(1, base + variacao)
 
     def _send_message(self, pessoa: str, numero: str, mensagem: str, arquivo: str = "") -> bool:
         """
@@ -680,6 +686,7 @@ class WhatsAppSender:
 
             # Inicia envio por rodadas
             self._set_state("enviando")
+            compensacao = 0  # Rastreia débito/crédito entre rodadas para manter total exato
 
             for rodada in range(1, total_rodadas + 1):
                 if self._should_stop():
@@ -716,8 +723,12 @@ class WhatsAppSender:
                     self._log("✅ Todos os contatos já foram processados!")
                     break
 
-                # Seleciona contatos desta rodada (com variação se human_behavior ativo)
-                batch_size = self._get_batch_size(msgs_por_rodada)
+                # Na última rodada, não aplica variação — manda exatamente o que falta
+                # para garantir que o total bata
+                if rodada == total_rodadas:
+                    batch_size = max(1, msgs_por_rodada + compensacao)
+                else:
+                    batch_size = self._get_batch_size(msgs_por_rodada, compensacao)
                 batch = pending.head(batch_size)
                 enviados_rodada = 0
 
@@ -805,6 +816,10 @@ class WhatsAppSender:
                 self._log(
                     f"📊 Rodada {rodada} finalizada: {enviados_rodada} mensagens enviadas"
                 )
+
+                # Atualiza compensação: diferença entre o esperado e o que de fato enviou
+                # Se mandou 4 e era pra mandar 5, compensacao fica +1 (próxima manda 1 a mais)
+                compensacao = (msgs_por_rodada - enviados_rodada) + compensacao
 
                 # Verifica se ainda há pendentes antes de esperar
                 df = self._load_contacts()
