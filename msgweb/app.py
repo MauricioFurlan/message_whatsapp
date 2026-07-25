@@ -57,11 +57,12 @@ class ConfigModel(BaseModel):
     msgs_por_rodada: int = 5
     total_rodadas: int = 3
     intervalo_rodadas_min: int = 30
-    hora_inicio: int = 8
-    hora_fim: int = 18
+    hora_inicio: str = "08:00"
+    hora_fim: str = "18:00"
     skip_weekends: bool = True
     delay_min: int = 15
     delay_max: int = 30
+    human_behavior: bool = False
 
 
 # --- Global State ---
@@ -72,11 +73,12 @@ class AppState:
         "msgs_por_rodada": 5,
         "total_rodadas": 3,
         "intervalo_rodadas_min": 30,
-        "hora_inicio": 8,
-        "hora_fim": 18,
+        "hora_inicio": "08:00",
+        "hora_fim": "18:00",
         "skip_weekends": True,
         "delay_min": 15,
         "delay_max": 30,
+        "human_behavior": False,
     })
     excel_path: Optional[str] = None
     sender: Optional[WhatsAppSender] = None
@@ -214,11 +216,56 @@ async def upload_file(file: UploadFile = File(...)):
             )
 
         # Adiciona colunas de controle se não existirem
-        for col in ["Enviado", "DataEnvio", "Invalido"]:
+        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo"]:
             if col not in df.columns:
                 df[col] = ""
             else:
-                df[col] = df[col].fillna("").astype(str).str.strip().str.upper()
+                if col == "Arquivo":
+                    df[col] = df[col].fillna("").astype(str).str.strip()
+                else:
+                    df[col] = df[col].fillna("").astype(str).str.strip().str.upper()
+
+        # --- Deduplicação automática ---
+        # Normaliza números (mesma lógica de _clean_number em whatsapp_sender.py)
+        def _normalize_numero(numero) -> str:
+            numero_str = str(numero).strip()
+            if numero_str.lower() in ("", "nan", "none"):
+                return ""
+            try:
+                f = float(numero_str)
+                if f.is_integer():
+                    numero_str = str(int(f))
+            except (ValueError, OverflowError):
+                pass
+            return "".join(c for c in numero_str if c.isdigit())
+
+        df["_numero_normalizado"] = df["Número"].apply(_normalize_numero)
+
+        # Contatos já enviados não devem ser removidos como duplicatas
+        duplicatas_removidas = 0
+        numeros_vistos = set()
+        indices_para_remover = []
+
+        for idx, row in df.iterrows():
+            num_norm = row["_numero_normalizado"]
+            if not num_norm:
+                continue
+            # Contatos já marcados como Enviado='X' são preservados sempre
+            if row["Enviado"] == "X":
+                numeros_vistos.add(num_norm)
+                continue
+            if num_norm in numeros_vistos:
+                indices_para_remover.append(idx)
+                duplicatas_removidas += 1
+            else:
+                numeros_vistos.add(num_norm)
+
+        if duplicatas_removidas > 0:
+            df = df.drop(indices_para_remover).reset_index(drop=True)
+            add_log(f"Deduplicação: {duplicatas_removidas} número(s) duplicado(s) removido(s)")
+
+        df = df.drop(columns=["_numero_normalizado"])
+        # --- Fim deduplicação ---
 
         df.to_excel(file_path, index=False)
         state.excel_path = str(file_path)
@@ -236,6 +283,7 @@ async def upload_file(file: UploadFile = File(...)):
             "pendentes": pendentes,
             "enviados": enviados,
             "invalidos": invalidos,
+            "duplicatas_removidas": duplicatas_removidas,
         }
     except HTTPException:
         raise
@@ -301,7 +349,7 @@ async def start_sending():
     state.sender_thread = Thread(target=state.sender.start, daemon=True)
     state.sender_thread.start()
 
-    add_log("Envio iniciado. Aguardando escaneio do QR Code...")
+    add_log("Envio iniciado. Abrindo navegador...")
     return {"status": "ok", "message": "Envio iniciado"}
 
 
@@ -331,7 +379,7 @@ async def get_contacts():
     try:
         df = pd.read_excel(state.excel_path)
         # Garante colunas de controle
-        for col in ["Enviado", "DataEnvio", "Invalido"]:
+        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo"]:
             if col not in df.columns:
                 df[col] = ""
             else:
@@ -348,6 +396,7 @@ async def get_contacts():
                 "pessoa": str(row.get("Pessoa", "")),
                 "numero": str(row.get("Número", "")),
                 "mensagem": str(row.get("Mensagem", "")),
+                "arquivo": str(row.get("Arquivo", "")),
                 "enviado": str(row.get("Enviado", "")).strip().upper() == "X",
                 "invalido": str(row.get("Invalido", "")).strip().upper() == "X",
                 "data_envio": str(row.get("DataEnvio", "")),
@@ -362,6 +411,7 @@ class ContactModel(BaseModel):
     pessoa: str = ""
     numero: str = ""
     mensagem: str = ""
+    arquivo: str = ""
     enviado: bool = False
     invalido: bool = False
     data_envio: str = ""
@@ -396,12 +446,13 @@ async def save_contacts(payload: ContactsPayload):
             "Pessoa": c.pessoa.strip(),
             "Número": c.numero.strip(),
             "Mensagem": c.mensagem.strip(),
+            "Arquivo": c.arquivo.strip(),
             "Enviado": "X" if c.enviado else "",
             "DataEnvio": c.data_envio.strip(),
             "Invalido": "X" if c.invalido else "",
         })
 
-    df = pd.DataFrame(rows, columns=["Pessoa", "Número", "Mensagem", "Enviado", "DataEnvio", "Invalido"])
+    df = pd.DataFrame(rows, columns=["Pessoa", "Número", "Mensagem", "Arquivo", "Enviado", "DataEnvio", "Invalido"])
 
     upload_dir = Path("uploads")
     upload_dir.mkdir(exist_ok=True)
@@ -447,6 +498,92 @@ async def download_log():
         media_type="text/plain",
         filename=f"log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
     )
+
+
+# --- Media Endpoints ---
+
+@app.post("/upload-media")
+async def upload_media(file: UploadFile = File(...)):
+    """Upload de arquivo de mídia (imagem ou PDF) para envio junto com mensagens."""
+    allowed_extensions = (".jpg", ".jpeg", ".png", ".pdf", ".mp3", ".ogg", ".opus")
+    filename_lower = file.filename.lower() if file.filename else ""
+    if not filename_lower.endswith(allowed_extensions):
+        raise HTTPException(
+            status_code=400,
+            detail="Arquivo deve ser .jpg, .jpeg, .png, .pdf, .mp3, .ogg ou .opus"
+        )
+
+    media_dir = Path("uploads/media")
+    media_dir.mkdir(parents=True, exist_ok=True)
+    file_path = media_dir / file.filename
+
+    with open(file_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+
+    add_log(f"Mídia carregada: {file.filename}")
+    return {
+        "status": "ok",
+        "filename": file.filename,
+        "path": str(file_path.resolve()),
+    }
+
+
+@app.get("/media-files")
+async def list_media_files():
+    """Lista arquivos de mídia disponíveis em uploads/media/."""
+    media_dir = Path("uploads/media")
+    if not media_dir.exists():
+        return {"status": "ok", "files": []}
+
+    allowed_extensions = (".jpg", ".jpeg", ".png", ".pdf", ".mp3", ".ogg", ".opus")
+    files = []
+    for f in media_dir.iterdir():
+        if f.is_file() and f.name.lower().endswith(allowed_extensions):
+            files.append({
+                "filename": f.name,
+                "path": str(f.resolve()),
+                "size": f.stat().st_size,
+            })
+
+    return {"status": "ok", "files": files}
+
+
+@app.delete("/media/{filename}")
+async def delete_media(filename: str):
+    """Remove um arquivo de mídia."""
+    media_dir = Path("uploads/media")
+    file_path = media_dir / filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
+
+    # Segurança: garante que o path está dentro de uploads/media
+    try:
+        file_path.resolve().relative_to(media_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Caminho inválido.")
+
+    os.remove(file_path)
+    add_log(f"Mídia removida: {filename}")
+
+    return {"status": "ok", "message": f"Arquivo {filename} removido."}
+
+
+@app.get("/session-status")
+async def session_status():
+    """Verifica se existe sessão salva do WhatsApp (sem abrir o Chrome)."""
+    profile_dir = Path("chrome_profile")
+    if profile_dir.exists() and any(profile_dir.iterdir()):
+        # Encontra o timestamp do arquivo mais recente no perfil
+        latest_mtime = max(
+            f.stat().st_mtime
+            for f in profile_dir.rglob("*")
+            if f.is_file()
+        )
+        last_used = datetime.fromtimestamp(latest_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        return {"logged_in": True, "last_used": last_used}
+    return {"logged_in": False, "last_used": None}
 
 
 @app.get("/events")

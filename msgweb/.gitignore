@@ -1,2 +1,12 @@
 chrome_profile/
 __pycache__/
+uploads/
+log.txt
+log.txt.*
+
+# PyInstaller
+build/
+dist/
+*.spec.bak
+*.manifest
+WhatsAppAutomacao/

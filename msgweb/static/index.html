@@ -29,200 +29,219 @@
         }
     </style>
 </head>
-<body class="bg-gray-50 text-gray-800 min-h-screen">
-    <div class="container mx-auto px-4 py-8 max-w-3xl">
+<body class="bg-gray-50 text-gray-800 h-screen overflow-hidden flex flex-col">
 
-        <!-- Header -->
-        <header class="mb-8">
-            <h1 class="text-2xl font-semibold text-gray-900">WhatsApp Automação</h1>
-            <p class="text-sm text-gray-500 mt-1">Envio automatizado de mensagens via WhatsApp Web</p>
-        </header>
+    <!-- Header -->
+    <header class="px-4 py-2 border-b border-gray-200 bg-white flex-shrink-0">
+        <div class="flex items-center gap-3">
+            <h1 class="text-lg font-semibold text-gray-900">WhatsApp Automação</h1>
+            <span id="session-badge" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+                <span class="w-2 h-2 rounded-full bg-gray-400"></span>
+                Verificando...
+            </span>
+        </div>
+    </header>
 
-        <!-- Status -->
-        <section id="status-section" class="mb-5 bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
-            <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Status</h2>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div class="bg-gray-50 rounded-md p-3 text-center border border-gray-100">
-                    <p class="text-xs text-gray-500">Estado</p>
-                    <p id="status-state" class="text-sm font-semibold text-gray-700 mt-1">Aguardando</p>
+    <!-- Main area: two columns -->
+    <div class="flex-1 flex overflow-hidden">
+
+        <!-- LEFT: Contatos table -->
+        <div class="flex-1 flex flex-col overflow-hidden p-3">
+            <section id="contacts-section" class="flex-1 flex flex-col bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                <div class="flex items-center justify-between px-4 py-2 border-b border-gray-100 flex-shrink-0">
+                    <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Contatos</h2>
+                    <span id="contacts-count" class="text-xs text-gray-400"></span>
                 </div>
-                <div class="bg-gray-50 rounded-md p-3 text-center border border-gray-100">
-                    <p class="text-xs text-gray-500">Rodada</p>
-                    <p id="status-round" class="text-sm font-semibold text-gray-700 mt-1">0/0</p>
+
+                <div class="flex-1 overflow-y-auto overflow-x-hidden">
+                    <table class="w-full text-sm table-fixed">
+                        <thead class="bg-gray-50 text-gray-500 sticky top-0 z-10">
+                            <tr>
+                                <th class="text-left px-2 py-2 font-medium w-36">Pessoa</th>
+                                <th class="text-left px-2 py-2 font-medium w-36">Número</th>
+                                <th class="text-left px-2 py-2 font-medium">Mensagem</th>
+                                <th class="text-left px-2 py-2 font-medium w-24">Arquivo</th>
+                                <th class="text-center px-1 py-2 font-medium w-14">Status</th>
+                                <th class="text-center px-1 py-2 font-medium w-24">Data Envio</th>
+                                <th class="text-center px-1 py-2 font-medium w-12"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="contacts-tbody"></tbody>
+                    </table>
                 </div>
-                <div class="bg-gray-50 rounded-md p-3 text-center border border-gray-100">
-                    <p class="text-xs text-gray-500">Enviadas</p>
-                    <p id="status-sent" class="text-sm font-semibold text-green-700 mt-1">0</p>
-                </div>
-                <div class="bg-gray-50 rounded-md p-3 text-center border border-gray-100">
-                    <p class="text-xs text-gray-500">Pendentes</p>
-                    <p id="status-pending" class="text-sm font-semibold text-amber-700 mt-1">0</p>
-                </div>
-            </div>
-        </section>
 
-        <!-- Contatos (tabela editável) -->
-        <section id="contacts-section" class="mb-5 bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
-            <div class="flex items-center justify-between mb-3">
-                <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Contatos</h2>
-                <span id="contacts-count" class="text-xs text-gray-400"></span>
-            </div>
-
-            <div class="overflow-x-auto overflow-y-auto max-h-96 border border-gray-100 rounded-md">
-                <table class="w-full text-sm">
-                    <thead class="bg-gray-50 text-gray-500 sticky top-0 z-10">
-                        <tr>
-                            <th class="text-left px-3 py-2 font-medium">Pessoa</th>
-                            <th class="text-left px-3 py-2 font-medium">Número</th>
-                            <th class="text-left px-3 py-2 font-medium">Mensagem</th>
-                            <th class="text-center px-3 py-2 font-medium w-20">Status</th>
-                            <th class="text-center px-3 py-2 font-medium w-32">Data Envio</th>
-                            <th class="text-center px-2 py-2 font-medium w-10"></th>
-                        </tr>
-                    </thead>
-                    <tbody id="contacts-tbody"></tbody>
-                </table>
-            </div>
-
-            <div class="flex items-center gap-3 mt-4">
-                <button onclick="addContactRow()"
-                    class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-md transition-colors">
-                    + Adicionar Contato
-                </button>
-                <button onclick="saveContacts()" id="btn-save-contacts"
-                    class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white text-sm font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-                    Salvar Alterações
-                </button>
-                <input type="file" id="file-input" accept=".xlsx,.xls" class="hidden">
-                <button onclick="document.getElementById('file-input').click()" title="Carregar planilha .xlsx"
-                    class="ml-auto px-3 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-600 hover:text-gray-800 rounded-md transition-colors">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m4-8l-4-4m0 0l-4 4m4-4v12"/>
-                    </svg>
-                </button>
-                <button onclick="downloadContacts()" id="btn-download-contacts" title="Baixar planilha atualizada"
-                    class="px-3 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-600 hover:text-gray-800 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-                    </svg>
-                </button>
-            </div>
-            <p id="upload-status" class="mt-2 text-sm text-gray-400"></p>
-            <p id="contacts-status" class="mt-2 text-sm text-gray-400"></p>
-        </section>
-
-        <!-- Configuração (dropdown) -->
-        <section class="mb-5 bg-white rounded-lg border border-gray-200 shadow-sm">
-            <details id="config-details">
-                <summary class="px-5 py-4 cursor-pointer select-none flex items-center justify-between">
-                    <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Configuração</h2>
-                    <div class="flex items-center gap-3">
-                        <span id="cfg-total-msgs-header" class="text-xs text-gray-400 font-medium"></span>
-                        <svg class="config-chevron h-4 w-4 text-gray-400 transition-transform" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+                <div class="flex items-center gap-3 px-4 py-2 border-t border-gray-100 flex-shrink-0">
+                    <button onclick="addContactRow()"
+                        class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-md transition-colors">
+                        + Adicionar Contato
+                    </button>
+                    <button onclick="saveContacts()" id="btn-save-contacts"
+                        class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white text-sm font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                        Salvar Alterações
+                    </button>
+                    <input type="file" id="file-input" accept=".xlsx,.xls" class="hidden">
+                    <button onclick="document.getElementById('file-input').click()" title="Carregar planilha .xlsx"
+                        class="ml-auto px-2 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-600 hover:text-gray-800 rounded-md transition-colors">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m4-8l-4-4m0 0l-4 4m4-4v12"/>
                         </svg>
-                    </div>
-                </summary>
-                <div class="px-5 pb-5">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm text-gray-600 mb-1">Mensagens por Rodada</label>
-                            <input type="number" id="cfg-msgs" value="5" min="1" max="50"
-                                class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-sm text-gray-600 mb-1">Total de Rodadas</label>
-                            <input type="number" id="cfg-rodadas" value="3" min="1" max="100"
-                                class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-sm text-gray-600 mb-1">Intervalo entre Rodadas (min)</label>
-                            <input type="number" id="cfg-intervalo" value="30" min="1" max="480"
-                                class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
-                        </div>
-                        <div class="flex gap-3">
-                            <div class="flex-1">
-                                <label class="block text-sm text-gray-600 mb-1">Delay mín. entre msgs (s)</label>
-                                <input type="number" id="cfg-delay-min" value="15" min="1" max="300"
-                                    class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
-                            </div>
-                            <div class="flex-1">
-                                <label class="block text-sm text-gray-600 mb-1">Delay máx. entre msgs (s)</label>
-                                <input type="number" id="cfg-delay-max" value="30" min="1" max="300"
-                                    class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
-                            </div>
-                        </div>
-                        <div class="flex gap-3">
-                            <div class="flex-1">
-                                <label class="block text-sm text-gray-600 mb-1">Hora Início</label>
-                                <input type="number" id="cfg-hora-inicio" value="8" min="0" max="23"
-                                    class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
-                            </div>
-                            <div class="flex-1">
-                                <label class="block text-sm text-gray-600 mb-1">Hora Fim</label>
-                                <input type="number" id="cfg-hora-fim" value="18" min="0" max="23"
-                                    class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Checkbox fim de semana -->
-                    <div class="mt-4 pt-4 border-t border-gray-100">
-                        <label class="inline-flex items-center gap-2 cursor-pointer">
-                            <input type="checkbox" id="cfg-skip-weekends" checked
-                                class="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500">
-                            <span class="text-sm text-gray-700">Não enviar nos finais de semana</span>
-                        </label>
-                    </div>
-
-                    <div class="mt-4 flex items-center justify-between">
-                        <button onclick="saveConfig()"
-                            class="px-5 py-2 bg-gray-800 hover:bg-gray-700 text-white text-sm font-medium rounded-md transition-colors">
-                            Salvar Configuração
-                        </button>
-                        <span id="cfg-total-msgs" class="text-xs text-gray-400 font-medium"></span>
-                    </div>
-                    <p id="config-status" class="mt-2 text-sm text-gray-400"></p>
+                    </button>
+                    <button onclick="downloadContacts()" id="btn-download-contacts" title="Baixar planilha atualizada"
+                        class="px-2 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-600 hover:text-gray-800 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                        </svg>
+                    </button>
                 </div>
-            </details>
-        </section>
+                <p id="upload-status" class="px-4 pb-2 text-sm text-gray-400"></p>
+                <p id="contacts-status" class="px-4 pb-2 text-sm text-gray-400"></p>
+            </section>
+        </div>
 
-        <!-- Controles -->
-        <section class="mb-5 bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
-            <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Controles</h2>
-            <div class="flex flex-col sm:flex-row gap-3">
-                <button onclick="startSending()" id="btn-start"
-                    class="flex-1 px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-                    Iniciar Envio
-                </button>
-                <button onclick="stopSending()" id="btn-stop"
-                    class="flex-1 px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    disabled>
-                    Parar Envio
-                </button>
-            </div>
-            <p id="control-status" class="mt-2 text-sm text-gray-400"></p>
-        </section>
+        <!-- RIGHT: Sidebar -->
+        <div class="w-80 flex-shrink-0 flex flex-col overflow-hidden border-l border-gray-200 bg-white">
+            <div class="flex-1 flex flex-col overflow-y-auto p-3 gap-3">
 
-        <!-- Log -->
-        <section class="bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
-            <div class="flex items-center justify-between mb-3">
-                <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Log</h2>
-                <button onclick="clearLogs()"
-                    class="text-xs text-gray-400 hover:text-gray-600 transition-colors">
-                    Limpar
-                </button>
-            </div>
-            <div id="log-area"
-                class="log-area bg-gray-900 text-gray-300 rounded-md p-4 h-56 overflow-y-auto">
-                <p class="text-gray-500">Aguardando atividade...</p>
-            </div>
-        </section>
+                <!-- Status (compact 2x2 grid) -->
+                <section class="flex-shrink-0">
+                    <h2 class="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Status</h2>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="bg-gray-50 rounded-md p-2 text-center">
+                            <p class="text-xs text-gray-500">Estado</p>
+                            <p id="status-state" class="text-sm font-semibold mt-0.5 text-gray-700">—</p>
+                        </div>
+                        <div class="bg-gray-50 rounded-md p-2 text-center">
+                            <p class="text-xs text-gray-500">Rodada</p>
+                            <p id="status-round" class="text-sm font-semibold mt-0.5 text-gray-700">0/0</p>
+                        </div>
+                        <div class="bg-gray-50 rounded-md p-2 text-center">
+                            <p class="text-xs text-gray-500">Enviadas</p>
+                            <p id="status-sent" class="text-sm font-semibold mt-0.5 text-green-700">0</p>
+                        </div>
+                        <div class="bg-gray-50 rounded-md p-2 text-center">
+                            <p class="text-xs text-gray-500">Pendentes</p>
+                            <p id="status-pending" class="text-sm font-semibold mt-0.5 text-amber-700">0</p>
+                        </div>
+                    </div>
+                </section>
 
-        <!-- Footer -->
-        <footer class="text-center mt-6 text-gray-400 text-xs">
-            <p>WhatsApp Automação Web</p>
-        </footer>
+                <!-- Configuração (collapsible) -->
+                <section class="flex-shrink-0">
+                    <details id="config-details">
+                        <summary class="cursor-pointer select-none flex items-center justify-between py-1">
+                            <h2 class="text-xs font-semibold text-gray-600 uppercase tracking-wide">Configuração</h2>
+                            <div class="flex items-center gap-2">
+                                <span id="cfg-total-msgs-header" class="text-xs text-gray-400 font-medium"></span>
+                                <svg class="config-chevron h-3 w-3 text-gray-400 transition-transform" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+                                </svg>
+                            </div>
+                        </summary>
+                        <div class="pt-2">
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label class="block text-xs text-gray-600 mb-0.5">Msgs/Rodada</label>
+                                    <input type="number" id="cfg-msgs" value="5" min="1" max="50"
+                                        class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-600 mb-0.5">Rodadas</label>
+                                    <input type="number" id="cfg-rodadas" value="3" min="1" max="100"
+                                        class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-600 mb-0.5">Intervalo (min)</label>
+                                    <input type="number" id="cfg-intervalo" value="30" min="1" max="480"
+                                        class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
+                                </div>
+                                <div class="flex gap-1">
+                                    <div class="flex-1">
+                                        <label class="block text-xs text-gray-600 mb-0.5">Delay mín(s)</label>
+                                        <input type="number" id="cfg-delay-min" value="15" min="1" max="300"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
+                                    </div>
+                                    <div class="flex-1">
+                                        <label class="block text-xs text-gray-600 mb-0.5">Delay máx(s)</label>
+                                        <input type="number" id="cfg-delay-max" value="30" min="1" max="300"
+                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-600 mb-0.5">Hora Início</label>
+                                    <input type="time" id="cfg-hora-inicio" value="08:00"
+                                        class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-600 mb-0.5">Hora Fim</label>
+                                    <input type="time" id="cfg-hora-fim" value="18:00"
+                                        class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
+                                </div>
+                            </div>
+
+                            <div class="mt-2 pt-2 border-t border-gray-100">
+                                <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                                    <input type="checkbox" id="cfg-skip-weekends" checked
+                                        class="w-3.5 h-3.5 text-green-600 border-gray-300 rounded focus:ring-green-500">
+                                    <span class="text-xs text-gray-700">Não enviar nos finais de semana</span>
+                                </label>
+                            </div>
+
+                            <div class="mt-1.5">
+                                <label class="inline-flex items-center gap-1.5 cursor-pointer"
+                                    title="Ao ativar, o envio simula comportamento humano:&#10;• Digitação caractere por caractere com pausas variáveis&#10;• Scroll aleatório na lista de conversas antes de enviar&#10;• Delays com distribuição gaussiana (menos previsível)&#10;• Variação de ±1-2 mensagens por rodada&#10;• Pausas extras como se estivesse relendo a mensagem">
+                                    <input type="checkbox" id="cfg-human-behavior"
+                                        class="w-3.5 h-3.5 text-green-600 border-gray-300 rounded focus:ring-green-500">
+                                    <span class="text-xs text-gray-700">Comportamento humano</span>
+                                </label>
+                            </div>
+
+                            <div class="mt-2 flex items-center justify-between">
+                                <button onclick="saveConfig()"
+                                    class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white text-xs font-medium rounded-md transition-colors">
+                                    Salvar Config
+                                </button>
+                                <span id="cfg-total-msgs" class="text-xs text-gray-400 font-medium"></span>
+                            </div>
+                            <p id="config-status" class="mt-1 text-xs text-gray-400"></p>
+                        </div>
+                    </details>
+                </section>
+
+                <!-- Controles -->
+                <section class="flex-shrink-0">
+                    <h2 class="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Controles</h2>
+                    <div class="flex gap-2">
+                        <button onclick="startSending()" id="btn-start"
+                            class="flex-1 px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                            Iniciar Envio
+                        </button>
+                        <button onclick="stopSending()" id="btn-stop"
+                            class="flex-1 px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            disabled>
+                            Parar Envio
+                        </button>
+                    </div>
+                    <p id="control-status" class="mt-1 text-xs text-gray-400"></p>
+                </section>
+
+                <!-- Log (fills remaining space) -->
+                <section class="flex-1 min-h-0 flex flex-col">
+                    <div class="flex items-center justify-between mb-1">
+                        <h2 class="text-xs font-semibold text-gray-600 uppercase tracking-wide">Log</h2>
+                        <button onclick="clearLogs()"
+                            class="text-xs text-gray-400 hover:text-gray-600 transition-colors">
+                            Limpar
+                        </button>
+                    </div>
+                    <div id="log-area"
+                        class="log-area bg-gray-900 text-gray-300 rounded-md p-3 flex-1 min-h-0 overflow-y-auto">
+                        <p class="text-gray-500">Aguardando atividade...</p>
+                    </div>
+                </section>
+
+            </div>
+        </div>
+
     </div>
 
     <script>
@@ -275,7 +294,7 @@
             };
             const info = stateMap[status.state] || { text: status.state, cls: 'text-gray-700' };
             stateEl.textContent = info.text;
-            stateEl.className = `text-sm font-semibold mt-1 ${info.cls}`;
+            stateEl.className = `text-sm font-semibold mt-0.5 ${info.cls}`;
 
             document.getElementById('status-round').textContent = `${status.current_round}/${totalRodadas}`;
             document.getElementById('status-sent').textContent = status.messages_sent;
@@ -320,6 +339,9 @@
                     }
                     if ('delay_max' in status.config) {
                         document.getElementById('cfg-delay-max').value = status.config.delay_max;
+                    }
+                    if ('human_behavior' in status.config) {
+                        document.getElementById('cfg-human-behavior').checked = status.config.human_behavior;
                     }
                     updateTotalMsgsCalc();
                 }
@@ -373,7 +395,11 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    statusEl.textContent = `${input.files[0].name} carregada: ${data.total} contatos (${data.pendentes} pendentes)`;
+                    let msg = `${input.files[0].name} carregada: ${data.total} contatos (${data.pendentes} pendentes)`;
+                    if (data.duplicatas_removidas > 0) {
+                        msg += ` — ${data.duplicatas_removidas} duplicata(s) removida(s)`;
+                    }
+                    statusEl.textContent = msg;
                     statusEl.className = 'mt-2 text-sm text-green-600';
                     // Carrega os contatos na tabela editável
                     loadContacts();
@@ -392,6 +418,31 @@
             const div = document.createElement('div');
             div.textContent = str == null ? '' : String(str);
             return div.innerHTML;
+        }
+
+        // Formata número para exibição: (XX)XXXXX-XXXX
+        function formatPhone(raw) {
+            const digits = String(raw).replace(/\D/g, '');
+            if (!digits || digits.toLowerCase() === 'nan') return '';
+            if (digits.length === 11) {
+                return `(${digits.slice(0,2)})${digits.slice(2,7)}-${digits.slice(7)}`;
+            }
+            if (digits.length === 10) {
+                return `(${digits.slice(0,2)})${digits.slice(2,6)}-${digits.slice(6)}`;
+            }
+            return digits;
+        }
+
+        // Máscara em tempo real ao digitar
+        function maskPhone(input) {
+            let digits = input.value.replace(/\D/g, '');
+            if (digits.length > 11) digits = digits.slice(0, 11);
+            let formatted = '';
+            if (digits.length > 0) formatted += '(' + digits.slice(0, 2);
+            if (digits.length >= 2) formatted += ')';
+            if (digits.length > 2) formatted += digits.slice(2, 7);
+            if (digits.length > 7) formatted += '-' + digits.slice(7);
+            input.value = formatted;
         }
 
         // Converte "2026-07-12 14:16:30" -> "12/07/2026 - 14:16"
@@ -420,13 +471,19 @@
                 <button onclick="resetContact(this)" title="Reenviar (limpa status e data)"
                     class="contact-reset text-gray-300 hover:text-green-600 transition-colors text-base leading-none ${processado ? '' : 'hidden'}">&#8635;</button>`;
 
+            // Nome curto do arquivo (só o nome, sem path)
+            const arquivoPath = contact.arquivo || '';
+            const arquivoNome = arquivoPath ? arquivoPath.split(/[/\\]/).pop() : '';
+
             tr.innerHTML = `
                 <td class="px-2 py-1">
-                    <input type="text" value="${escapeHtml(contact.pessoa)}"
+                    <input type="text" value="${escapeHtml(contact.pessoa)}" title="${escapeHtml(contact.pessoa)}"
+                        oninput="this.title = this.value"
                         class="contact-pessoa w-full border border-transparent hover:border-gray-200 focus:border-green-500 focus:ring-1 focus:ring-green-500 rounded px-2 py-1 text-sm focus:outline-none">
                 </td>
                 <td class="px-2 py-1">
-                    <input type="text" value="${escapeHtml(contact.numero)}"
+                    <input type="text" value="${formatPhone(contact.numero)}"
+                        oninput="maskPhone(this)"
                         class="contact-numero w-full border border-transparent hover:border-gray-200 focus:border-green-500 focus:ring-1 focus:ring-green-500 rounded px-2 py-1 text-sm focus:outline-none">
                 </td>
                 <td class="px-2 py-1">
@@ -434,12 +491,22 @@
                         oninput="this.title = this.value"
                         class="contact-mensagem w-full border border-transparent hover:border-gray-200 focus:border-green-500 focus:ring-1 focus:ring-green-500 rounded px-2 py-1 text-sm focus:outline-none">
                 </td>
+                <td class="px-2 py-1">
+                    <div class="flex items-center gap-1">
+                        <span class="contact-arquivo-nome text-xs text-gray-500 truncate max-w-[100px]" title="${escapeHtml(arquivoPath)}">${escapeHtml(arquivoNome) || '<span class=&quot;text-gray-300&quot;>—</span>'}</span>
+                        <button onclick="selectMediaForContact(this)" title="Selecionar arquivo"
+                            class="contact-arquivo-btn text-gray-400 hover:text-green-600 transition-colors text-sm flex-shrink-0">📎</button>
+                        <button onclick="clearMediaForContact(this)" title="Remover arquivo" 
+                            class="text-gray-300 hover:text-red-500 transition-colors text-xs flex-shrink-0 ${arquivoPath ? '' : 'hidden'}">✕</button>
+                    </div>
+                    <input type="hidden" class="contact-arquivo" value="${escapeHtml(arquivoPath)}">
+                </td>
                 <td class="contact-status px-3 py-1 text-center">${statusBadgeHtml(contact.enviado, contact.invalido)}</td>
-                <td class="contact-data px-3 py-1 text-center text-xs text-gray-500">${formatDataEnvio(contact.data_envio)}</td>
-                <td class="px-2 py-1 text-center whitespace-nowrap">
+                <td class="contact-data px-1 py-1 text-center text-xs text-gray-500">${formatDataEnvio(contact.data_envio)}</td>
+                <td class="px-1 py-1 text-center">
                     ${resetBtn}
                     <button onclick="this.closest('tr').remove(); updateContactsCount();"
-                        class="text-gray-300 hover:text-red-500 transition-colors text-lg leading-none ml-2" title="Remover">&times;</button>
+                        class="text-gray-300 hover:text-red-500 transition-colors text-lg leading-none" title="Remover">&times;</button>
                 </td>
             `;
 
@@ -525,7 +592,7 @@
         }
 
         function addContactRow() {
-            renderContactRow({ pessoa: '', numero: '', mensagem: '', enviado: false, invalido: false, data_envio: '' });
+            renderContactRow({ pessoa: '', numero: '', mensagem: '', arquivo: '', enviado: false, invalido: false, data_envio: '' });
             updateContactsCount();
             document.getElementById('contacts-section').classList.remove('hidden');
             // Foca no campo Pessoa da nova linha
@@ -540,8 +607,9 @@
             rows.forEach(tr => {
                 contacts.push({
                     pessoa: tr.querySelector('.contact-pessoa').value,
-                    numero: tr.querySelector('.contact-numero').value,
+                    numero: tr.querySelector('.contact-numero').value.replace(/\D/g, ''),
                     mensagem: tr.querySelector('.contact-mensagem').value,
+                    arquivo: tr.querySelector('.contact-arquivo').value,
                     enviado: tr.dataset.enviado === '1',
                     invalido: tr.dataset.invalido === '1',
                     data_envio: tr.dataset.dataEnvio || '',
@@ -604,7 +672,30 @@
             setTimeout(() => { statusEl.textContent = ''; }, 3000);
         }
 
+
+
         // --- Config ---
+        function loadConfigFromLocalStorage() {
+            const saved = localStorage.getItem('whatsapp_config');
+            if (!saved) return;
+            try {
+                const config = JSON.parse(saved);
+                if (config.msgs_por_rodada) document.getElementById('cfg-msgs').value = config.msgs_por_rodada;
+                if (config.total_rodadas) document.getElementById('cfg-rodadas').value = config.total_rodadas;
+                if (config.intervalo_rodadas_min) document.getElementById('cfg-intervalo').value = config.intervalo_rodadas_min;
+                if (config.hora_inicio) document.getElementById('cfg-hora-inicio').value = config.hora_inicio;
+                if (config.hora_fim) document.getElementById('cfg-hora-fim').value = config.hora_fim;
+                if ('skip_weekends' in config) document.getElementById('cfg-skip-weekends').checked = config.skip_weekends;
+                if (config.delay_min) document.getElementById('cfg-delay-min').value = config.delay_min;
+                if (config.delay_max) document.getElementById('cfg-delay-max').value = config.delay_max;
+                if ('human_behavior' in config) document.getElementById('cfg-human-behavior').checked = config.human_behavior;
+                updateTotalMsgsCalc();
+                configLoaded = true;
+            } catch (e) {
+                console.warn('Erro ao carregar config do localStorage:', e);
+            }
+        }
+
         async function saveConfig() {
             const statusEl = document.getElementById('config-status');
 
@@ -612,12 +703,16 @@
                 msgs_por_rodada: parseInt(document.getElementById('cfg-msgs').value),
                 total_rodadas: parseInt(document.getElementById('cfg-rodadas').value),
                 intervalo_rodadas_min: parseInt(document.getElementById('cfg-intervalo').value),
-                hora_inicio: parseInt(document.getElementById('cfg-hora-inicio').value),
-                hora_fim: parseInt(document.getElementById('cfg-hora-fim').value),
+                hora_inicio: document.getElementById('cfg-hora-inicio').value,
+                hora_fim: document.getElementById('cfg-hora-fim').value,
                 skip_weekends: document.getElementById('cfg-skip-weekends').checked,
                 delay_min: parseInt(document.getElementById('cfg-delay-min').value),
                 delay_max: parseInt(document.getElementById('cfg-delay-max').value),
+                human_behavior: document.getElementById('cfg-human-behavior').checked,
             };
+
+            // Salva no localStorage
+            localStorage.setItem('whatsapp_config', JSON.stringify(config));
 
             try {
                 const response = await fetch('/config', {
@@ -701,13 +796,18 @@
             }
         }
 
+
         // --- Cálculo total de mensagens ---
         function updateTotalMsgsCalc() {
             const msgs = parseInt(document.getElementById('cfg-msgs').value) || 0;
             const rodadas = parseInt(document.getElementById('cfg-rodadas').value) || 0;
             const intervalo = parseInt(document.getElementById('cfg-intervalo').value) || 0;
-            const horaInicio = parseInt(document.getElementById('cfg-hora-inicio').value) || 0;
-            const horaFim = parseInt(document.getElementById('cfg-hora-fim').value) || 0;
+            const horaInicioStr = document.getElementById('cfg-hora-inicio').value || "08:00";
+            const horaFimStr = document.getElementById('cfg-hora-fim').value || "18:00";
+            const [hiH, hiM] = horaInicioStr.split(':').map(Number);
+            const [hfH, hfM] = horaFimStr.split(':').map(Number);
+            const inicioMin = hiH * 60 + (hiM || 0);
+            const fimMin = hfH * 60 + (hfM || 0);
             const delayMin = parseInt(document.getElementById('cfg-delay-min').value) || 15;
             const delayMax = parseInt(document.getElementById('cfg-delay-max').value) || 30;
             const skipWeekends = document.getElementById('cfg-skip-weekends').checked;
@@ -722,8 +822,7 @@
             const tempoTotalMin = (rodadas * tempoEnvioRodadaMin) + ((rodadas - 1) * intervalo);
 
             // Janela diária disponível (em minutos)
-            const janelaHoras = horaFim > horaInicio ? (horaFim - horaInicio) : 0;
-            const janelaDiariaMin = janelaHoras * 60;
+            const janelaDiariaMin = fimMin > inicioMin ? (fimMin - inicioMin) : 0;
 
             // Estimativa de dias necessários
             let diasTexto = '';
@@ -760,6 +859,76 @@
             if (innerEl) innerEl.textContent = texto;
         }
 
+
+        // --- Media por Contato ---
+        let _mediaTargetRow = null; // Referência à linha que está recebendo mídia
+
+        function selectMediaForContact(btn) {
+            _mediaTargetRow = btn.closest('tr');
+            // Cria um input file temporário com suporte a múltiplos arquivos
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.jpg,.jpeg,.png,.pdf,.mp3,.ogg,.opus';
+            input.multiple = true;
+            input.onchange = async () => {
+                if (!input.files.length || !_mediaTargetRow) return;
+
+                const paths = [];
+                const names = [];
+
+                for (const file of input.files) {
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    try {
+                        const response = await fetch('/upload-media', { method: 'POST', body: formData });
+                        const data = await response.json();
+
+                        if (response.ok) {
+                            paths.push(data.path);
+                            names.push(data.filename);
+                        } else {
+                            alert(`Erro ao enviar ${file.name}: ${data.detail}`);
+                        }
+                    } catch (err) {
+                        alert(`Erro de conexão ao enviar ${file.name}: ${err.message}`);
+                    }
+                }
+
+                if (paths.length > 0) {
+                    // Acumula com arquivos já existentes
+                    const existing = _mediaTargetRow.querySelector('.contact-arquivo').value;
+                    const allPaths = existing ? existing + ', ' + paths.join(', ') : paths.join(', ');
+                    const allNames = [];
+                    if (existing) {
+                        // Extrai nomes dos paths existentes
+                        existing.split(',').forEach(p => {
+                            const n = p.trim().split(/[/\\]/).pop();
+                            if (n) allNames.push(n);
+                        });
+                    }
+                    allNames.push(...names);
+
+                    _mediaTargetRow.querySelector('.contact-arquivo').value = allPaths;
+                    _mediaTargetRow.querySelector('.contact-arquivo-nome').textContent = allNames.join(', ');
+                    _mediaTargetRow.querySelector('.contact-arquivo-nome').title = allPaths;
+                    // Mostra botão de remover
+                    _mediaTargetRow.querySelectorAll('td')[3].querySelector('button:last-of-type').classList.remove('hidden');
+                }
+
+                _mediaTargetRow = null;
+            };
+            input.click();
+        }
+
+        function clearMediaForContact(btn) {
+            const tr = btn.closest('tr');
+            tr.querySelector('.contact-arquivo').value = '';
+            tr.querySelector('.contact-arquivo-nome').innerHTML = '<span class="text-gray-300">—</span>';
+            tr.querySelector('.contact-arquivo-nome').title = '';
+            btn.classList.add('hidden');
+        }
+
         // --- Event Listeners ---
         document.getElementById('file-input').addEventListener('change', function() {
             if (this.files.length) {
@@ -779,12 +948,36 @@
 
         // --- Initialize ---
         document.addEventListener('DOMContentLoaded', () => {
+            // Carrega config salva do localStorage (antes do SSE)
+            loadConfigFromLocalStorage();
             connectSSE();
             // Carrega contatos caso já exista planilha de sessão anterior
             loadContacts();
             // Calcula total inicial
             updateTotalMsgsCalc();
+            // Verifica sessão salva
+            checkSessionStatus();
         });
+
+        // --- Session Status ---
+        async function checkSessionStatus() {
+            const badge = document.getElementById('session-badge');
+            try {
+                const response = await fetch('/session-status');
+                const data = await response.json();
+                if (data.logged_in) {
+                    const lastUsed = data.last_used || '';
+                    badge.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700';
+                    badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-500"></span> Sessão ativa <span class="text-green-500 font-normal">· ${lastUsed}</span>`;
+                } else {
+                    badge.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500';
+                    badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-gray-400"></span> Sem sessão';
+                }
+            } catch (err) {
+                badge.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500';
+                badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-gray-400"></span> Sem sessão';
+            }
+        }
     </script>
 </body>
 </html>

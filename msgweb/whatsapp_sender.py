@@ -4,6 +4,7 @@ Adaptado do main.py original para funcionar como classe reutilizável.
 """
 
 import logging
+import math
 import os
 import random
 import time
@@ -111,9 +112,35 @@ class WhatsAppSender:
         chrome_options.add_argument("--start-maximized")
         chrome_options.add_argument("--disable-notifications")
         chrome_options.add_argument("--disable-infobars")
+
+        # Anti-detecção: remove flags que denunciam automação
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option("useAutomationExtension", False)
+
         # Manter sessão do WhatsApp
         user_data_dir = os.path.join(os.getcwd(), "chrome_profile")
         chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
+
+        # Mata chromedriver anterior que possa ter ficado travado (não afeta Chrome pessoal)
+        try:
+            import subprocess
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "chromedriver.exe"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            time.sleep(1)
+        except Exception:
+            pass
+
+        # Remove arquivos de lock órfãos do perfil
+        for lock_file in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+            lock_path = os.path.join(user_data_dir, lock_file)
+            if os.path.exists(lock_path):
+                try:
+                    os.remove(lock_path)
+                except OSError:
+                    pass
 
         file_logger.info(f"Selenium versão: {webdriver.__version__ if hasattr(webdriver, '__version__') else 'desconhecida'}")
         file_logger.info(f"Chrome profile: {user_data_dir}")
@@ -142,6 +169,16 @@ class WhatsAppSender:
                 file_logger.error(f"Falha total ao iniciar Chrome: {e2}\n{traceback.format_exc()}")
                 raise RuntimeError(f"Não foi possível iniciar o Chrome: {e2}")
 
+        # Anti-detecção: remove navigator.webdriver via CDP
+        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+            "source": """
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt', 'en-US', 'en']});
+                window.chrome = { runtime: {} };
+            """
+        })
+
         # Log das capabilities (versão do Chrome)
         try:
             caps = driver.capabilities
@@ -154,6 +191,13 @@ class WhatsAppSender:
 
         return driver
 
+    def _parse_time(self, time_str) -> tuple:
+        """Converte 'HH:MM' ou int (legado) para tupla (hora, minuto)."""
+        if isinstance(time_str, int):
+            return (time_str, 0)
+        parts = str(time_str).split(":")
+        return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+
     def _is_business_hours(self) -> bool:
         """Verifica se está no horário comercial configurado."""
         now = datetime.now()
@@ -161,9 +205,13 @@ class WhatsAppSender:
         skip_weekends = self.config.get("skip_weekends", True)
         if skip_weekends and now.weekday() >= 5:
             return False
-        hora_inicio = self.config.get("hora_inicio", 8)
-        hora_fim = self.config.get("hora_fim", 18)
-        return hora_inicio <= now.hour < hora_fim
+        hora_inicio_h, hora_inicio_m = self._parse_time(self.config.get("hora_inicio", "08:00"))
+        hora_fim_h, hora_fim_m = self._parse_time(self.config.get("hora_fim", "18:00"))
+        # Converte tudo para minutos do dia para comparar
+        agora_min = now.hour * 60 + now.minute
+        inicio_min = hora_inicio_h * 60 + hora_inicio_m
+        fim_min = hora_fim_h * 60 + hora_fim_m
+        return inicio_min <= agora_min < fim_min
 
     def _wait_for_business_hours(self):
         """Aguarda até o próximo horário comercial."""
@@ -189,6 +237,11 @@ class WhatsAppSender:
                 df[col] = ""
             else:
                 df[col] = df[col].fillna("").astype(str).str.strip().str.upper()
+        # Coluna Arquivo (caminho de mídia por contato)
+        if "Arquivo" not in df.columns:
+            df["Arquivo"] = ""
+        else:
+            df["Arquivo"] = df["Arquivo"].fillna("").astype(str).str.strip()
         return df
 
     def _save_contacts(self, df: pd.DataFrame):
@@ -253,24 +306,110 @@ class WhatsAppSender:
 
         return True, ""
 
-    def _send_message(self, pessoa: str, numero: str, mensagem: str) -> bool:
+    def _human_behavior_enabled(self) -> bool:
+        """Verifica se o modo comportamento humano está ativo."""
+        return self.config.get("human_behavior", False)
+
+    def _gaussian_delay(self, d_min: float, d_max: float) -> float:
+        """
+        Gera um delay com distribuição gaussiana (mais natural que uniforme).
+        A média fica no centro do intervalo, com 95% dos valores dentro do range.
+        """
+        mean = (d_min + d_max) / 2
+        std_dev = (d_max - d_min) / 4  # 95% dentro do intervalo (2 desvios)
+        delay = random.gauss(mean, std_dev)
+        # Clamp para não sair dos limites
+        return max(d_min * 0.8, min(d_max * 1.2, delay))
+
+    def _human_type(self, element, text: str):
+        """
+        Digita texto caractere por caractere com micro-pausas variáveis,
+        simulando digitação humana.
+        """
+        for char in text:
+            element.send_keys(char)
+            # Pausa entre teclas: mais rápido em sequência, mais lento em espaços/pontuação
+            if char in (' ', '.', ',', '!', '?', '\n'):
+                time.sleep(random.uniform(0.08, 0.25))
+            else:
+                time.sleep(random.uniform(0.03, 0.12))
+            # Ocasionalmente uma pausa maior (como se pensasse)
+            if random.random() < 0.02:
+                time.sleep(random.uniform(0.3, 0.8))
+
+    def _random_scroll(self):
+        """
+        Faz scroll aleatório no painel de conversas antes de enviar,
+        simulando navegação humana.
+        """
+        try:
+            pane = self._driver.find_element(By.CSS_SELECTOR, "#pane-side")
+            # Scroll para cima ou para baixo aleatoriamente
+            direction = random.choice([-1, 1])
+            amount = random.randint(100, 400) * direction
+            self._driver.execute_script(
+                "arguments[0].scrollTop += arguments[1];", pane, amount
+            )
+            time.sleep(random.uniform(0.5, 1.5))
+            # Volta ao topo
+            self._driver.execute_script("arguments[0].scrollTop = 0;", pane)
+            time.sleep(random.uniform(0.3, 0.8))
+        except Exception:
+            pass  # Se falhar o scroll, segue normalmente
+
+    def _get_batch_size(self, msgs_por_rodada: int) -> int:
+        """
+        Retorna o tamanho do batch com variação aleatória quando
+        comportamento humano está ativo (±1-2 mensagens).
+        """
+        if not self._human_behavior_enabled():
+            return msgs_por_rodada
+        variacao = random.choice([-2, -1, 0, 1, 2])
+        return max(1, msgs_por_rodada + variacao)
+
+    def _send_message(self, pessoa: str, numero: str, mensagem: str, arquivo: str = "") -> bool:
         """
         Envia uma mensagem para um contato.
+        Se há arquivo associado, envia primeiro o texto e depois o anexo separadamente.
+        Se não há arquivo, envia apenas texto.
         Retorna True se enviou com sucesso, False se falhou.
         Levanta TimeoutException se número é inválido.
         """
         # Formata mensagem
-        texto = f"Oi {pessoa}, {mensagem}"
-        texto_encoded = quote(texto)
+        pessoa_limpo = pessoa.strip() if pessoa else ""
+        if pessoa_limpo and pessoa_limpo.lower() not in ("nan", "none", ""):
+            texto = f"Oi {pessoa_limpo}, {mensagem}"
+        else:
+            texto = mensagem
 
         # Formata número (remove caracteres não numéricos e notação float)
         numero_limpo = self._clean_number(numero)
         if not numero_limpo.startswith("55"):
             numero_limpo = "55" + numero_limpo
 
-        url = f"https://web.whatsapp.com/send?phone={numero_limpo}&text={texto_encoded}"
+        human = self._human_behavior_enabled()
+        
+        # Suporta múltiplos arquivos separados por vírgula
+        media_files = []
+        if arquivo:
+            for f in arquivo.split(","):
+                f = f.strip()
+                if f and os.path.isfile(f):
+                    media_files.append(f)
+        has_media = len(media_files) > 0
+
+        # Navega para o chat (sempre sem texto pré-preenchido quando human ou mídia)
+        if human or has_media:
+            url = f"https://web.whatsapp.com/send?phone={numero_limpo}"
+        else:
+            texto_encoded = quote(texto)
+            url = f"https://web.whatsapp.com/send?phone={numero_limpo}&text={texto_encoded}"
 
         try:
+            # Scroll aleatório antes de navegar (simula olhar conversas)
+            if human:
+                self._random_scroll()
+
             self._driver.get(url)
 
             # Espera a página carregar (pane-side indica que o WhatsApp carregou)
@@ -285,17 +424,38 @@ class WhatsAppSender:
                 )
             )
 
-            # Pequena pausa antes de enviar
-            time.sleep(random.uniform(1.5, 3.0))
+            # Pequena pausa antes de interagir
+            if human:
+                time.sleep(random.uniform(1.5, 4.0))
+            else:
+                time.sleep(random.uniform(1.5, 3.0))
 
-            # Pressiona ENTER para enviar
+            # Passo 1: Envia a mensagem de texto
             input_field = self._driver.find_element(
                 By.CSS_SELECTOR, "footer div[contenteditable='true']"
             )
+
+            if human:
+                self._human_type(input_field, texto)
+                time.sleep(random.uniform(0.8, 2.0))
+            else:
+                # Se não usou human, o texto já está no campo via URL (exceto com mídia)
+                if has_media:
+                    input_field.send_keys(texto)
+                    time.sleep(random.uniform(0.5, 1.0))
+
             input_field.send_keys(Keys.ENTER)
 
-            # Espera um pouco para a mensagem ser enviada
-            time.sleep(random.uniform(2.0, 4.0))
+            if human:
+                time.sleep(random.uniform(2.0, 5.0))
+            else:
+                time.sleep(random.uniform(2.0, 4.0))
+
+            # Passo 2: Se tem mídia, envia os anexos separadamente (sem legenda)
+            if has_media:
+                for media_file in media_files:
+                    time.sleep(random.uniform(1.0, 2.0))
+                    self._send_media(media_file, pessoa, human)
 
             return True
 
@@ -305,6 +465,155 @@ class WhatsAppSender:
             file_logger.error(f"Erro no envio Selenium para {pessoa} ({numero_limpo}): {e}\n{traceback.format_exc()}")
             self._log(f"Erro ao enviar para {pessoa}: {e}")
             return False
+
+    def _send_media(self, media_path: str, pessoa: str, human: bool = False):
+        """
+        Envia um arquivo de mídia no chat atual (sem legenda).
+        A mensagem de texto já foi enviada separadamente antes desta chamada.
+        Sempre envia como DOCUMENTO para evitar que imagens virem figurinha.
+        
+        Raises Exception se falhar (para que _send_message retorne False).
+        """
+        # Passo 1: Clicar no botão de anexo (clip/plus icon)
+        attach_btn = None
+        attach_selectors = [
+            'span[data-icon="plus"]',
+            'span[data-icon="clip"]',
+            'span[data-icon="attach-menu-plus"]',
+            'div[title="Anexar"]',
+            'div[title="Attach"]',
+            'button[aria-label="Anexar"]',
+            'button[aria-label="Attach"]',
+        ]
+
+        for selector in attach_selectors:
+            try:
+                attach_btn = WebDriverWait(self._driver, 5).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                )
+                if attach_btn:
+                    break
+            except (TimeoutException, Exception):
+                continue
+
+        if not attach_btn:
+            raise RuntimeError(f"Não encontrou botão de anexo para {pessoa}")
+
+        attach_btn.click()
+        time.sleep(random.uniform(1.0, 2.0))
+
+        # Passo 2: Clicar na opção "Documento" do menu de anexo
+        # Isso garante que o arquivo seja enviado como documento, não como imagem/figurinha
+        doc_btn = None
+        file_input = None
+        doc_selectors = [
+            'span[data-icon="attach-document"]',
+            'button[aria-label="Documento"]',
+            'button[aria-label="Document"]',
+        ]
+
+        for selector in doc_selectors:
+            try:
+                el = self._driver.find_element(By.CSS_SELECTOR, selector)
+                if el:
+                    doc_btn = el
+                    break
+            except Exception:
+                continue
+
+        # Se encontrou o botão de documento, clica nele
+        if doc_btn:
+            try:
+                doc_btn.click()
+                time.sleep(random.uniform(0.5, 1.0))
+            except Exception:
+                pass
+
+        # Passo 3: Encontrar o input[type=file] para documento
+        # Procura o input de documento (accept="*" ou sem accept restritivo de imagem)
+        input_selectors = [
+            'input[accept="*"]',
+            'input[accept="*/*"]',
+        ]
+
+        for selector in input_selectors:
+            try:
+                file_input = WebDriverWait(self._driver, 5).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                if file_input:
+                    break
+            except (TimeoutException, Exception):
+                continue
+
+        # Fallback: pega todos os inputs file e escolhe o que NÃO é de imagem
+        if not file_input:
+            try:
+                inputs = self._driver.find_elements(By.CSS_SELECTOR, 'input[type="file"]')
+                for inp in inputs:
+                    accept = inp.get_attribute("accept") or ""
+                    # Pula inputs que aceitam apenas imagem/vídeo
+                    if "image/" in accept and "*" not in accept:
+                        continue
+                    file_input = inp
+                    break
+                # Se todos são de imagem, pega o último (geralmente é documento)
+                if not file_input and inputs:
+                    file_input = inputs[-1]
+            except Exception:
+                pass
+
+        if not file_input:
+            # Fecha o menu e levanta erro
+            try:
+                self._driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+            except Exception:
+                pass
+            raise RuntimeError(f"Não encontrou input de arquivo para {pessoa}")
+
+        # Envia o caminho do arquivo para o input
+        file_input.send_keys(os.path.abspath(media_path))
+
+        # Passo 4: Aguardar o modal de preview carregar
+        time.sleep(random.uniform(3.0, 5.0))
+
+        # Passo 5: Clicar no botão de enviar do modal
+        send_btn = None
+        send_selectors = [
+            'span[data-icon="wds-ic-send-filled"]',
+            'div[role="button"][aria-label*="Enviar"]',
+            'div[role="button"][aria-label*="Send"]',
+            'span[data-icon="send"]',
+            'span[data-icon="send-light"]',
+            'button[aria-label="Enviar"]',
+            'button[aria-label="Send"]',
+        ]
+
+        for selector in send_selectors:
+            try:
+                send_btn = WebDriverWait(self._driver, 10).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                )
+                if send_btn:
+                    break
+            except (TimeoutException, Exception):
+                continue
+
+        if not send_btn:
+            # Tenta fechar o modal
+            try:
+                self._driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+            except Exception:
+                pass
+            raise RuntimeError(f"Não encontrou botão enviar no modal para {pessoa}")
+
+        send_btn.click()
+
+        # Aguarda envio completar
+        time.sleep(random.uniform(3.0, 6.0))
+
+        self._log(f"📎 Anexo enviado para {pessoa}: {os.path.basename(media_path)}")
+        file_logger.info(f"Mídia enviada para {pessoa}: {media_path}")
 
     def start(self):
         """
@@ -329,20 +638,29 @@ class WhatsAppSender:
 
             # Abre WhatsApp Web
             self._driver.get("https://web.whatsapp.com")
-            self._set_state("waiting_qr")
-            self._log("WhatsApp Web aberto. Escaneie o QR Code no navegador...")
+            self._log("WhatsApp Web aberto. Verificando sessão...")
 
-            # Aguarda login (presença do pane-side confirma login)
+            # Verifica se a sessão já está ativa (login instantâneo via perfil salvo)
             try:
-                WebDriverWait(self._driver, 120).until(
+                WebDriverWait(self._driver, 8).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, "#pane-side"))
                 )
-                self._log("✅ Login realizado com sucesso!")
+                self._log("✅ Sessão ativa detectada! Login automático via perfil salvo.")
             except TimeoutException:
-                self._set_state("erro")
-                self._log("ERRO: Tempo esgotado aguardando QR Code. Tente novamente.")
-                self._cleanup()
-                return
+                # Sessão não estava ativa — precisa escanear QR Code
+                self._set_state("waiting_qr")
+                self._log("⏳ Sessão não encontrada. Escaneie o QR Code no navegador...")
+
+                try:
+                    WebDriverWait(self._driver, 120).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "#pane-side"))
+                    )
+                    self._log("✅ Login realizado com sucesso!")
+                except TimeoutException:
+                    self._set_state("erro")
+                    self._log("ERRO: Tempo esgotado aguardando QR Code. Tente novamente.")
+                    self._cleanup()
+                    return
 
             if self._should_stop():
                 self._set_state("parado")
@@ -398,17 +716,27 @@ class WhatsAppSender:
                     self._log("✅ Todos os contatos já foram processados!")
                     break
 
-                # Seleciona contatos desta rodada
-                batch = pending.head(msgs_por_rodada)
+                # Seleciona contatos desta rodada (com variação se human_behavior ativo)
+                batch_size = self._get_batch_size(msgs_por_rodada)
+                batch = pending.head(batch_size)
                 enviados_rodada = 0
 
                 for idx, row in batch.iterrows():
                     if self._should_stop():
                         break
 
+                    # Verifica horário comercial antes de cada mensagem
+                    self._wait_for_business_hours()
+                    if self._should_stop():
+                        break
+
                     pessoa = str(row["Pessoa"])
                     numero = self._clean_number(row["Número"])
                     mensagem = str(row["Mensagem"])
+                    arquivo = str(row.get("Arquivo", "")).strip()
+                    # Limpa valores inválidos do pandas
+                    if arquivo.lower() in ("", "nan", "none"):
+                        arquivo = ""
 
                     # Validação prévia: não aciona o Selenium se o contato
                     # não tiver número válido ou mensagem.
@@ -428,7 +756,7 @@ class WhatsAppSender:
                     self._log(f"Enviando para {pessoa} ({numero})...")
 
                     try:
-                        success = self._send_message(pessoa, numero, mensagem)
+                        success = self._send_message(pessoa, numero, mensagem, arquivo)
 
                         if success:
                             # Marca como enviado
@@ -467,7 +795,10 @@ class WhatsAppSender:
                     if not self._should_stop() and idx != batch.index[-1]:
                         d_min = self.config.get("delay_min", 15)
                         d_max = self.config.get("delay_max", 30)
-                        delay = random.uniform(d_min, d_max)
+                        if self._human_behavior_enabled():
+                            delay = self._gaussian_delay(d_min, d_max)
+                        else:
+                            delay = random.uniform(d_min, d_max)
                         self._log(f"Aguardando {delay:.0f}s antes da próxima mensagem...")
                         time.sleep(delay)
 
