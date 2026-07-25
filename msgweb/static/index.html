@@ -433,9 +433,18 @@
             return digits;
         }
 
-        // Máscara em tempo real ao digitar
+        // Formata o número apenas ao sair do campo (blur), digitação fica livre
         function maskPhone(input) {
+            // Não faz nada durante digitação — formatação aplicada no blur
+        }
+
+        function formatPhoneOnBlur(input) {
             let digits = input.value.replace(/\D/g, '');
+            if (!digits) { input.value = ''; return; }
+            // Remove zero à esquerda se digitou 0XX (ex: 019 -> 19)
+            if (digits.length >= 3 && digits.startsWith('0')) {
+                digits = digits.slice(1);
+            }
             if (digits.length > 11) digits = digits.slice(0, 11);
             let formatted = '';
             if (digits.length > 0) formatted += '(' + digits.slice(0, 2);
@@ -483,7 +492,7 @@
                 </td>
                 <td class="px-2 py-1">
                     <input type="text" value="${formatPhone(contact.numero)}"
-                        oninput="maskPhone(this)"
+                        onblur="formatPhoneOnBlur(this)"
                         class="contact-numero w-full border border-transparent hover:border-gray-200 focus:border-green-500 focus:ring-1 focus:ring-green-500 rounded px-2 py-1 text-sm focus:outline-none">
                 </td>
                 <td class="px-2 py-1">
