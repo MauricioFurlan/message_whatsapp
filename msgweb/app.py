@@ -175,7 +175,7 @@ def get_status_dict() -> dict:
         "total_contacts": sender_status["total_contacts"],
         "config": state.config,
         "excel_loaded": state.excel_path is not None,
-        "logs": state.logs[-50:],
+        "logs": state.logs[-200:],
     }
 
 
@@ -344,6 +344,9 @@ async def start_sending():
         log_callback=add_log,
         contact_update_callback=broadcast_contact_update,
     )
+
+    # Seta estado como "iniciando" imediatamente para que o frontend saiba que está rodando
+    state.sender._set_state("iniciando")
 
     # Inicia em thread separada
     state.sender_thread = Thread(target=state.sender.start, daemon=True)

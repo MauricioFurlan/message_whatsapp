@@ -50,7 +50,7 @@ class WhatsAppSender:
 
         # Estado interno (thread-safe)
         self._lock = threading.Lock()
-        self._state = "aguardando"  # aguardando, waiting_qr, enviando, pausado, finalizado, erro, parado
+        self._state = "aguardando"  # aguardando, iniciando, waiting_qr, enviando, pausado, finalizado, erro, parado
         self._current_round = 0
         self._messages_sent = 0
         self._total_pending = 0
@@ -213,13 +213,25 @@ class WhatsAppSender:
         fim_min = hora_fim_h * 60 + hora_fim_m
         return inicio_min <= agora_min < fim_min
 
+    def _get_business_hours_reason(self) -> str:
+        """Retorna o motivo pelo qual está fora do horário comercial."""
+        now = datetime.now()
+        skip_weekends = self.config.get("skip_weekends", True)
+        dias_semana = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
+        if skip_weekends and now.weekday() >= 5:
+            return f"Hoje é {dias_semana[now.weekday()]} e a opção 'Não enviar nos finais de semana' está ativa"
+        hora_inicio = self.config.get("hora_inicio", "08:00")
+        hora_fim = self.config.get("hora_fim", "18:00")
+        return f"Horário atual ({now.strftime('%H:%M')}) está fora da janela configurada ({hora_inicio}–{hora_fim})"
+
     def _wait_for_business_hours(self):
         """Aguarda até o próximo horário comercial."""
         if self._is_business_hours():
             return
 
         self._set_state("pausado")
-        self._log("Fora do horário comercial. Aguardando próximo horário...")
+        motivo = self._get_business_hours_reason()
+        self._log(f"Fora do horário comercial. {motivo}. Aguardando próximo horário...")
 
         while not self._is_business_hours() and not self._should_stop():
             time.sleep(2)  # Verifica a cada 2s para responder rápido ao stop
@@ -632,7 +644,7 @@ class WhatsAppSender:
 
         try:
             # Inicializa o driver
-            self._set_state("aguardando")
+            self._set_state("iniciando")
             self._log("Iniciando navegador Chrome...")
 
             try:

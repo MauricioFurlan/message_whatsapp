@@ -27,6 +27,25 @@
             display: none;
             content: '';
         }
+        /* Bloqueio de contatos durante envio */
+        .contacts-locked .contacts-lock-banner {
+            display: flex;
+        }
+        .contacts-locked #contacts-tbody {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+        .contacts-lock-banner {
+            display: none;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background-color: #fef3c7;
+            border-bottom: 1px solid #fcd34d;
+            color: #92400e;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800 h-screen overflow-hidden flex flex-col">
@@ -53,6 +72,14 @@
                     <span id="contacts-count" class="text-xs text-gray-400"></span>
                 </div>
 
+                <!-- Banner de bloqueio (visível apenas durante envio) -->
+                <div class="contacts-lock-banner">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                    </svg>
+                    <span>Edição bloqueada durante o envio de mensagens</span>
+                </div>
+
                 <div class="flex-1 overflow-y-auto overflow-x-hidden">
                     <table class="w-full text-sm table-fixed">
                         <thead class="bg-gray-50 text-gray-500 sticky top-0 z-10">
@@ -71,8 +98,8 @@
                 </div>
 
                 <div class="flex items-center gap-3 px-4 py-2 border-t border-gray-100 flex-shrink-0">
-                    <button onclick="addContactRow()"
-                        class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-md transition-colors">
+                    <button onclick="addContactRow()" id="btn-add-contact"
+                        class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                         + Adicionar Contato
                     </button>
                     <button onclick="saveContacts()" id="btn-save-contacts"
@@ -80,8 +107,8 @@
                         Salvar Alterações
                     </button>
                     <input type="file" id="file-input" accept=".xlsx,.xls" class="hidden">
-                    <button onclick="document.getElementById('file-input').click()" title="Carregar planilha .xlsx"
-                        class="ml-auto px-2 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-600 hover:text-gray-800 rounded-md transition-colors">
+                    <button onclick="document.getElementById('file-input').click()" id="btn-upload-sheet" title="Carregar planilha .xlsx"
+                        class="ml-auto px-2 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-600 hover:text-gray-800 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m4-8l-4-4m0 0l-4 4m4-4v12"/>
                         </svg>
@@ -251,14 +278,23 @@
         let totalRodadas = 3;
         let configLoaded = false;
         let stopping = false;  // true enquanto aguarda a parada graceful concluir
+        let starting = false;  // true entre clicar "Iniciar" e o backend confirmar que está rodando
 
         // --- SSE Connection ---
+        let logsRestored = false;  // garante que restaura logs apenas uma vez por conexão
+
         function connectSSE() {
             if (eventSource) eventSource.close();
+            logsRestored = false;
             eventSource = new EventSource('/events');
 
             eventSource.addEventListener('status', (event) => {
                 const status = JSON.parse(event.data);
+                // Na primeira mensagem de status após conexão, restaura logs do servidor
+                if (!logsRestored && status.logs && status.logs.length > 0) {
+                    logsRestored = true;
+                    restoreLogsFromServer(status.logs);
+                }
                 updateDashboard(status);
             });
 
@@ -277,6 +313,34 @@
             };
         }
 
+        // --- Lock/Unlock Contacts Editing ---
+        function lockContactsEditing(locked) {
+            const section = document.getElementById('contacts-section');
+            if (!section) return;
+
+            // Toggle classe para CSS (opacity + pointer-events no tbody, banner)
+            section.classList.toggle('contacts-locked', locked);
+
+            // Botões da toolbar inferior
+            const btnsToLock = ['btn-save-contacts', 'btn-add-contact', 'btn-upload-sheet', 'btn-download-contacts'];
+            btnsToLock.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = locked;
+            });
+
+            // Desabilita o input file para evitar acionamento programático
+            const fileInput = document.getElementById('file-input');
+            if (fileInput) fileInput.disabled = locked;
+
+            // Inputs e botões dentro do tbody (redundante com pointer-events, mas garante acessibilidade)
+            document.querySelectorAll('#contacts-tbody input').forEach(inp => {
+                inp.disabled = locked;
+            });
+            document.querySelectorAll('#contacts-tbody button').forEach(btn => {
+                btn.disabled = locked;
+            });
+        }
+
         // --- Dashboard ---
         function updateDashboard(status) {
             currentState = status.state;
@@ -285,6 +349,7 @@
             const stateEl = document.getElementById('status-state');
             const stateMap = {
                 'aguardando': { text: 'Aguardando', cls: 'text-gray-700' },
+                'iniciando': { text: 'Iniciando...', cls: 'text-blue-700 pulse-dot' },
                 'waiting_qr': { text: 'Escaneie QR', cls: 'text-purple-700 pulse-dot' },
                 'enviando': { text: 'Enviando', cls: 'text-green-700 pulse-dot' },
                 'pausado': { text: 'Pausado', cls: 'text-amber-700' },
@@ -300,26 +365,22 @@
             document.getElementById('status-sent').textContent = status.messages_sent;
             document.getElementById('status-pending').textContent = status.total_pending;
 
-            const isRunning = ['waiting_qr', 'enviando', 'pausado'].includes(status.state);
-            // Se o envio terminou (não está mais rodando), reseta o estado de "parando"
-            if (!isRunning) {
+            const isRunning = ['iniciando', 'waiting_qr', 'enviando', 'pausado'].includes(status.state);
+            // Se o envio terminou (não está mais rodando), reseta o estado de "parando" e "iniciando"
+            if (!isRunning && !starting) {
                 stopping = false;
             }
-            document.getElementById('btn-start').disabled = isRunning || stopping;
+            // Quando o backend confirma que está rodando, reseta starting
+            if (isRunning) {
+                starting = false;
+            }
+            const locked = isRunning || starting;
+            document.getElementById('btn-start').disabled = locked || stopping;
             // Botão parar fica desabilitado se não está rodando OU se já foi solicitada a parada
-            document.getElementById('btn-stop').disabled = !isRunning || stopping;
+            document.getElementById('btn-stop').disabled = (!isRunning && !starting) || stopping;
 
-            // Desabilita edição de contatos durante o envio
-            const btnSaveContacts = document.getElementById('btn-save-contacts');
-            if (btnSaveContacts) btnSaveContacts.disabled = isRunning;
-            document.querySelectorAll('#contacts-tbody input').forEach(inp => {
-                inp.disabled = isRunning;
-            });
-            document.querySelectorAll('#contacts-tbody button').forEach(btn => {
-                btn.disabled = isRunning;
-                btn.style.pointerEvents = isRunning ? 'none' : '';
-                btn.style.opacity = isRunning ? '0.3' : '';
-            });
+            // Desabilita edição de contatos durante o envio (ou enquanto está iniciando)
+            lockContactsEditing(locked);
 
             if (status.config) {
                 totalRodadas = status.config.total_rodadas;
@@ -349,6 +410,12 @@
         }
 
         // --- Log ---
+        function restoreLogsFromServer(logs) {
+            const logArea = document.getElementById('log-area');
+            logArea.innerHTML = '';
+            logs.forEach(entry => addLogEntry(entry));
+        }
+
         function addLogEntry(message) {
             const logArea = document.getElementById('log-area');
             if (logArea.querySelector('.text-gray-500')) {
@@ -662,7 +729,7 @@
         // Baixa a planilha atualizada (salva as edições antes, se possível)
         async function downloadContacts() {
             const statusEl = document.getElementById('contacts-status');
-            const isRunning = ['waiting_qr', 'enviando', 'pausado'].includes(currentState);
+            const isRunning = ['iniciando', 'waiting_qr', 'enviando', 'pausado'].includes(currentState);
 
             // Salva as edições atuais antes de baixar (exceto durante o envio)
             if (!isRunning) {
@@ -700,6 +767,13 @@
                 if ('human_behavior' in config) document.getElementById('cfg-human-behavior').checked = config.human_behavior;
                 updateTotalMsgsCalc();
                 configLoaded = true;
+
+                // Sincroniza com o servidor para garantir que o backend tenha os mesmos valores
+                fetch('/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: saved,
+                }).catch(() => {});
             } catch (e) {
                 console.warn('Erro ao carregar config do localStorage:', e);
             }
@@ -751,11 +825,25 @@
         async function startSending() {
             const statusEl = document.getElementById('control-status');
 
+            // Bloqueia imediatamente (antes de qualquer request) para evitar flicker
+            starting = true;
+            document.getElementById('btn-start').disabled = true;
+            document.getElementById('btn-stop').disabled = false;
+            lockContactsEditing(true);
+
+            // Salva a configuração no servidor antes de iniciar (garante que os valores visíveis são os usados)
+            await saveConfig();
+
             // Salva as alterações da tabela de contatos antes de iniciar
             const contactsSection = document.getElementById('contacts-section');
             if (contactsSection && !contactsSection.classList.contains('hidden')) {
                 const saved = await saveContacts(true);
                 if (!saved) {
+                    // Desfaz o bloqueio
+                    starting = false;
+                    document.getElementById('btn-start').disabled = false;
+                    document.getElementById('btn-stop').disabled = true;
+                    lockContactsEditing(false);
                     statusEl.textContent = 'Erro ao salvar contatos. Envio cancelado.';
                     statusEl.className = 'mt-2 text-sm text-red-600';
                     return;
@@ -768,13 +856,21 @@
                 if (response.ok) {
                     statusEl.textContent = 'Envio iniciado. Escaneie o QR Code no navegador.';
                     statusEl.className = 'mt-2 text-sm text-green-600';
-                    document.getElementById('btn-start').disabled = true;
-                    document.getElementById('btn-stop').disabled = false;
                 } else {
+                    // Falhou: desfaz o bloqueio
+                    starting = false;
+                    document.getElementById('btn-start').disabled = false;
+                    document.getElementById('btn-stop').disabled = true;
+                    lockContactsEditing(false);
                     statusEl.textContent = data.detail;
                     statusEl.className = 'mt-2 text-sm text-red-600';
                 }
             } catch (err) {
+                // Erro de rede: desfaz o bloqueio
+                starting = false;
+                document.getElementById('btn-start').disabled = false;
+                document.getElementById('btn-stop').disabled = true;
+                lockContactsEditing(false);
                 statusEl.textContent = `Erro: ${err.message}`;
                 statusEl.className = 'mt-2 text-sm text-red-600';
             }
