@@ -50,6 +50,43 @@
 </head>
 <body class="bg-gray-50 text-gray-800 h-screen overflow-hidden flex flex-col">
 
+    <!-- Overlay de Licença (bloqueia tudo até ativar) -->
+    <div id="license-overlay" class="fixed inset-0 bg-gray-900/80 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md mx-4">
+            <div class="text-center mb-6">
+                <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+                    </svg>
+                </div>
+                <h2 class="text-xl font-bold text-gray-900">Ativação de Licença</h2>
+                <p class="text-sm text-gray-500 mt-1">Insira sua chave de licença para usar o sistema</p>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Chave de Licença</label>
+                    <input type="text" id="license-key-input"
+                        placeholder="XXXX-XXXX-XXXX-XXXX"
+                        maxlength="19"
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg text-center text-lg font-mono tracking-wider uppercase focus:border-green-500 focus:ring-2 focus:ring-green-500 focus:outline-none"
+                        oninput="formatLicenseKey(this)">
+                </div>
+
+                <button onclick="activateLicense()" id="btn-activate-license"
+                    class="w-full px-4 py-3 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                    Ativar Licença
+                </button>
+
+                <p id="license-status-msg" class="text-sm text-center text-gray-400 min-h-[1.25rem]"></p>
+            </div>
+
+            <div class="mt-6 pt-4 border-t border-gray-100 text-center">
+                <p class="text-xs text-gray-400">Não tem uma licença? Entre em contato com o suporte.</p>
+            </div>
+        </div>
+    </div>
+
     <!-- Header -->
     <header class="px-4 py-2 border-b border-gray-200 bg-white flex-shrink-0">
         <div class="flex items-center gap-3">
@@ -1053,6 +1090,8 @@
 
         // --- Initialize ---
         document.addEventListener('DOMContentLoaded', () => {
+            // Verifica licença primeiro
+            checkLicense();
             // Carrega config salva do localStorage (antes do SSE)
             loadConfigFromLocalStorage();
             connectSSE();
@@ -1062,6 +1101,103 @@
             updateTotalMsgsCalc();
             // Verifica sessão salva
             checkSessionStatus();
+        });
+
+        // --- Licença ---
+        async function checkLicense() {
+            const overlay = document.getElementById('license-overlay');
+            try {
+                const response = await fetch('/license/status');
+                const data = await response.json();
+
+                if (data.valida) {
+                    overlay.classList.add('hidden');
+                    // Mostra dias restantes sempre
+                    const dias = data.dias_restantes;
+                    let bgCls, textCls;
+                    if (dias <= 3) {
+                        bgCls = 'bg-red-100'; textCls = 'text-red-700';
+                    } else if (dias <= 7) {
+                        bgCls = 'bg-amber-100'; textCls = 'text-amber-700';
+                    } else {
+                        bgCls = 'bg-green-100'; textCls = 'text-green-700';
+                    }
+                    const badge = document.getElementById('session-badge');
+                    // Remove badge anterior se existir (evita duplicar no F5)
+                    const existing = document.getElementById('license-badge');
+                    if (existing) existing.remove();
+                    badge.insertAdjacentHTML('afterend',
+                        `<span id="license-badge" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${bgCls} ${textCls} ml-2">
+                            Licença: ${dias} dia(s)
+                        </span>`
+                    );
+                } else {
+                    overlay.classList.remove('hidden');
+                }
+            } catch (err) {
+                // Se erro de rede, tenta cache offline (o backend faz isso)
+                overlay.classList.remove('hidden');
+            }
+        }
+
+        function formatLicenseKey(input) {
+            // Remove tudo que não é alfanumérico
+            let value = input.value.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+            // Insere hifens a cada 4 caracteres
+            let formatted = '';
+            for (let i = 0; i < value.length && i < 16; i++) {
+                if (i > 0 && i % 4 === 0) formatted += '-';
+                formatted += value[i];
+            }
+            input.value = formatted;
+        }
+
+        async function activateLicense() {
+            const input = document.getElementById('license-key-input');
+            const statusMsg = document.getElementById('license-status-msg');
+            const btn = document.getElementById('btn-activate-license');
+            const chave = input.value.trim();
+
+            if (chave.length < 19) {
+                statusMsg.textContent = 'Digite a chave completa (XXXX-XXXX-XXXX-XXXX)';
+                statusMsg.className = 'text-sm text-center text-red-600 min-h-[1.25rem]';
+                return;
+            }
+
+            btn.disabled = true;
+            statusMsg.textContent = 'Verificando...';
+            statusMsg.className = 'text-sm text-center text-blue-600 min-h-[1.25rem]';
+
+            try {
+                const response = await fetch('/license/activate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chave }),
+                });
+                const data = await response.json();
+
+                if (data.ok) {
+                    statusMsg.textContent = '✅ ' + data.mensagem;
+                    statusMsg.className = 'text-sm text-center text-green-600 min-h-[1.25rem]';
+                    // Esconde overlay após 1s
+                    setTimeout(() => {
+                        document.getElementById('license-overlay').classList.add('hidden');
+                    }, 1000);
+                } else {
+                    statusMsg.textContent = '❌ ' + data.erro;
+                    statusMsg.className = 'text-sm text-center text-red-600 min-h-[1.25rem]';
+                    btn.disabled = false;
+                }
+            } catch (err) {
+                statusMsg.textContent = 'Erro de conexão. Verifique sua internet.';
+                statusMsg.className = 'text-sm text-center text-red-600 min-h-[1.25rem]';
+                btn.disabled = false;
+            }
+        }
+
+        // Ativa com Enter no campo de chave
+        document.getElementById('license-key-input')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') activateLicense();
         });
 
         // --- Session Status ---

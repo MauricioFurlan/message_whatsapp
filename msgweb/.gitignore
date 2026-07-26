@@ -10,3 +10,6 @@ dist/
 *.spec.bak
 *.manifest
 WhatsAppAutomacao/
+.env
+admin_licenca.py
+chromedriver.exe

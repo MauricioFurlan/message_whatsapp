@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from whatsapp_sender import WhatsAppSender
+from license import validar_licenca, ativar_licenca, desativar_licenca, get_cached_key
 
 # --- File Logger Setup ---
 LOG_FILE = Path("log.txt")
@@ -188,6 +189,33 @@ async def serve_frontend():
     return FileResponse(html_path)
 
 
+# --- Licença ---
+
+class LicenseActivateModel(BaseModel):
+    chave: str
+
+
+@app.get("/license/status")
+async def license_status():
+    """Verifica o status da licença atual."""
+    result = validar_licenca()
+    return result
+
+
+@app.post("/license/activate")
+async def license_activate(payload: LicenseActivateModel):
+    """Ativa uma licença com a chave fornecida."""
+    result = ativar_licenca(payload.chave)
+    return result
+
+
+@app.post("/license/deactivate")
+async def license_deactivate():
+    """Remove a licença desta máquina."""
+    result = desativar_licenca()
+    return result
+
+
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """Upload da planilha Excel com contatos."""
@@ -306,6 +334,11 @@ async def set_config(config: ConfigModel):
 @app.post("/start")
 async def start_sending():
     """Inicia o envio de mensagens."""
+    # Verifica licença antes de iniciar
+    license_check = validar_licenca()
+    if not license_check.get("valida"):
+        raise HTTPException(status_code=403, detail="Licença inválida ou expirada. Ative uma licença para usar o sistema.")
+
     if not state.excel_path:
         raise HTTPException(status_code=400, detail="Nenhuma planilha carregada. Faça upload primeiro.")
 
