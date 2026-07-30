@@ -663,7 +663,10 @@ async def sse_events():
 if __name__ == "__main__":
     import signal
     import sys
-    import uvicorn
+    import asyncio
+    from hypercorn.config import Config
+    from hypercorn.asyncio import serve
+
     print('Acesse: http://localhost:8000')
 
     def force_exit(sig, frame):
@@ -677,4 +680,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     signal.signal(signal.SIGINT, force_exit)
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    config = Config()
+    config.bind = ["0.0.0.0:8000"]
+    asyncio.run(serve(app, config))

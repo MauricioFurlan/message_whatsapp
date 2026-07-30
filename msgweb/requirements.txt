@@ -1,7 +1,8 @@
 fastapi
-uvicorn[standard]
+hypercorn
 python-multipart
 pandas
 openpyxl
 selenium
 webdriver-manager
+requests
