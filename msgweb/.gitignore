@@ -13,3 +13,6 @@ WhatsAppAutomacao/
 .env
 admin_licenca.py
 chromedriver.exe
+
+# Frontend build
+node_modules/

@@ -254,6 +254,11 @@ class WhatsAppSender:
             df["Arquivo"] = ""
         else:
             df["Arquivo"] = df["Arquivo"].fillna("").astype(str).str.strip()
+        # Coluna Prefixo (saudação por contato: Oi, Olá, Sr., etc.)
+        if "Prefixo" not in df.columns:
+            df["Prefixo"] = ""
+        else:
+            df["Prefixo"] = df["Prefixo"].fillna("").astype(str).str.strip()
         return df
 
     def _save_contacts(self, df: pd.DataFrame):
@@ -385,7 +390,7 @@ class WhatsAppSender:
         variacao = random.choice([-2, -1, 0, 1, 2])
         return max(1, base + variacao)
 
-    def _send_message(self, pessoa: str, numero: str, mensagem: str, arquivo: str = "") -> bool:
+    def _send_message(self, pessoa: str, numero: str, mensagem: str, arquivo: str = "", prefixo: str = "") -> bool:
         """
         Envia uma mensagem para um contato.
         Se há arquivo associado, envia primeiro o texto e depois o anexo separadamente.
@@ -393,10 +398,16 @@ class WhatsAppSender:
         Retorna True se enviou com sucesso, False se falhou.
         Levanta TimeoutException se número é inválido.
         """
-        # Formata mensagem
+        # Formata mensagem com prefixo por contato ou placeholder {nome}
         pessoa_limpo = pessoa.strip() if pessoa else ""
-        if pessoa_limpo and pessoa_limpo.lower() not in ("nan", "none", ""):
-            texto = f"Oi {pessoa_limpo}, {mensagem}"
+        prefixo_limpo = prefixo.strip() if prefixo else ""
+
+        if "{nome}" in mensagem:
+            # Placeholder: substitui {nome} pelo nome do contato (ou remove se vazio)
+            nome_subst = pessoa_limpo if pessoa_limpo.lower() not in ("nan", "none", "") else ""
+            texto = mensagem.replace("{nome}", nome_subst)
+        elif prefixo_limpo and pessoa_limpo and pessoa_limpo.lower() not in ("nan", "none", ""):
+            texto = f"{prefixo_limpo} {pessoa_limpo}, {mensagem}"
         else:
             texto = mensagem
 
@@ -723,10 +734,10 @@ class WhatsAppSender:
                 invalidos_df = df[df["Invalido"] == "X"]
                 if len(enviados_df) > 0:
                     for _, row in enviados_df.iterrows():
-                        self._log(f"[SKIP] {row['Pessoa']} — já enviado, pulando.")
+                        self._log(f"[SKIP] {row['Nome']} — já enviado, pulando.")
                 if len(invalidos_df) > 0:
                     for _, row in invalidos_df.iterrows():
-                        self._log(f"[SKIP] {row['Pessoa']} — número inválido, pulando.")
+                        self._log(f"[SKIP] {row['Nome']} — número inválido, pulando.")
 
                 with self._lock:
                     self._total_pending = len(pending)
@@ -753,13 +764,16 @@ class WhatsAppSender:
                     if self._should_stop():
                         break
 
-                    pessoa = str(row["Pessoa"])
+                    pessoa = str(row["Nome"])
                     numero = self._clean_number(row["Número"])
                     mensagem = str(row["Mensagem"])
                     arquivo = str(row.get("Arquivo", "")).strip()
+                    prefixo = str(row.get("Prefixo", "")).strip()
                     # Limpa valores inválidos do pandas
                     if arquivo.lower() in ("", "nan", "none"):
                         arquivo = ""
+                    if prefixo.lower() in ("nan", "none"):
+                        prefixo = ""
 
                     # Validação prévia: não aciona o Selenium se o contato
                     # não tiver número válido ou mensagem.
@@ -779,7 +793,7 @@ class WhatsAppSender:
                     self._log(f"Enviando para {pessoa} ({numero})...")
 
                     try:
-                        success = self._send_message(pessoa, numero, mensagem, arquivo)
+                        success = self._send_message(pessoa, numero, mensagem, arquivo, prefixo)
 
                         if success:
                             # Marca como enviado

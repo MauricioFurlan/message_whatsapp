@@ -4,6 +4,44 @@ echo   Build - WhatsApp Automacao (.exe)
 echo ============================================
 echo.
 
+:: Gera o CSS Tailwind local antes de empacotar
+where node >nul 2>&1
+if errorlevel 1 (
+    echo ERRO: Node.js nao encontrado. Instale o Node.js para gerar o CSS.
+    pause
+    exit /b 1
+)
+
+where npm >nul 2>&1
+if errorlevel 1 (
+    echo ERRO: npm nao encontrado. Instale o Node.js com npm para gerar o CSS.
+    pause
+    exit /b 1
+)
+
+if not exist "node_modules\.bin\tailwindcss.cmd" (
+    echo Instalando dependencias do frontend...
+    call npm ci --ignore-scripts --no-audit --no-fund
+    if errorlevel 1 (
+        echo.
+        echo ERRO ao instalar as dependencias do frontend.
+        pause
+        exit /b 1
+    )
+    echo.
+)
+
+echo Gerando CSS Tailwind local...
+call npm run build:css
+if errorlevel 1 (
+    echo.
+    echo ERRO ao gerar o CSS Tailwind.
+    pause
+    exit /b 1
+)
+
+echo.
+
 :: Verifica se PyInstaller está instalado
 pip show pyinstaller >nul 2>&1
 if %errorlevel% neq 0 (

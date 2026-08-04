@@ -234,7 +234,7 @@ async def upload_file(file: UploadFile = File(...)):
     # Valida colunas
     try:
         df = pd.read_excel(file_path)
-        required_cols = ["Pessoa", "Número", "Mensagem"]
+        required_cols = ["Nome", "Número", "Mensagem"]
         missing = [col for col in required_cols if col not in df.columns]
         if missing:
             os.remove(file_path)
@@ -244,11 +244,13 @@ async def upload_file(file: UploadFile = File(...)):
             )
 
         # Adiciona colunas de controle se não existirem
-        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo"]:
+        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo", "Prefixo"]:
             if col not in df.columns:
                 df[col] = ""
             else:
                 if col == "Arquivo":
+                    df[col] = df[col].fillna("").astype(str).str.strip()
+                elif col == "Prefixo":
                     df[col] = df[col].fillna("").astype(str).str.strip()
                 else:
                     df[col] = df[col].fillna("").astype(str).str.strip().str.upper()
@@ -415,24 +417,25 @@ async def get_contacts():
     try:
         df = pd.read_excel(state.excel_path)
         # Garante colunas de controle
-        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo"]:
+        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo", "Prefixo"]:
             if col not in df.columns:
                 df[col] = ""
             else:
                 df[col] = df[col].fillna("").astype(str).str.strip()
 
         # Normaliza campos principais como string
-        for col in ["Pessoa", "Número", "Mensagem"]:
+        for col in ["Nome", "Número", "Mensagem"]:
             if col in df.columns:
                 df[col] = df[col].fillna("").astype(str)
 
         contacts = []
         for _, row in df.iterrows():
             contacts.append({
-                "pessoa": str(row.get("Pessoa", "")),
+                "pessoa": str(row.get("Nome", "")),
                 "numero": str(row.get("Número", "")),
                 "mensagem": str(row.get("Mensagem", "")),
                 "arquivo": str(row.get("Arquivo", "")),
+                "prefixo": str(row.get("Prefixo", "")),
                 "enviado": str(row.get("Enviado", "")).strip().upper() == "X",
                 "invalido": str(row.get("Invalido", "")).strip().upper() == "X",
                 "data_envio": str(row.get("DataEnvio", "")),
@@ -448,6 +451,7 @@ class ContactModel(BaseModel):
     numero: str = ""
     mensagem: str = ""
     arquivo: str = ""
+    prefixo: str = ""
     enviado: bool = False
     invalido: bool = False
     data_envio: str = ""
@@ -479,16 +483,17 @@ async def save_contacts(payload: ContactsPayload):
     rows = []
     for c in valid_contacts:
         rows.append({
-            "Pessoa": c.pessoa.strip(),
+            "Nome": c.pessoa.strip(),
             "Número": c.numero.strip(),
             "Mensagem": c.mensagem.strip(),
             "Arquivo": c.arquivo.strip(),
+            "Prefixo": c.prefixo.strip(),
             "Enviado": "X" if c.enviado else "",
             "DataEnvio": c.data_envio.strip(),
             "Invalido": "X" if c.invalido else "",
         })
 
-    df = pd.DataFrame(rows, columns=["Pessoa", "Número", "Mensagem", "Arquivo", "Enviado", "DataEnvio", "Invalido"])
+    df = pd.DataFrame(rows, columns=["Nome", "Número", "Mensagem", "Arquivo", "Prefixo", "Enviado", "DataEnvio", "Invalido"])
 
     upload_dir = Path("uploads")
     upload_dir.mkdir(exist_ok=True)
