@@ -42,11 +42,13 @@ class WhatsAppSender:
         config: dict,
         log_callback: Optional[Callable[[str], None]] = None,
         contact_update_callback: Optional[Callable[[str, str, str], None]] = None,
+        global_message: str = "",
     ):
         self.excel_path = excel_path
         self.config = config
         self.log_callback = log_callback or print
         self.contact_update_callback = contact_update_callback
+        self.global_message = global_message
 
         # Estado interno (thread-safe)
         self._lock = threading.Lock()
@@ -338,21 +340,41 @@ class WhatsAppSender:
         # Clamp para não sair dos limites
         return max(d_min * 0.8, min(d_max * 1.2, delay))
 
+    def _type_with_newlines(self, element, text: str):
+        """
+        Digita texto de forma rápida (não-human) mas tratando quebras de linha
+        como Shift+Enter para o WhatsApp Web não enviar a mensagem prematuramente.
+        """
+        from selenium.webdriver.common.action_chains import ActionChains
+        lines = text.split('\n')
+        for i, line in enumerate(lines):
+            if line:
+                element.send_keys(line)
+            if i < len(lines) - 1:
+                # Shift+Enter para quebra de linha
+                ActionChains(self._driver).key_down(Keys.SHIFT).send_keys(Keys.ENTER).key_up(Keys.SHIFT).perform()
+
     def _human_type(self, element, text: str):
         """
         Digita texto caractere por caractere com micro-pausas variáveis,
-        simulando digitação humana.
+        simulando digitação humana. Quebras de linha usam Shift+Enter.
         """
         for char in text:
-            element.send_keys(char)
-            # Pausa entre teclas: mais rápido em sequência, mais lento em espaços/pontuação
-            if char in (' ', '.', ',', '!', '?', '\n'):
-                time.sleep(random.uniform(0.08, 0.25))
+            if char == '\n':
+                # Shift+Enter para quebra de linha no WhatsApp Web
+                from selenium.webdriver.common.action_chains import ActionChains
+                ActionChains(self._driver).key_down(Keys.SHIFT).send_keys(Keys.ENTER).key_up(Keys.SHIFT).perform()
+                time.sleep(random.uniform(0.1, 0.3))
             else:
-                time.sleep(random.uniform(0.03, 0.12))
-            # Ocasionalmente uma pausa maior (como se pensasse)
-            if random.random() < 0.02:
-                time.sleep(random.uniform(0.3, 0.8))
+                element.send_keys(char)
+                # Pausa entre teclas: mais rápido em sequência, mais lento em espaços/pontuação
+                if char in (' ', '.', ',', '!', '?'):
+                    time.sleep(random.uniform(0.08, 0.25))
+                else:
+                    time.sleep(random.uniform(0.03, 0.12))
+                # Ocasionalmente uma pausa maior (como se pensasse)
+                if random.random() < 0.02:
+                    time.sleep(random.uniform(0.3, 0.8))
 
     def _random_scroll(self):
         """
@@ -470,7 +492,8 @@ class WhatsAppSender:
             else:
                 # Se não usou human, o texto já está no campo via URL (exceto com mídia)
                 if has_media:
-                    input_field.send_keys(texto)
+                    # Envia texto com suporte a quebras de linha (Shift+Enter)
+                    self._type_with_newlines(input_field, texto)
                     time.sleep(random.uniform(0.5, 1.0))
 
             input_field.send_keys(Keys.ENTER)
@@ -774,6 +797,9 @@ class WhatsAppSender:
                         arquivo = ""
                     if prefixo.lower() in ("nan", "none"):
                         prefixo = ""
+                    # Fallback: usa mensagem global se a do contato está vazia
+                    if mensagem.strip().lower() in ("", "nan", "none") and self.global_message.strip():
+                        mensagem = self.global_message
 
                     # Validação prévia: não aciona o Selenium se o contato
                     # não tiver número válido ou mensagem.

@@ -87,6 +87,8 @@ class AppState:
     logs: list = field(default_factory=list)
     sse_queues: list = field(default_factory=list)
     _loop: Optional[asyncio.AbstractEventLoop] = None
+    global_message: str = ""
+    global_message_active: bool = False
 
 
 state = AppState()
@@ -333,6 +335,33 @@ async def set_config(config: ConfigModel):
     return {"status": "ok", "config": state.config}
 
 
+# --- Mensagem Global ---
+
+class GlobalMessageModel(BaseModel):
+    mensagem: str = ""
+    ativa: bool = False
+
+
+@app.get("/global-message")
+async def get_global_message():
+    """Retorna a mensagem global atual."""
+    return {"status": "ok", "mensagem": state.global_message, "ativa": state.global_message_active}
+
+
+@app.post("/global-message")
+async def set_global_message(payload: GlobalMessageModel):
+    """Salva a mensagem global."""
+    state.global_message = payload.mensagem
+    state.global_message_active = payload.ativa
+    if payload.ativa and payload.mensagem.strip():
+        add_log(f"Mensagem global ativada ({len(payload.mensagem)} caracteres)")
+    elif not payload.ativa:
+        add_log("Mensagem global desativada")
+    else:
+        add_log("Mensagem global salva (vazia)")
+    return {"status": "ok"}
+
+
 @app.post("/start")
 async def start_sending():
     """Inicia o envio de mensagens."""
@@ -378,6 +407,7 @@ async def start_sending():
         config=state.config,
         log_callback=add_log,
         contact_update_callback=broadcast_contact_update,
+        global_message=state.global_message if state.global_message_active else "",
     )
 
     # Seta estado como "iniciando" imediatamente para que o frontend saiba que está rodando
