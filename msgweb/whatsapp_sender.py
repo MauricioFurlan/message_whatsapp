@@ -18,8 +18,10 @@ import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.webdriver import WebDriver as ChromeWebDriver  # noqa: F401 - força inclusão no PyInstaller
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.common.exceptions import TimeoutException, WebDriverException
@@ -345,7 +347,6 @@ class WhatsAppSender:
         Digita texto de forma rápida (não-human) mas tratando quebras de linha
         como Shift+Enter para o WhatsApp Web não enviar a mensagem prematuramente.
         """
-        from selenium.webdriver.common.action_chains import ActionChains
         lines = text.split('\n')
         for i, line in enumerate(lines):
             if line:
@@ -362,7 +363,6 @@ class WhatsAppSender:
         for char in text:
             if char == '\n':
                 # Shift+Enter para quebra de linha no WhatsApp Web
-                from selenium.webdriver.common.action_chains import ActionChains
                 ActionChains(self._driver).key_down(Keys.SHIFT).send_keys(Keys.ENTER).key_up(Keys.SHIFT).perform()
                 time.sleep(random.uniform(0.1, 0.3))
             else:

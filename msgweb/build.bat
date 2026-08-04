@@ -68,6 +68,7 @@ pyinstaller ^
     --collect-submodules=fastapi ^
     --collect-submodules=starlette ^
     --collect-submodules=multipart ^
+    --collect-submodules=selenium ^
     --exclude-module=tkinter ^
     --exclude-module=matplotlib ^
     --exclude-module=numpy.testing ^
