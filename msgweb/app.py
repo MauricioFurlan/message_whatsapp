@@ -150,10 +150,20 @@ def _broadcast_event(event_type: str, data: str):
             pass
 
 
-def broadcast_contact_update(numero: str, status: str, data_envio: str = ""):
-    """Emite um evento SSE para atualizar o status de um contato na tabela do frontend."""
+def broadcast_contact_update(row_index: int, numero: str, status: str, data_envio: str = ""):
+    """
+    Emite um evento SSE para atualizar o status de um contato na tabela do frontend.
+
+    O contato é identificado por row_index (índice da linha na planilha, 0 = primeira
+    linha de dados). O número segue no payload apenas para conferência no frontend —
+    identificar por número marcava todas as linhas com o mesmo telefone, e marcava
+    a tabela inteira quando o número era vazio.
+    """
     import json as _json
-    payload = _json.dumps({"numero": numero, "status": status, "data_envio": data_envio}, ensure_ascii=False)
+    payload = _json.dumps(
+        {"row_index": int(row_index), "numero": numero, "status": status, "data_envio": data_envio},
+        ensure_ascii=False,
+    )
     _broadcast_event("contact_update", payload)
 
 
@@ -224,22 +234,23 @@ async def upload_file(file: UploadFile = File(...)):
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Arquivo deve ser .xlsx ou .xls")
 
-    # Salva o arquivo
+    # Salva em arquivo temporário para validar antes de sobrescrever o anterior
     upload_dir = Path("uploads")
     upload_dir.mkdir(exist_ok=True)
     file_path = upload_dir / "contatos.xlsx"
+    temp_path = upload_dir / "contatos_temp.xlsx"
 
-    with open(file_path, "wb") as f:
+    with open(temp_path, "wb") as f:
         content = await file.read()
         f.write(content)
 
     # Valida colunas
     try:
-        df = pd.read_excel(file_path)
+        df = pd.read_excel(temp_path)
         required_cols = ["Nome", "Número", "Mensagem"]
         missing = [col for col in required_cols if col not in df.columns]
         if missing:
-            os.remove(file_path)
+            os.remove(temp_path)
             raise HTTPException(
                 status_code=400,
                 detail=f"Colunas obrigatórias faltando: {', '.join(missing)}"
@@ -299,7 +310,11 @@ async def upload_file(file: UploadFile = File(...)):
         df = df.drop(columns=["_numero_normalizado"])
         # --- Fim deduplicação ---
 
+        # Validação OK — salva no destino definitivo (sobrescreve o anterior)
         df.to_excel(file_path, index=False)
+        # Remove o temporário se ainda existir
+        if temp_path.exists():
+            os.remove(temp_path)
         state.excel_path = str(file_path)
 
         total = len(df)
@@ -318,8 +333,14 @@ async def upload_file(file: UploadFile = File(...)):
             "duplicatas_removidas": duplicatas_removidas,
         }
     except HTTPException:
+        # Limpa temporário em caso de erro de validação
+        if temp_path.exists():
+            os.remove(temp_path)
         raise
     except Exception as e:
+        # Limpa temporário em caso de erro inesperado
+        if temp_path.exists():
+            os.remove(temp_path)
         raise HTTPException(status_code=400, detail=f"Erro ao ler planilha: {str(e)}")
 
 
