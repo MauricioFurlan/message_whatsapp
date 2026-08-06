@@ -43,7 +43,7 @@ class WhatsAppSender:
         excel_path: str,
         config: dict,
         log_callback: Optional[Callable[[str], None]] = None,
-        contact_update_callback: Optional[Callable[[str, str, str], None]] = None,
+        contact_update_callback: Optional[Callable[[int, str, str, str], None]] = None,
         global_message: str = "",
     ):
         self.excel_path = excel_path
@@ -70,11 +70,17 @@ class WhatsAppSender:
         if self.log_callback:
             self.log_callback(message)
 
-    def _notify_contact_update(self, numero: str, status: str, data_envio: str = ""):
-        """Notifica o frontend sobre mudança de status de um contato."""
+    def _notify_contact_update(self, row_index: int, numero: str, status: str, data_envio: str = ""):
+        """
+        Notifica o frontend sobre mudança de status de um contato.
+
+        row_index é o índice da linha na planilha (0 = primeira linha de dados),
+        e é o que identifica o contato. O número vai apenas como conferência,
+        porque números repetidos ou vazios não identificam uma linha.
+        """
         if self.contact_update_callback:
             try:
-                self.contact_update_callback(numero, status, data_envio)
+                self.contact_update_callback(int(row_index), numero, status, data_envio)
             except Exception:
                 pass
 
@@ -447,6 +453,9 @@ class WhatsAppSender:
                 f = f.strip()
                 if f and os.path.isfile(f):
                     media_files.append(f)
+                elif f:
+                    self._log(f"⚠️ Anexo não encontrado para {pessoa}: {f} — enviando sem mídia")
+                    file_logger.warning(f"Anexo não encontrado: {f} (contato: {pessoa})")
         has_media = len(media_files) > 0
 
         # Navega para o chat (sempre sem texto pré-preenchido quando human ou mídia)
@@ -813,7 +822,7 @@ class WhatsAppSender:
 
                         file_logger.warning(f"Contato inválido ({motivo}): {pessoa} ({numero})")
                         self._log(f"❌ {pessoa} ({numero}) — {motivo}, marcado como inválido (pulado sem abrir o WhatsApp).")
-                        self._notify_contact_update(numero, "invalido")
+                        self._notify_contact_update(idx, numero, "invalido")
                         continue
 
                     self._log(f"Enviando para {pessoa} ({numero})...")
@@ -834,7 +843,7 @@ class WhatsAppSender:
 
                             enviados_rodada += 1
                             self._log(f"✅ {pessoa} — mensagem enviada com sucesso.")
-                            self._notify_contact_update(numero, "enviado", data_envio)
+                            self._notify_contact_update(idx, numero, "enviado", data_envio)
                         else:
                             self._log(f"⚠️ {pessoa} — falha ao enviar, será tentado novamente na próxima rodada.")
 
@@ -848,7 +857,7 @@ class WhatsAppSender:
 
                         file_logger.warning(f"Número inválido (timeout): {pessoa} ({numero})")
                         self._log(f"❌ {pessoa} ({numero}) — número inválido ou não encontrado no WhatsApp, marcado como inválido.")
-                        self._notify_contact_update(numero, "invalido")
+                        self._notify_contact_update(idx, numero, "invalido")
 
                     except Exception as e:
                         file_logger.error(f"Erro ao enviar para {pessoa} ({numero}): {e}\n{traceback.format_exc()}")
