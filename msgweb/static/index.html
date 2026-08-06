@@ -391,7 +391,7 @@
 
             eventSource.addEventListener('contact_update', (event) => {
                 const data = JSON.parse(event.data);
-                updateContactRowStatus(data.numero, data.status, data.data_envio);
+                updateContactRowStatus(data.row_index, data.numero, data.status, data.data_envio);
             });
 
             eventSource.onerror = () => {
@@ -576,8 +576,12 @@
 
         // Formata número para exibição: (XX)XXXXX-XXXX
         function formatPhone(raw) {
-            const digits = String(raw).replace(/\D/g, '');
+            let digits = String(raw).replace(/\D/g, '');
             if (!digits || digits.toLowerCase() === 'nan') return '';
+            // Remove código de país 55 se o usuário incluiu na planilha
+            if (digits.length > 11 && digits.startsWith('55')) {
+                digits = digits.slice(2);
+            }
             if (digits.length === 11) {
                 return `(${digits.slice(0,2)})${digits.slice(2,7)}-${digits.slice(7)}`;
             }
@@ -598,6 +602,10 @@
             // Remove zero à esquerda se digitou 0XX (ex: 019 -> 19)
             if (digits.length >= 3 && digits.startsWith('0')) {
                 digits = digits.slice(1);
+            }
+            // Remove código de país 55 se o usuário incluiu
+            if (digits.length > 11 && digits.startsWith('55')) {
+                digits = digits.slice(2);
             }
             if (digits.length > 11) digits = digits.slice(0, 11);
             let formatted = '';
@@ -721,36 +729,82 @@
             updateContactsCount();
         }
 
-        // Atualiza o status de uma linha na tabela em tempo real via SSE
-        function updateContactRowStatus(numero, status, dataEnvio) {
+        // Compara dois telefones de forma estrita (sem casar por sufixo).
+        // Exige no mínimo 10 dígitos em ambos e ignora o DDI 55 quando presente.
+        function sameNumber(a, b) {
+            const da = String(a == null ? '' : a).replace(/\D/g, '');
+            const db = String(b == null ? '' : b).replace(/\D/g, '');
+            if (da.length < 10 || db.length < 10) return false;
+            const na = (da.length > 11 && da.startsWith('55')) ? da.slice(2) : da;
+            const nb = (db.length > 11 && db.startsWith('55')) ? db.slice(2) : db;
+            return na === nb;
+        }
+
+        // Aplica o status recebido do backend em UMA linha específica
+        function applyContactRowStatus(tr, status, dataEnvio) {
+            if (status === 'enviado') {
+                tr.dataset.enviado = '1';
+                tr.dataset.invalido = '0';
+                tr.dataset.dataEnvio = dataEnvio || '';
+                tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(true, false);
+                tr.querySelector('.contact-data').textContent = formatDataEnvio(dataEnvio);
+            } else if (status === 'invalido') {
+                tr.dataset.enviado = '0';
+                tr.dataset.invalido = '1';
+                tr.dataset.dataEnvio = '';
+                tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(false, true);
+                tr.querySelector('.contact-data').textContent = '—';
+            } else {
+                return;
+            }
+            // Mostra botão de reenvio
+            const resetBtn = tr.querySelector('.contact-reset');
+            if (resetBtn) resetBtn.classList.remove('hidden');
+            updateContactsCount();
+        }
+
+        // Atualiza o status de uma linha na tabela em tempo real via SSE.
+        // O contato é identificado pelo índice da linha (row_index) — a mesma ordem
+        // da planilha e da tabela. O número serve só como conferência: identificar
+        // por número marcava todas as linhas com o mesmo telefone, e marcava a
+        // tabela inteira quando o número era vazio.
+        function updateContactRowStatus(rowIndex, numero, status, dataEnvio) {
             const rows = document.querySelectorAll('#contacts-tbody tr');
-            // Normaliza: remove tudo que não é dígito para comparar
-            const numLimpo = String(numero).replace(/\D/g, '');
+            if (!rows.length) return;
+
+            // O número só serve de conferência quando dá para comparar de verdade.
+            // Vazio, curto ou não numérico (justamente os casos de contato inválido)
+            // não identificam nada: aí o índice é a única referência.
+            const digitos = String(numero == null ? '' : numero).replace(/\D/g, '');
+            const podeConferir = digitos.length >= 10;
+
+            const idx = Number(rowIndex);
+            if (Number.isInteger(idx) && idx >= 0 && idx < rows.length) {
+                const tr = rows[idx];
+                const inputNumero = tr.querySelector('.contact-numero');
+                if (!podeConferir || !inputNumero || sameNumber(inputNumero.value, numero)) {
+                    applyContactRowStatus(tr, status, dataEnvio);
+                    return;
+                }
+            }
+
+            // Índice fora de sincronia (tabela editada sem salvar): só age se o
+            // número identificar uma única linha, sem ambiguidade.
+            if (!podeConferir) {
+                console.warn('contact_update ignorado: linha', rowIndex, 'fora de faixa e número não conferível');
+                return;
+            }
+            const candidatas = [];
             rows.forEach(tr => {
                 const inputNumero = tr.querySelector('.contact-numero');
-                if (!inputNumero) return;
-                const rowNum = inputNumero.value.replace(/\D/g, '');
-                // Compara os últimos dígitos (ignora código país que pode ou não estar)
-                if (rowNum === numLimpo || numLimpo.endsWith(rowNum) || rowNum.endsWith(numLimpo)) {
-                    if (status === 'enviado') {
-                        tr.dataset.enviado = '1';
-                        tr.dataset.invalido = '0';
-                        tr.dataset.dataEnvio = dataEnvio || '';
-                        tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(true, false);
-                        tr.querySelector('.contact-data').textContent = formatDataEnvio(dataEnvio);
-                    } else if (status === 'invalido') {
-                        tr.dataset.enviado = '0';
-                        tr.dataset.invalido = '1';
-                        tr.dataset.dataEnvio = '';
-                        tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(false, true);
-                        tr.querySelector('.contact-data').textContent = '—';
-                    }
-                    // Mostra botão de reenvio
-                    const resetBtn = tr.querySelector('.contact-reset');
-                    if (resetBtn) resetBtn.classList.remove('hidden');
-                    updateContactsCount();
-                }
+                if (inputNumero && sameNumber(inputNumero.value, numero)) candidatas.push(tr);
             });
+            if (candidatas.length === 1) {
+                applyContactRowStatus(candidatas[0], status, dataEnvio);
+            } else {
+                console.warn('contact_update ignorado: linha', rowIndex, 'fora de sincronia e',
+                    candidatas.length, 'linhas com o número', numero);
+            }
         }
 
         function updateContactsCount() {
@@ -821,8 +875,30 @@
             return contacts;
         }
 
+        // Remove da tabela as linhas totalmente vazias (sem nome e sem número).
+        // O backend já as descarta ao salvar; deixá-las na tela desalinharia a
+        // ordem da tabela em relação à planilha, e é essa ordem que o row_index
+        // do evento SSE usa para achar a linha certa.
+        function dropEmptyContactRows() {
+            const rows = document.querySelectorAll('#contacts-tbody tr');
+            let removidas = 0;
+            rows.forEach(tr => {
+                const pessoaEl = tr.querySelector('.contact-pessoa');
+                const numeroEl = tr.querySelector('.contact-numero');
+                const pessoa = ((pessoaEl && pessoaEl.value) || '').trim();
+                const numero = ((numeroEl && numeroEl.value) || '').trim();
+                if (!pessoa && !numero) {
+                    tr.remove();
+                    removidas++;
+                }
+            });
+            if (removidas > 0) updateContactsCount();
+            return removidas;
+        }
+
         async function saveContacts(silent = false) {
             const statusEl = document.getElementById('contacts-status');
+            dropEmptyContactRows();
             const contacts = collectContacts();
 
             try {

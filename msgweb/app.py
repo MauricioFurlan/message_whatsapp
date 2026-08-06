@@ -280,7 +280,12 @@ async def upload_file(file: UploadFile = File(...)):
                     numero_str = str(int(f))
             except (ValueError, OverflowError):
                 pass
-            return "".join(c for c in numero_str if c.isdigit())
+            digits = "".join(c for c in numero_str if c.isdigit())
+            # Remove código de país 55 se o usuário incluiu na planilha
+            # Número brasileiro válido tem 10-11 dígitos (DDD + telefone)
+            if len(digits) > 11 and digits.startswith("55"):
+                digits = digits[2:]
+            return digits
 
         df["_numero_normalizado"] = df["Número"].apply(_normalize_numero)
 
@@ -479,11 +484,24 @@ async def get_contacts():
             if col in df.columns:
                 df[col] = df[col].fillna("").astype(str)
 
+        def _safe_numero_str(val) -> str:
+            """Remove .0 de floats para evitar zero fantasma no final."""
+            s = str(val).strip()
+            if s.lower() in ("", "nan", "none"):
+                return ""
+            try:
+                f = float(s)
+                if f.is_integer():
+                    return str(int(f))
+            except (ValueError, OverflowError):
+                pass
+            return s
+
         contacts = []
         for _, row in df.iterrows():
             contacts.append({
                 "pessoa": str(row.get("Nome", "")),
-                "numero": str(row.get("Número", "")),
+                "numero": _safe_numero_str(row.get("Número", "")),
                 "mensagem": str(row.get("Mensagem", "")),
                 "arquivo": str(row.get("Arquivo", "")),
                 "prefixo": str(row.get("Prefixo", "")),

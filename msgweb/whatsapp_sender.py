@@ -24,10 +24,39 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.common.exceptions import (
+    TimeoutException,
+    WebDriverException,
+    InvalidSessionIdException,
+    NoSuchWindowException,
+    StaleElementReferenceException,
+)
 
 # Logger de arquivo para diagnóstico (compartilhado com app.py)
 file_logger = logging.getLogger("whatsapp_sender_file")
+
+
+class BrowserClosedError(RuntimeError):
+    """
+    Levantada quando a sessão do Chrome morreu (janela fechada pelo usuário,
+    Chrome travou ou perdeu conexão com o DevTools).
+
+    Diferente de uma falha de envio pontual: não faz sentido continuar
+    tentando os próximos contatos, porque nenhum vai funcionar.
+    """
+
+
+# Trechos de mensagem que indicam que o navegador/sessão morreu
+_DEAD_SESSION_MARKERS = (
+    "invalid session id",
+    "no such window",
+    "target window already closed",
+    "not connected to devtools",
+    "chrome not reachable",
+    "disconnected",
+    "web view not found",
+    "session deleted",
+)
 
 
 class WhatsAppSender:
@@ -283,11 +312,14 @@ class WhatsAppSender:
     def _clean_number(self, numero) -> str:
         """
         Normaliza um número de telefone vindo da planilha, retornando
-        apenas os dígitos.
+        apenas os dígitos (DDD + telefone, sem código de país).
 
         Trata o caso comum em que o pandas lê a coluna como float
         (ex: 19994229146 -> "19994229146.0"), o que adicionaria um "0"
         extra indevido ao final se apenas filtrássemos os dígitos.
+
+        Remove código de país 55 se o usuário incluiu na planilha,
+        já que o _send_message adiciona o 55 automaticamente.
         """
         numero_str = str(numero).strip()
         if numero_str.lower() in ("", "nan", "none"):
@@ -301,7 +333,14 @@ class WhatsAppSender:
         except (ValueError, OverflowError):
             pass
 
-        return "".join(c for c in numero_str if c.isdigit())
+        digits = "".join(c for c in numero_str if c.isdigit())
+
+        # Remove código de país 55 se o usuário incluiu na planilha
+        # Número brasileiro válido tem 10-11 dígitos (DDD + telefone)
+        if len(digits) > 11 and digits.startswith("55"):
+            digits = digits[2:]
+
+        return digits
 
     def _validate_contact(self, numero: str, mensagem: str) -> tuple:
         """
@@ -363,24 +402,172 @@ class WhatsAppSender:
 
     def _human_type(self, element, text: str):
         """
-        Digita texto caractere por caractere com micro-pausas variáveis,
-        simulando digitação humana. Quebras de linha usam Shift+Enter.
+        Digita texto simulando digitação humana.
+
+        Mensagens normais (até `human_type_char_limit`, padrão 200 caracteres)
+        são digitadas CARACTERE POR CARACTERE, com micro-pausas variáveis —
+        exatamente o comportamento humanizado original, que é o ponto de manter
+        essa opção ligada.
+
+        Só textos longos são digitados por PALAVRA. Motivo: cada send_keys() é
+        um round-trip HTTP ao ChromeDriver, e o WhatsApp Web fica
+        progressivamente mais lento conforme a sessão envelhece. Uma mensagem
+        de 400 caracteres gerava 400 chamadas e levava minutos — o bot parecia
+        travado e nunca enviava (bug real em produção).
+
+        Em ambos os modos existe um orçamento de tempo (`human_type_max_seconds`,
+        padrão 25s): se estourar, o restante vai de uma vez. É a rede de
+        segurança para o caso de o navegador estar muito degradado.
+
+        Nota sobre detecção: agrupar não é colar. O send_keys("abc") faz o
+        ChromeDriver disparar os eventos de tecla de cada caractere; o que muda
+        é apenas o intervalo entre eles.
         """
-        for char in text:
-            if char == '\n':
+        budget = float(self.config.get("human_type_max_seconds", 25))
+        limite_char = int(self.config.get("human_type_char_limit", 200))
+
+        # Textos curtos: caractere por caractere (fidelidade máxima)
+        por_caractere = len(text) <= limite_char
+
+        started = time.monotonic()
+        modo = "caractere" if por_caractere else "palavra"
+
+        file_logger.info(
+            f"_human_type: iniciando digitação de {len(text)} caracteres "
+            f"por {modo} (limite {limite_char}, orçamento {budget:.0f}s)"
+        )
+
+        lines = text.split("\n")
+
+        for line_idx, line in enumerate(lines):
+            if line:
+                tokens = list(line) if por_caractere else self._split_palavras(line)
+                pendente = ""
+
+                for token in tokens:
+                    if not token:
+                        continue
+
+                    # Estourou o orçamento: acumula e manda o resto de uma vez
+                    if time.monotonic() - started > budget:
+                        pendente += token
+                        continue
+
+                    element.send_keys(token)
+
+                    # Ritmo humano: pausa maior após espaço e pontuação
+                    if token[-1] in (" ", ".", ",", "!", "?"):
+                        time.sleep(random.uniform(0.08, 0.25))
+                    else:
+                        time.sleep(random.uniform(0.03, 0.12))
+                    # Ocasionalmente uma pausa maior, como se pensasse
+                    if random.random() < 0.02:
+                        time.sleep(random.uniform(0.3, 0.8))
+
+                if pendente:
+                    element.send_keys(pendente)
+                    file_logger.warning(
+                        f"_human_type: orçamento de {budget:.0f}s estourado, "
+                        f"{len(pendente)} caracteres restantes enviados de uma vez"
+                    )
+
+            if line_idx < len(lines) - 1:
                 # Shift+Enter para quebra de linha no WhatsApp Web
-                ActionChains(self._driver).key_down(Keys.SHIFT).send_keys(Keys.ENTER).key_up(Keys.SHIFT).perform()
+                ActionChains(self._driver).key_down(Keys.SHIFT).send_keys(
+                    Keys.ENTER
+                ).key_up(Keys.SHIFT).perform()
                 time.sleep(random.uniform(0.1, 0.3))
-            else:
-                element.send_keys(char)
-                # Pausa entre teclas: mais rápido em sequência, mais lento em espaços/pontuação
-                if char in (' ', '.', ',', '!', '?'):
-                    time.sleep(random.uniform(0.08, 0.25))
-                else:
-                    time.sleep(random.uniform(0.03, 0.12))
-                # Ocasionalmente uma pausa maior (como se pensasse)
-                if random.random() < 0.02:
-                    time.sleep(random.uniform(0.3, 0.8))
+
+        elapsed = time.monotonic() - started
+        file_logger.info(
+            f"_human_type: {len(text)} caracteres digitados em {elapsed:.1f}s "
+            f"(modo {modo})"
+        )
+
+    @staticmethod
+    def _split_palavras(line: str) -> list:
+        """
+        Divide a linha em palavras mantendo o espaço junto da palavra
+        ("ola mundo" -> ["ola ", "mundo"]), para o texto digitado ficar
+        idêntico ao original.
+        """
+        partes = line.split(" ")
+        return [
+            p if i == len(partes) - 1 else p + " "
+            for i, p in enumerate(partes)
+        ]
+
+    def _is_session_dead(self, exc: Exception) -> bool:
+        """
+        Detecta se a exceção indica que o navegador/sessão morreu.
+
+        Quando isso acontece, continuar o loop é inútil: todos os contatos
+        seguintes falham instantaneamente (foi o que ocorreu no log do cliente,
+        onde após a janela fechar o bot seguiu "tentando" contato após contato).
+        """
+        if isinstance(exc, (InvalidSessionIdException, NoSuchWindowException)):
+            return True
+        msg = str(exc).lower()
+        return any(marker in msg for marker in _DEAD_SESSION_MARKERS)
+
+    def _confirm_message_sent(self, texto_enviado: str, timeout: float = 6.0) -> bool:
+        """
+        Confirma que a mensagem realmente saiu do campo de texto.
+
+        O WhatsApp Web limpa o campo ao enviar. Se o texto continuar lá, o ENTER
+        não surtiu efeito (foco perdido, seletor de emoji aberto, etc.) e a
+        mensagem NÃO foi enviada — antes o código assumia sucesso cegamente.
+
+        A verificação compara com um trecho do texto que tentamos enviar em vez
+        de exigir campo vazio, porque o WhatsApp renderiza um placeholder
+        ("Digite uma mensagem") quando o campo está vazio, o que geraria falso
+        negativo e marcaria envios bem-sucedidos como falha.
+
+        Retorna True se o texto saiu do campo, False se continuou lá.
+        Levanta BrowserClosedError se a sessão morreu durante a verificação.
+        """
+        # Trecho de referência: usa o início do texto ANTES de qualquer URL,
+        # porque o WhatsApp pode redesenhar o campo ao gerar o preview de link
+        # (o texto do link pode aparecer diferente no DOM).
+        texto_limpo = texto_enviado.strip()
+        # Pega texto antes do primeiro link como referência
+        for marker in ("http://", "https://", "www."):
+            pos = texto_limpo.find(marker)
+            if pos > 0:
+                texto_limpo = texto_limpo[:pos].strip()
+                break
+
+        alvo = texto_limpo[:40].strip()
+        if not alvo:
+            return True
+
+        deadline = time.monotonic() + timeout
+        ultimo_conteudo = ""
+
+        while time.monotonic() < deadline:
+            try:
+                field = self._driver.find_element(
+                    By.CSS_SELECTOR, "footer div[contenteditable='true']"
+                )
+                ultimo_conteudo = field.text
+                if alvo not in ultimo_conteudo:
+                    return True
+            except StaleElementReferenceException:
+                # Rerender do WhatsApp após o envio — sinal positivo, tenta de novo
+                pass
+            except Exception as e:
+                if self._is_session_dead(e):
+                    raise BrowserClosedError(str(e))
+                # Não conseguimos verificar: não bloqueia o fluxo
+                file_logger.warning(f"Falha ao confirmar envio: {e}")
+                return True
+            time.sleep(0.5)
+
+        file_logger.warning(
+            f"Campo de texto ainda contém a mensagem após {timeout:.0f}s "
+            f"(conteúdo: {ultimo_conteudo[:80]!r})"
+        )
+        return False
 
     def _random_scroll(self):
         """
@@ -505,7 +692,43 @@ class WhatsAppSender:
                     self._type_with_newlines(input_field, texto)
                     time.sleep(random.uniform(0.5, 1.0))
 
+            # Se a mensagem contém um link, o WhatsApp gera um preview card.
+            # HIPÓTESE NÃO CONFIRMADA: o preview pode atrasar o campo de texto.
+            # A espera é curta justamente para não custar caro se estiver errada.
+            has_link = "http://" in texto or "https://" in texto or "www." in texto
+            if has_link:
+                time.sleep(random.uniform(2.0, 4.0))
+
             input_field.send_keys(Keys.ENTER)
+
+            # Confirma que a mensagem saiu de fato. O WhatsApp limpa o campo ao
+            # enviar; se o texto continuar lá, o ENTER não surtiu efeito.
+            confirm_timeout = 8.0 if has_link else 6.0
+            if not self._confirm_message_sent(texto, timeout=confirm_timeout):
+                self._log(f"⚠️ {pessoa} — campo não esvaziou, tentando ENTER novamente...")
+                file_logger.warning(f"ENTER não enviou a mensagem de {pessoa}, tentando novamente")
+                try:
+                    input_field = self._driver.find_element(
+                        By.CSS_SELECTOR, "footer div[contenteditable='true']"
+                    )
+                    input_field.send_keys(Keys.ENTER)
+                except StaleElementReferenceException:
+                    pass
+
+                if not self._confirm_message_sent(texto, timeout=confirm_timeout):
+                    # FAIL-OPEN de propósito: bloquear aqui parou o envio inteiro
+                    # do cliente. Se a verificação não conseguir confirmar, seguimos
+                    # em frente e registramos no log — o log dirá se a verificação
+                    # está errando ou se o ENTER realmente não funciona.
+                    file_logger.error(
+                        f"NÃO CONFIRMADO: mensagem de {pessoa} ({numero_limpo}) pode "
+                        f"não ter sido enviada — campo de texto ainda continha o "
+                        f"texto após 2 tentativas de ENTER. Seguindo adiante."
+                    )
+                    self._log(
+                        f"⚠️ {pessoa} — não foi possível confirmar o envio. "
+                        f"Verifique manualmente esta conversa."
+                    )
 
             if human:
                 time.sleep(random.uniform(2.0, 5.0))
@@ -520,9 +743,17 @@ class WhatsAppSender:
 
             return True
 
+        except BrowserClosedError:
+            raise  # Sessão morta: aborta o envio inteiro
         except TimeoutException:
             raise  # Re-raise para marcar como inválido
         except Exception as e:
+            if self._is_session_dead(e):
+                file_logger.error(
+                    f"Sessão do Chrome morreu durante o envio para {pessoa} "
+                    f"({numero_limpo}): {e}"
+                )
+                raise BrowserClosedError(str(e))
             file_logger.error(f"Erro no envio Selenium para {pessoa} ({numero_limpo}): {e}\n{traceback.format_exc()}")
             self._log(f"Erro ao enviar para {pessoa}: {e}")
             return False
@@ -742,9 +973,10 @@ class WhatsAppSender:
             # Inicia envio por rodadas
             self._set_state("enviando")
             compensacao = 0  # Rastreia débito/crédito entre rodadas para manter total exato
+            browser_died = False  # Sinaliza que a sessão do Chrome morreu
 
             for rodada in range(1, total_rodadas + 1):
-                if self._should_stop():
+                if self._should_stop() or browser_died:
                     break
 
                 # Verifica horário comercial
@@ -784,11 +1016,39 @@ class WhatsAppSender:
                     batch_size = max(1, msgs_por_rodada + compensacao)
                 else:
                     batch_size = self._get_batch_size(msgs_por_rodada, compensacao)
-                batch = pending.head(batch_size)
-                enviados_rodada = 0
 
-                for idx, row in batch.iterrows():
-                    if self._should_stop():
+                # A cota da rodada conta apenas ENVIOS EFETIVOS. Antes o batch era
+                # uma fatia fixa (pending.head), então um número inexistente ou uma
+                # falha de envio "gastava" uma vaga da rodada e o cliente recebia
+                # menos mensagens do que configurou.
+                alvo_rodada = batch_size
+                # Teto de contatos examinados, para uma planilha cheia de números
+                # ruins não transformar uma rodada em algo interminável
+                # (cada número inválido custa ~30s de timeout no WhatsApp).
+                max_tentativas = max(batch_size * 3, batch_size + 10)
+
+                enviados_rodada = 0
+                tentativas = 0
+
+                for idx, row in pending.iterrows():
+                    if self._should_stop() or browser_died:
+                        break
+
+                    # Cota da rodada atingida
+                    if enviados_rodada >= alvo_rodada:
+                        break
+
+                    # Proteção contra rodada interminável por números ruins
+                    if tentativas >= max_tentativas:
+                        self._log(
+                            f"⚠️ Rodada {rodada}: {tentativas} tentativas de envio e "
+                            f"apenas {enviados_rodada} efetivas. Encerrando a rodada — "
+                            f"os pendentes continuam para a próxima."
+                        )
+                        file_logger.warning(
+                            f"Rodada {rodada} atingiu o teto de {max_tentativas} "
+                            f"tentativas com {enviados_rodada} envios efetivos"
+                        )
                         break
 
                     # Verifica horário comercial antes de cada mensagem
@@ -825,6 +1085,11 @@ class WhatsAppSender:
                         self._notify_contact_update(idx, numero, "invalido")
                         continue
 
+                    # Só conta como tentativa a partir daqui: contatos inválidos
+                    # por validação são instantâneos (nem abrem o navegador) e
+                    # não devem consumir o teto da rodada.
+                    tentativas += 1
+
                     self._log(f"Enviando para {pessoa} ({numero})...")
 
                     try:
@@ -847,6 +1112,20 @@ class WhatsAppSender:
                         else:
                             self._log(f"⚠️ {pessoa} — falha ao enviar, será tentado novamente na próxima rodada.")
 
+                    except BrowserClosedError as e:
+                        # Sessão morta: abortar tudo. Continuar só queimaria
+                        # contatos com falhas instantâneas.
+                        file_logger.error(
+                            f"Navegador fechado durante o envio para {pessoa} ({numero}): {e}"
+                        )
+                        self._log(
+                            "🛑 O navegador foi fechado ou perdeu a conexão. "
+                            "Envio abortado — nenhum contato foi perdido, os pendentes "
+                            "continuam marcados para a próxima execução."
+                        )
+                        browser_died = True
+                        break
+
                     except TimeoutException:
                         # Número inválido
                         df.at[idx, "Invalido"] = "X"
@@ -860,11 +1139,27 @@ class WhatsAppSender:
                         self._notify_contact_update(idx, numero, "invalido")
 
                     except Exception as e:
+                        if self._is_session_dead(e):
+                            file_logger.error(
+                                f"Sessão morta detectada em {pessoa} ({numero}): {e}"
+                            )
+                            self._log(
+                                "🛑 O navegador foi fechado ou perdeu a conexão. "
+                                "Envio abortado."
+                            )
+                            browser_died = True
+                            break
                         file_logger.error(f"Erro ao enviar para {pessoa} ({numero}): {e}\n{traceback.format_exc()}")
                         self._log(f"⚠️ {pessoa} ({numero}) — erro inesperado: {e}")
 
-                    # Delay entre mensagens - exceto após a última
-                    if not self._should_stop() and idx != batch.index[-1]:
+                    # Delay entre mensagens — pulado quando a cota da rodada
+                    # já foi atingida (não faz sentido esperar antes de encerrar)
+                    if (
+                        not self._should_stop()
+                        and not browser_died
+                        and enviados_rodada < alvo_rodada
+                        and tentativas < max_tentativas
+                    ):
                         d_min = self.config.get("delay_min", 15)
                         d_max = self.config.get("delay_max", 30)
                         if self._human_behavior_enabled():
@@ -877,6 +1172,10 @@ class WhatsAppSender:
                 self._log(
                     f"📊 Rodada {rodada} finalizada: {enviados_rodada} mensagens enviadas"
                 )
+
+                # Sessão do Chrome morreu: não faz sentido iniciar outra rodada
+                if browser_died:
+                    break
 
                 # Atualiza compensação: diferença entre o esperado e o que de fato enviou
                 # Se mandou 4 e era pra mandar 5, compensacao fica +1 (próxima manda 1 a mais)
@@ -913,7 +1212,15 @@ class WhatsAppSender:
                         elapsed += 2
 
             # Finalização
-            if self._should_stop():
+            if browser_died:
+                self._set_state("erro")
+                status = self.get_status()
+                self._log(
+                    f"⚠️ Envio interrompido: o navegador foi fechado. "
+                    f"Enviadas {status['messages_sent']} mensagens antes da interrupção. "
+                    f"Clique em Iniciar Envio para retomar de onde parou."
+                )
+            elif self._should_stop():
                 self._set_state("parado")
                 self._log("🛑 Envio interrompido pelo usuário.")
             else:
