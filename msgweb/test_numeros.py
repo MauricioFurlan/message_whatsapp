@@ -717,5 +717,368 @@ class TestCotaDaRodada(unittest.TestCase):
         self.assertEqual((df["Invalido"] == "X").sum(), 2)
 
 
+    def test_contato_que_sempre_falha_e_abandonado(self):
+        """
+        Um contato que falha sempre não pode ser retentado para sempre: após
+        max_tentativas_contato falhas ele é marcado como inválido.
+        """
+        tentados, df = self._rodar(
+            ["falha", "ok", "ok", "ok", "ok"],
+            msgs_por_rodada=1,
+            total_rodadas=6,
+        )
+        # O contato problemático foi tentado no máximo 3 vezes (limite padrão)
+        falho = "1199999" + "0000"
+        self.assertEqual(tentados.count(falho), 3)
+        self.assertEqual(df.at[0, "Invalido"], "X")
+        self.assertEqual(int(df.at[0, "Tentativas"]), 3)
+
+    def test_limite_de_tentativas_configuravel(self):
+        """max_tentativas_contato=1 desiste do contato na primeira falha."""
+        import pandas as pd
+
+        estado = {"df": pd.DataFrame([{
+            "Nome": "Falho",
+            "Número": "11999990000",
+            "Mensagem": "oi",
+            "Arquivo": "",
+            "Prefixo": "",
+            "Enviado": "",
+            "DataEnvio": "",
+            "Invalido": "",
+        }])}
+
+        sender = self._ws.WhatsAppSender(
+            excel_path="fake.xlsx",
+            config={
+                "msgs_por_rodada": 1,
+                "total_rodadas": 5,
+                "intervalo_rodadas_min": 0,
+                "human_behavior": False,
+                "delay_min": 0,
+                "delay_max": 0,
+                "max_tentativas_contato": 1,
+            },
+            log_callback=lambda m: None,
+        )
+        tentados = []
+        sender._init_driver = lambda: FakeDriverSessao()
+        sender._load_contacts = lambda: estado["df"].copy()
+        sender._save_contacts = lambda df: estado.update({"df": df})
+        sender._wait_for_business_hours = lambda: None
+        sender._send_message = lambda *a, **k: (tentados.append(a[1]), False)[1]
+
+        sender.start()
+
+        self.assertEqual(len(tentados), 1)
+        self.assertEqual(estado["df"].at[0, "Invalido"], "X")
+
+    def test_pendentes_ignora_quem_estourou_o_limite(self):
+        """Contato com Tentativas >= limite não volta para a fila de pendentes."""
+        import pandas as pd
+
+        sender = self._ws.WhatsAppSender(
+            excel_path="fake.xlsx", config={}, log_callback=lambda m: None
+        )
+        df = pd.DataFrame([
+            {"Enviado": "", "Invalido": "", "Tentativas": 0},
+            {"Enviado": "", "Invalido": "", "Tentativas": 3},
+            {"Enviado": "", "Invalido": "", "Tentativas": 2},
+        ])
+        pendentes = sender._get_pending_contacts(df)
+        self.assertEqual(list(pendentes.index), [0, 2])
+
+
+class FakeFileInput:
+    """input[type=file] falso, identificado pelo atributo accept."""
+
+    def __init__(self, accept):
+        self.accept = accept
+        self.enviados = []
+
+    def get_attribute(self, name):
+        return self.accept if name == "accept" else None
+
+    def send_keys(self, value):
+        self.enviados.append(value)
+
+
+class TestEscolhaDoInputDeArquivo(BaseTestCase):
+    """
+    O formato do envio (foto grande, figurinha ou documento) é decidido pelo
+    input[type=file] escolhido, não pelo item do menu de anexo.
+
+    Bug: o código pegava o primeiro input com accept contendo "image/", que no
+    WhatsApp Web é o input de FIGURINHA — a foto chegava como sticker.
+    """
+
+    def _driver_com(self, accepts):
+        inputs = [FakeFileInput(a) for a in accepts]
+
+        class FakeDriver:
+            def find_elements(self, by, selector):
+                return inputs
+
+        self.sender._driver = FakeDriver()
+        self.sender._reveal_file_input = lambda el: None
+        return inputs
+
+    def test_classifica_input_de_midia(self):
+        self.assertEqual(
+            self.sender._classify_file_input("image/*,video/mp4,video/3gpp,video/quicktime"),
+            "midia",
+        )
+
+    def test_classifica_input_de_figurinha(self):
+        self.assertEqual(
+            self.sender._classify_file_input("image/webp,image/png,image/jpeg"),
+            "figurinha",
+        )
+
+    def test_classifica_input_de_documento(self):
+        self.assertEqual(self.sender._classify_file_input("*"), "documento")
+        self.assertEqual(self.sender._classify_file_input("*/*"), "documento")
+        self.assertEqual(self.sender._classify_file_input(""), "documento")
+
+    def test_classifica_input_de_imagem_generica(self):
+        self.assertEqual(self.sender._classify_file_input("image/*"), "imagem")
+
+    def test_imagem_escolhe_input_de_midia_e_nao_figurinha(self):
+        self._driver_com([
+            "image/webp,image/png,image/jpeg",          # figurinha (vinha primeiro)
+            "image/*,video/mp4,video/3gpp",             # mídia
+            "*",                                        # documento
+        ])
+        classe, accept, _ = self.sender._pick_file_input(True, set())
+        self.assertEqual(classe, "midia")
+        self.assertIn("video", accept)
+
+    def test_imagem_nunca_usa_input_de_figurinha(self):
+        """Mesmo sem input de mídia, o de figurinha continua fora de cogitação."""
+        self._driver_com(["image/webp,image/png,image/jpeg"])
+        self.assertIsNone(self.sender._pick_file_input(True, set()))
+
+    def test_documento_escolhe_input_de_documento(self):
+        self._driver_com([
+            "image/*,video/mp4",
+            "*",
+        ])
+        classe, accept, _ = self.sender._pick_file_input(False, set())
+        self.assertEqual(classe, "documento")
+        self.assertEqual(accept, "*")
+
+    def test_input_ja_tentado_e_ignorado(self):
+        self._driver_com([
+            "image/*,video/mp4",
+            "image/*",
+        ])
+        classe, _, _ = self.sender._pick_file_input(True, {"image/*,video/mp4"})
+        self.assertEqual(classe, "imagem")
+
+    def test_send_media_prefere_a_janela_nativa(self):
+        """
+        Com o caminho oficial (menu + janela nativa) funcionando, nenhum
+        input[type=file] é tocado — é ele que entrega a foto em tamanho grande.
+        """
+        inputs = self._driver_com(["image/*"])
+        chamadas = []
+        self.sender._send_media_via_dialog = (
+            lambda path, img, pessoa: (chamadas.append((img, pessoa)), "")[1]
+        )
+        self.sender._detect_attach_preview = lambda img, timeout=25.0: "midia"
+        self.sender._click_send_button_modal = lambda pessoa: "btn"
+        self.sender._wait_attachment_sent = lambda btn, timeout=30.0: True
+
+        self.sender._send_media("foto.png", "Mauricio")
+
+        self.assertEqual(chamadas, [(True, "Mauricio")])
+        self.assertEqual(inputs[0].enviados, [])
+
+    def test_send_media_cai_para_o_input_se_a_janela_falhar(self):
+        inputs = self._driver_com([
+            "image/webp,image/png,image/jpeg",
+            "image/*,video/mp4,video/3gpp",
+            "*",
+        ])
+        self.sender._send_media_via_dialog = (
+            lambda path, img, pessoa: "a janela de arquivos do Windows não abriu"
+        )
+        self.sender._detect_attach_preview = lambda img, timeout=20.0: "midia"
+        self.sender._click_send_button_modal = lambda pessoa: "btn"
+        self.sender._wait_attachment_sent = lambda btn, timeout=30.0: True
+        self.sender._close_modal = lambda: None
+
+        self.sender._send_media("foto.png", "Mauricio")
+
+        self.assertEqual(inputs[0].enviados, [])           # figurinha: intocado
+        self.assertEqual(len(inputs[1].enviados), 1)       # mídia: recebeu o arquivo
+        self.assertTrue(inputs[1].enviados[0].endswith("foto.png"))
+
+    def test_send_media_descarta_editor_de_figurinha_e_tenta_outro_input(self):
+        """
+        Se o preview aberto for o editor de figurinha, o arquivo é descartado
+        e o próximo candidato é usado.
+        """
+        inputs = self._driver_com([
+            "image/*,video/mp4",   # abrirá "figurinha" no teste
+            "image/*",             # fallback
+        ])
+        self.sender._send_media_via_dialog = lambda path, img, pessoa: "sem janela"
+        resultados = iter(["figurinha", "midia"])
+        self.sender._detect_attach_preview = lambda img, timeout=20.0: next(resultados)
+        self.sender._close_modal = lambda: None
+        self.sender._click_send_button_modal = lambda pessoa: "btn"
+        self.sender._wait_attachment_sent = lambda btn, timeout=30.0: True
+
+        self.sender._send_media("foto.jpg", "Mauricio")
+
+        self.assertEqual(len(inputs[0].enviados), 1)
+        self.assertEqual(len(inputs[1].enviados), 1)
+
+    def test_send_media_nunca_envia_figurinha(self):
+        """
+        Se todos os caminhos abrirem o editor de figurinha, o envio falha —
+        melhor falhar do que entregar a imagem como sticker.
+        """
+        self._driver_com(["image/*"])
+        self.sender._send_media_via_dialog = lambda path, img, pessoa: ""
+        self.sender._detect_attach_preview = lambda img, timeout=20.0: "figurinha"
+        self.sender._close_modal = lambda: None
+        enviados = []
+        self.sender._click_send_button_modal = lambda pessoa: enviados.append(pessoa)
+
+        with self.assertRaises(RuntimeError):
+            self.sender._send_media("foto.png", "Mauricio")
+        self.assertEqual(enviados, [])
+
+    def test_send_media_falha_quando_nao_abre_preview(self):
+        self._driver_com(["image/*,video/mp4"])
+        self.sender._send_media_via_dialog = lambda path, img, pessoa: ""
+        self.sender._detect_attach_preview = lambda img, timeout=20.0: ""
+        self.sender._close_modal = lambda: None
+
+        with self.assertRaises(RuntimeError):
+            self.sender._send_media("foto.png", "Mauricio")
+
+    def test_extensoes_de_imagem_e_video(self):
+        for nome in ("a.png", "a.JPG", "a.jpeg", "a.gif", "a.webp", "a.mp4", "a.mov"):
+            self.assertTrue(self.sender._is_image_or_video(nome), nome)
+        for nome in ("a.pdf", "a.docx", "a.mp3", "a.zip"):
+            self.assertFalse(self.sender._is_image_or_video(nome), nome)
+
+
+class TestDeteccaoDoEditorDeFigurinha(BaseTestCase):
+    """
+    O preview de foto tem uma ferramenta de figurinha/emoji, então a palavra
+    "figurinha" sozinha não pode condenar o modal — senão o envio correto seria
+    descartado em loop.
+    """
+
+    def _preparar(self, com_legenda: bool):
+        self.sender._has_caption_field = lambda: com_legenda
+
+    def test_texto_inequivoco_e_figurinha(self):
+        self._preparar(com_legenda=True)
+        self.assertTrue(self.sender._looks_like_sticker_editor("criar figurinha  recortar"))
+
+    def test_figurinha_sem_campo_de_legenda_e_figurinha(self):
+        self._preparar(com_legenda=False)
+        self.assertTrue(self.sender._looks_like_sticker_editor("figurinha"))
+
+    def test_ferramenta_de_figurinha_no_preview_de_foto_nao_conta(self):
+        self._preparar(com_legenda=True)
+        self.assertFalse(
+            self.sender._looks_like_sticker_editor("figurinha adicionar uma legenda")
+        )
+
+    def test_preview_normal_nao_e_figurinha(self):
+        self._preparar(com_legenda=True)
+        self.assertFalse(self.sender._looks_like_sticker_editor("adicionar uma legenda"))
+
+    def test_texto_vazio_nao_e_figurinha(self):
+        self._preparar(com_legenda=False)
+        self.assertFalse(self.sender._looks_like_sticker_editor(""))
+
+
+class TestDeteccaoDoPreview(BaseTestCase):
+    """
+    _detect_attach_preview decide se o modal aberto é o preview de foto (pode
+    enviar) ou o editor de figurinha (precisa descartar). O sinal decisivo é o
+    campo de legenda: o diagnóstico no WhatsApp Web real mostrou o editor de
+    figurinha com botão enviar visível e NENHUM campo de legenda.
+    """
+
+    def _preparar(self, texto="", legenda=False, botao=False):
+        self.sender._STICKER_GRACE_SECONDS = 0.1
+        self.sender._modal_text = lambda: texto
+        self.sender._has_caption_field = lambda: legenda
+        self.sender._find_send_button_modal = lambda timeout=0.3: "btn" if botao else None
+
+    def test_campo_de_legenda_significa_preview_de_foto(self):
+        self._preparar(legenda=True, botao=True)
+        self.assertEqual(self.sender._detect_attach_preview(True, timeout=2), "midia")
+
+    def test_imagem_sem_legenda_e_editor_de_figurinha(self):
+        self._preparar(legenda=False, botao=True)
+        self.assertEqual(self.sender._detect_attach_preview(True, timeout=3), "figurinha")
+
+    def test_documento_sem_legenda_e_preview_valido(self):
+        self._preparar(legenda=False, botao=True)
+        self.assertEqual(self.sender._detect_attach_preview(False, timeout=3), "midia")
+
+    def test_nada_aberto_retorna_vazio(self):
+        self._preparar(legenda=False, botao=False)
+        self.assertEqual(self.sender._detect_attach_preview(True, timeout=1), "")
+
+    def test_texto_de_criar_figurinha_e_detectado_na_hora(self):
+        self._preparar(texto="criar figurinha", legenda=True, botao=True)
+        self.assertEqual(self.sender._detect_attach_preview(True, timeout=2), "figurinha")
+
+
+class TestMenuDeAnexo(BaseTestCase):
+    """
+    O botão "+" do menu de anexo é um toggle: clicar com o menu já aberto fecha
+    o menu e o item "Fotos e vídeos" desaparece. O sender precisa lidar com isso.
+    """
+
+    def test_menu_ja_aberto_nao_clica_no_botao(self):
+        cliques = []
+        self.sender._open_attach_menu = lambda pessoa: cliques.append(pessoa) or True
+        self.sender._find_menu_item = lambda img: "item"
+
+        self.assertEqual(self.sender._abrir_menu_e_achar_item(True, "Mauricio"), "item")
+        self.assertEqual(cliques, [])
+
+    def test_abre_o_menu_quando_fechado(self):
+        cliques = []
+        respostas = iter([None, "item"])
+        self.sender._open_attach_menu = lambda pessoa: cliques.append(pessoa) or True
+        self.sender._find_menu_item = lambda img: next(respostas)
+
+        self.assertEqual(self.sender._abrir_menu_e_achar_item(True, "Mauricio"), "item")
+        self.assertEqual(cliques, ["Mauricio"])
+
+    def test_tenta_de_novo_se_o_clique_fechou_o_menu(self):
+        cliques = []
+        respostas = iter([None, None, "item"])
+        self.sender._open_attach_menu = lambda pessoa: cliques.append(pessoa) or True
+        self.sender._find_menu_item = lambda img: next(respostas)
+
+        self.assertEqual(self.sender._abrir_menu_e_achar_item(True, "Mauricio"), "item")
+        self.assertEqual(len(cliques), 2)
+
+    def test_desiste_quando_o_item_nunca_aparece(self):
+        self.sender._open_attach_menu = lambda pessoa: True
+        self.sender._find_menu_item = lambda img: None
+
+        self.assertIsNone(self.sender._abrir_menu_e_achar_item(True, "Mauricio"))
+
+    def test_sem_botao_de_anexo_desiste(self):
+        self.sender._open_attach_menu = lambda pessoa: False
+        self.sender._find_menu_item = lambda img: None
+
+        self.assertIsNone(self.sender._abrir_menu_e_achar_item(False, "Mauricio"))
+
+
 if __name__ == "__main__":
     unittest.main()

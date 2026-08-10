@@ -64,6 +64,7 @@ class ConfigModel(BaseModel):
     delay_min: int = 15
     delay_max: int = 30
     human_behavior: bool = False
+    max_tentativas_contato: int = 3
 
 
 # --- Global State ---
@@ -80,6 +81,8 @@ class AppState:
         "delay_min": 15,
         "delay_max": 30,
         "human_behavior": False,
+        # Falhas de envio toleradas por contato antes de desistir dele
+        "max_tentativas_contato": 3,
     })
     excel_path: Optional[str] = None
     sender: Optional[WhatsAppSender] = None

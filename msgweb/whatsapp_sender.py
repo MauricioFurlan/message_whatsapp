@@ -32,6 +32,8 @@ from selenium.common.exceptions import (
     StaleElementReferenceException,
 )
 
+import win_dialog
+
 # Logger de arquivo para diagnóstico (compartilhado com app.py)
 file_logger = logging.getLogger("whatsapp_sender_file")
 
@@ -298,15 +300,69 @@ class WhatsAppSender:
             df["Prefixo"] = ""
         else:
             df["Prefixo"] = df["Prefixo"].fillna("").astype(str).str.strip()
+        # Coluna Tentativas (falhas de envio acumuladas — limita as retentativas)
+        if "Tentativas" not in df.columns:
+            df["Tentativas"] = 0
+        else:
+            df["Tentativas"] = (
+                pd.to_numeric(df["Tentativas"], errors="coerce").fillna(0).astype(int)
+            )
         return df
+
+    def _max_tentativas_contato(self) -> int:
+        """Quantas falhas um contato pode ter antes de ser abandonado."""
+        try:
+            return max(1, int(self.config.get("max_tentativas_contato", 3)))
+        except (TypeError, ValueError):
+            return 3
+
+    def _registrar_falha(self, df: pd.DataFrame, idx, pessoa: str, numero: str, motivo: str):
+        """
+        Contabiliza uma falha de envio do contato.
+
+        Enquanto estiver abaixo do limite, o contato continua pendente e é
+        retentado na próxima rodada. Ao atingir o limite ele é marcado como
+        inválido, para não ficar consumindo rodada após rodada indefinidamente.
+        """
+        if "Tentativas" not in df.columns:
+            df["Tentativas"] = 0
+        try:
+            falhas = int(df.at[idx, "Tentativas"] or 0) + 1
+        except (TypeError, ValueError):
+            falhas = 1
+        df.at[idx, "Tentativas"] = falhas
+        limite = self._max_tentativas_contato()
+
+        if falhas >= limite:
+            df.at[idx, "Invalido"] = "X"
+            self._save_contacts(df)
+            with self._lock:
+                self._total_pending -= 1
+            file_logger.error(
+                f"Contato abandonado após {falhas} falhas: {pessoa} ({numero}) — {motivo}"
+            )
+            self._log(
+                f"❌ {pessoa} — falhou {falhas}x ({motivo}). Desistindo deste contato "
+                f"para não travar as próximas rodadas."
+            )
+            self._notify_contact_update(idx, numero, "invalido")
+        else:
+            self._save_contacts(df)
+            self._log(
+                f"⚠️ {pessoa} — falha ao enviar ({motivo}). Tentativa {falhas}/{limite}, "
+                f"será tentado novamente na próxima rodada."
+            )
 
     def _save_contacts(self, df: pd.DataFrame):
         """Salva a planilha com progresso atualizado."""
         df.to_excel(self.excel_path, index=False)
 
     def _get_pending_contacts(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Retorna contatos pendentes (não enviados e não inválidos)."""
+        """Retorna contatos pendentes (não enviados, não inválidos, dentro do limite de tentativas)."""
         mask = (df["Enviado"] != "X") & (df["Invalido"] != "X")
+        if "Tentativas" in df.columns:
+            tentativas = pd.to_numeric(df["Tentativas"], errors="coerce").fillna(0)
+            mask = mask & (tentativas < self._max_tentativas_contato())
         return df[mask]
 
     def _clean_number(self, numero) -> str:
@@ -645,6 +701,11 @@ class WhatsAppSender:
                     file_logger.warning(f"Anexo não encontrado: {f} (contato: {pessoa})")
         has_media = len(media_files) > 0
 
+        # O texto é sempre enviado como mensagem separada, antes do(s) anexo(s).
+        # Imagens/vídeos vão pelo input de mídia do WhatsApp (foto grande inline);
+        # os demais arquivos vão pelo input de documento.
+        all_images = False
+
         # Navega para o chat (sempre sem texto pré-preenchido quando human ou mídia)
         if human or has_media:
             url = f"https://web.whatsapp.com/send?phone={numero_limpo}"
@@ -677,65 +738,61 @@ class WhatsAppSender:
             else:
                 time.sleep(random.uniform(1.5, 3.0))
 
-            # Passo 1: Envia a mensagem de texto
-            input_field = self._driver.find_element(
-                By.CSS_SELECTOR, "footer div[contenteditable='true']"
-            )
+            # Passo 1: Envia a mensagem de texto (SOMENTE se NÃO for enviar como legenda de imagem)
+            if not all_images:
+                input_field = self._driver.find_element(
+                    By.CSS_SELECTOR, "footer div[contenteditable='true']"
+                )
 
-            if human:
-                self._human_type(input_field, texto)
-                time.sleep(random.uniform(0.8, 2.0))
-            else:
-                # Se não usou human, o texto já está no campo via URL (exceto com mídia)
-                if has_media:
-                    # Envia texto com suporte a quebras de linha (Shift+Enter)
-                    self._type_with_newlines(input_field, texto)
-                    time.sleep(random.uniform(0.5, 1.0))
+                if human:
+                    self._human_type(input_field, texto)
+                    time.sleep(random.uniform(0.8, 2.0))
+                else:
+                    # Se não usou human, o texto já está no campo via URL (exceto com mídia)
+                    if has_media:
+                        # Envia texto com suporte a quebras de linha (Shift+Enter)
+                        self._type_with_newlines(input_field, texto)
+                        time.sleep(random.uniform(0.5, 1.0))
 
-            # Se a mensagem contém um link, o WhatsApp gera um preview card.
-            # HIPÓTESE NÃO CONFIRMADA: o preview pode atrasar o campo de texto.
-            # A espera é curta justamente para não custar caro se estiver errada.
-            has_link = "http://" in texto or "https://" in texto or "www." in texto
-            if has_link:
-                time.sleep(random.uniform(2.0, 4.0))
+                # Se a mensagem contém um link, o WhatsApp gera um preview card.
+                has_link = "http://" in texto or "https://" in texto or "www." in texto
+                if has_link:
+                    time.sleep(random.uniform(2.0, 4.0))
 
-            input_field.send_keys(Keys.ENTER)
+                input_field.send_keys(Keys.ENTER)
 
-            # Confirma que a mensagem saiu de fato. O WhatsApp limpa o campo ao
-            # enviar; se o texto continuar lá, o ENTER não surtiu efeito.
-            confirm_timeout = 8.0 if has_link else 6.0
-            if not self._confirm_message_sent(texto, timeout=confirm_timeout):
-                self._log(f"⚠️ {pessoa} — campo não esvaziou, tentando ENTER novamente...")
-                file_logger.warning(f"ENTER não enviou a mensagem de {pessoa}, tentando novamente")
-                try:
-                    input_field = self._driver.find_element(
-                        By.CSS_SELECTOR, "footer div[contenteditable='true']"
-                    )
-                    input_field.send_keys(Keys.ENTER)
-                except StaleElementReferenceException:
-                    pass
-
+                # Confirma que a mensagem saiu de fato.
+                confirm_timeout = 8.0 if has_link else 6.0
                 if not self._confirm_message_sent(texto, timeout=confirm_timeout):
-                    # FAIL-OPEN de propósito: bloquear aqui parou o envio inteiro
-                    # do cliente. Se a verificação não conseguir confirmar, seguimos
-                    # em frente e registramos no log — o log dirá se a verificação
-                    # está errando ou se o ENTER realmente não funciona.
-                    file_logger.error(
-                        f"NÃO CONFIRMADO: mensagem de {pessoa} ({numero_limpo}) pode "
-                        f"não ter sido enviada — campo de texto ainda continha o "
-                        f"texto após 2 tentativas de ENTER. Seguindo adiante."
-                    )
-                    self._log(
-                        f"⚠️ {pessoa} — não foi possível confirmar o envio. "
-                        f"Verifique manualmente esta conversa."
-                    )
+                    self._log(f"⚠️ {pessoa} — campo não esvaziou, tentando ENTER novamente...")
+                    file_logger.warning(f"ENTER não enviou a mensagem de {pessoa}, tentando novamente")
+                    try:
+                        input_field = self._driver.find_element(
+                            By.CSS_SELECTOR, "footer div[contenteditable='true']"
+                        )
+                        input_field.send_keys(Keys.ENTER)
+                    except StaleElementReferenceException:
+                        pass
+
+                    if not self._confirm_message_sent(texto, timeout=confirm_timeout):
+                        file_logger.error(
+                            f"NÃO CONFIRMADO: mensagem de {pessoa} ({numero_limpo}) pode "
+                            f"não ter sido enviada — campo de texto ainda continha o "
+                            f"texto após 2 tentativas de ENTER. Seguindo adiante."
+                        )
+                        self._log(
+                            f"⚠️ {pessoa} — não foi possível confirmar o envio. "
+                            f"Verifique manualmente esta conversa."
+                        )
 
             if human:
                 time.sleep(random.uniform(2.0, 5.0))
             else:
                 time.sleep(random.uniform(2.0, 4.0))
 
-            # Passo 2: Se tem mídia, envia os anexos separadamente (sem legenda)
+            # Passo 2: Se tem mídia, envia os anexos
+            # Texto já foi enviado como mensagem separada acima.
+            # Imagem/vídeo = foto grande inline; outros tipos = documento.
             if has_media:
                 for media_file in media_files:
                     time.sleep(random.uniform(1.0, 2.0))
@@ -758,154 +815,599 @@ class WhatsAppSender:
             self._log(f"Erro ao enviar para {pessoa}: {e}")
             return False
 
+    # Extensões que devem ser enviadas como "Fotos e Vídeos" (aparecem inline no chat)
+    _IMAGE_VIDEO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".3gp", ".mov"}
+
+    def _is_image_or_video(self, file_path: str) -> bool:
+        """Verifica se o arquivo é imagem/vídeo (deve ser enviado inline, não como documento)."""
+        ext = os.path.splitext(file_path)[1].lower()
+        return ext in self._IMAGE_VIDEO_EXTENSIONS
+
+    def _find_all_file_inputs(self) -> list:
+        """Retorna todos os input[type=file] presentes no DOM."""
+        try:
+            return self._driver.find_elements(By.CSS_SELECTOR, 'input[type="file"]')
+        except Exception:
+            return []
+
+    @staticmethod
+    def _classify_file_input(accept: str) -> str:
+        """
+        Classifica um input[type=file] do WhatsApp Web pelo atributo accept.
+
+        O WhatsApp mantém vários inputs escondidos no DOM ao mesmo tempo, e é o
+        input escolhido — não o item do menu — que decide o formato do envio:
+
+          - "midia"      accept="image/*,video/mp4,video/3gpp,video/quicktime"
+                         → abre o preview de FOTO/VÍDEO (imagem grande, inline)
+          - "figurinha"  accept="image/webp,image/png,image/jpeg" (lista fixa de
+                         mime types de imagem, sem vídeo)
+                         → abre o editor de FIGURINHA (era a causa do bug)
+          - "documento"  accept="*" ou "*/*"
+                         → envia como arquivo anexado
+          - "imagem"     accept="image/*" puro (foto de perfil e afins)
+        """
+        a = (accept or "").lower().replace(" ", "")
+        if a in ("", "*", "*/*"):
+            return "documento"
+        tem_video = "video" in a
+        tem_imagem = "image" in a
+        if tem_video:
+            return "midia"
+        if tem_imagem:
+            return "imagem" if "image/*" in a else "figurinha"
+        return "outro"
+
+    def _pick_file_input(self, is_image_video: bool, ja_tentados: set):
+        """
+        Escolhe o melhor input[type=file] para o tipo de arquivo, relendo o DOM
+        (os inputs somem/reaparecem conforme o WhatsApp abre e fecha modais).
+
+        Retorna (classe, accept, elemento) ou None se não houver candidato novo.
+        Para imagens/vídeos o input de figurinha é sempre ignorado — é ele que
+        fazia a foto virar sticker.
+        """
+        classificados = []
+        for inp in self._find_all_file_inputs():
+            try:
+                accept = inp.get_attribute("accept") or ""
+            except Exception:
+                continue
+            classificados.append((self._classify_file_input(accept), accept, inp))
+
+        file_logger.info(
+            "Inputs de arquivo no DOM: "
+            + (", ".join(f"[{k}] accept='{a}'" for k, a, _ in classificados) or "nenhum")
+        )
+
+        if is_image_video:
+            # Nunca usa o input de figurinha para foto/vídeo
+            ordem = ["midia", "imagem", "outro"]
+        else:
+            # "imagem" entra como último recurso: em algumas versões o WhatsApp
+            # mantém um único input no DOM e valida o tipo no próprio JS.
+            ordem = ["documento", "outro", "midia", "imagem"]
+
+        for classe in ordem:
+            for k, a, el in classificados:
+                if k == classe and a not in ja_tentados:
+                    return k, a, el
+        return None
+
+    def _reveal_file_input(self, element):
+        """
+        Torna o input[type=file] interagível. O WhatsApp o mantém escondido
+        (display:none), o que faz o Selenium recusar o send_keys em algumas
+        versões do Chrome.
+        """
+        try:
+            self._driver.execute_script(
+                "const el = arguments[0];"
+                "el.style.display = 'block';"
+                "el.style.visibility = 'visible';"
+                "el.style.opacity = '1';"
+                "el.style.width = '1px';"
+                "el.style.height = '1px';"
+                "el.removeAttribute('disabled');",
+                element,
+            )
+        except Exception as e:
+            file_logger.warning(f"Não foi possível revelar o input de arquivo: {e}")
+
+    # Textos que denunciam o editor de figurinha (envio no formato errado)
+    _STICKER_MARKERS = ("figurinha", "sticker")
+    # Marcadores inequívocos do editor de figurinha
+    _STICKER_STRONG_MARKERS = (
+        "criar figurinha",
+        "nova figurinha",
+        "create sticker",
+        "new sticker",
+    )
+
+    def _modal_text(self) -> str:
+        """Texto visível dos modais/overlays abertos (minúsculo)."""
+        try:
+            containers = self._driver.find_elements(
+                By.CSS_SELECTOR,
+                'div[role="dialog"], div[data-animate-modal-body="true"], '
+                'div[data-animate-modal-popup="true"], .overlay',
+            )
+            return " ".join((c.text or "") for c in containers).lower()
+        except Exception:
+            return ""
+
+    def _has_caption_field(self) -> bool:
+        """
+        Detecta o campo de legenda, que só existe no preview de foto/vídeo/
+        documento — o editor de figurinha não tem legenda.
+        """
+        selectors = [
+            'div[contenteditable="true"][aria-label*="legenda"]',
+            'div[contenteditable="true"][aria-label*="caption"]',
+            'div[data-testid="media-caption-input-container"]',
+            'div[role="dialog"] div[contenteditable="true"]',
+        ]
+        for selector in selectors:
+            try:
+                for el in self._driver.find_elements(By.CSS_SELECTOR, selector):
+                    if el.is_displayed():
+                        return True
+            except Exception:
+                continue
+        return False
+
+    def _looks_like_sticker_editor(self, texto: str) -> bool:
+        """
+        Decide se o modal aberto é o editor de figurinha.
+
+        Cuidado: o editor de foto tem uma ferramenta de figurinha/emoji, então a
+        simples presença da palavra não basta — só conta como figurinha se o
+        texto for inequívoco ou se não houver campo de legenda no modal.
+        """
+        if not texto:
+            return False
+        if any(m in texto for m in self._STICKER_STRONG_MARKERS):
+            return True
+        if any(m in texto for m in self._STICKER_MARKERS):
+            return not self._has_caption_field()
+        return False
+
+    # Tempo que o preview de uma imagem pode ficar aberto sem campo de legenda
+    # antes de ser considerado editor de figurinha
+    _STICKER_GRACE_SECONDS = 4.0
+
+    def _detect_attach_preview(self, is_image_video: bool, timeout: float = 20.0) -> str:
+        """
+        Aguarda o preview do anexo abrir e diz qual preview é.
+
+        O discriminador confiável é o CAMPO DE LEGENDA: o preview de foto/vídeo
+        tem legenda, o editor de figurinha não (foi o que o diagnóstico mostrou —
+        modal sem legenda, botão enviar presente, imagem chegando pequena).
+
+        Retorna:
+          "midia"     → preview correto (foto grande com legenda / documento)
+          "figurinha" → editor de figurinha; o arquivo foi pelo caminho errado
+          ""          → nada abriu
+        """
+        fim = time.time() + timeout
+        botao_visto_em = None
+
+        while time.time() < fim:
+            if self._looks_like_sticker_editor(self._modal_text()):
+                return "figurinha"
+
+            if self._has_caption_field():
+                return "midia"
+
+            if self._find_send_button_modal(timeout=0.3):
+                if botao_visto_em is None:
+                    botao_visto_em = time.time()
+                elif not is_image_video:
+                    # Documento: preview sem legenda é normal
+                    return "midia"
+                elif time.time() - botao_visto_em >= self._STICKER_GRACE_SECONDS:
+                    # Imagem com preview aberto e sem legenda = editor de figurinha
+                    return "figurinha"
+
+            time.sleep(0.4)
+
+        return ""
+
+    def _close_modal(self):
+        """Fecha o modal aberto (ESC) e dá tempo do DOM se reorganizar."""
+        try:
+            ActionChains(self._driver).send_keys(Keys.ESCAPE).perform()
+            time.sleep(0.8)
+            # Alguns modais pedem confirmação de descarte
+            ActionChains(self._driver).send_keys(Keys.ESCAPE).perform()
+            time.sleep(0.5)
+        except Exception:
+            pass
+
+    # Botão de anexo (o "+" ao lado do campo de mensagem)
+    _ATTACH_BUTTON_SELECTORS = [
+        'button[aria-label="Anexar"]',
+        'button[aria-label="Attach"]',
+        'span[data-icon="plus-rounded"]',
+        'span[data-icon="plus"]',
+        'span[data-icon="clip"]',
+        'span[data-icon="attach-menu-plus"]',
+        '[data-testid="clip"]',
+    ]
+
+    # Rótulos dos itens do menu de anexo, por tipo de arquivo
+    _MENU_LABELS_MIDIA = ("fotos e vídeos", "fotos e videos", "photos & videos")
+    _MENU_LABELS_DOCUMENTO = ("documento", "document")
+
+    def _open_attach_menu(self, pessoa: str) -> bool:
+        """Abre o menu de anexo. Só abrir o menu não dispara janela nativa."""
+        for seletor in self._ATTACH_BUTTON_SELECTORS:
+            try:
+                elementos = self._driver.find_elements(By.CSS_SELECTOR, seletor)
+            except Exception as e:
+                if self._is_session_dead(e):
+                    raise BrowserClosedError(str(e))
+                continue
+
+            for el in elementos:
+                try:
+                    if not el.is_displayed():
+                        continue
+                    el.click()
+                    time.sleep(random.uniform(0.8, 1.5))
+                    file_logger.info(f"Menu de anexo aberto via: {seletor}")
+                    return True
+                except Exception as e:
+                    if self._is_session_dead(e):
+                        raise BrowserClosedError(str(e))
+                    continue
+
+        file_logger.error(f"Não encontrou o botão de anexo para {pessoa}")
+        return False
+
+    def _find_menu_item(self, is_image_video: bool):
+        """
+        Encontra o item do menu de anexo ("Fotos e vídeos" ou "Documento").
+
+        O casamento é exato contra a lista de rótulos — importante para não
+        clicar em "Nova figurinha" por engano.
+        """
+        alvos = (
+            self._MENU_LABELS_MIDIA if is_image_video else self._MENU_LABELS_DOCUMENTO
+        )
+        for seletor in ("button", 'div[role="button"]', "li"):
+            try:
+                elementos = self._driver.find_elements(By.CSS_SELECTOR, seletor)
+            except Exception:
+                continue
+            for el in elementos:
+                try:
+                    if not el.is_displayed():
+                        continue
+                    rotulo = (el.get_attribute("aria-label") or el.text or "").strip().lower()
+                    if rotulo in alvos:
+                        file_logger.info(f"Item de menu '{rotulo}' encontrado em <{seletor}>")
+                        return el
+                except Exception:
+                    continue
+        return None
+
+    def _abrir_menu_e_achar_item(self, is_image_video: bool, pessoa: str):
+        """
+        Deixa o menu de anexo aberto e devolve o item desejado.
+
+        O botão "+" é um toggle: se o menu já estiver aberto, clicar nele fecha.
+        Por isso o item é procurado antes de qualquer clique, e uma segunda
+        tentativa é feita caso o clique tenha fechado o menu.
+        """
+        item = self._find_menu_item(is_image_video)
+        if item is not None:
+            return item
+
+        for _ in range(2):
+            if not self._open_attach_menu(pessoa):
+                return None
+            item = self._find_menu_item(is_image_video)
+            if item is not None:
+                return item
+            file_logger.warning(
+                "Item não apareceu após abrir o menu de anexo — o clique pode ter "
+                "fechado um menu que já estava aberto; tentando de novo"
+            )
+            time.sleep(0.8)
+
+        return None
+
+    def _send_media_via_dialog(self, abs_path: str, is_image_video: bool, pessoa: str) -> str:
+        """
+        Anexa o arquivo pelo caminho oficial: menu de anexo → "Fotos e vídeos"
+        (ou "Documento") → janela nativa do Windows preenchida via mensagens
+        Win32. É o que garante FOTO GRANDE em vez de figurinha.
+
+        O clique no item do menu roda em outra thread porque ele só retorna
+        quando a janela nativa fecha.
+
+        Retorna "" em caso de sucesso, ou o motivo da falha.
+        """
+        if not win_dialog.IS_WINDOWS:
+            return "sistema não é Windows"
+
+        item = self._abrir_menu_e_achar_item(is_image_video, pessoa)
+        if item is None:
+            esperado = "Fotos e vídeos" if is_image_video else "Documento"
+            self._close_modal()
+            return f"não encontrou '{esperado}' no menu de anexo"
+
+        dialogs_antes = win_dialog.list_dialogs()
+        falha_clique = {}
+
+        def clicar():
+            try:
+                item.click()
+            except Exception as e:  # noqa: BLE001 - reportado na thread principal
+                falha_clique["erro"] = e
+
+        thread = threading.Thread(target=clicar, daemon=True)
+        thread.start()
+
+        dialog = win_dialog.wait_for_new_dialog(dialogs_antes, timeout=20.0)
+        if dialog is None:
+            thread.join(timeout=5)
+            if "erro" in falha_clique:
+                return f"clique no item do menu falhou ({falha_clique['erro']})"
+            return "a janela de arquivos do Windows não abriu"
+
+        file_logger.info(f"Janela de arquivos aberta (hwnd={dialog}); escolhendo {abs_path}")
+
+        if not win_dialog.choose_file(dialog, abs_path):
+            win_dialog.cancel_dialog(dialog)
+            thread.join(timeout=5)
+            return "não foi possível preencher a janela de arquivos do Windows"
+
+        thread.join(timeout=15)
+        return ""
+
     def _send_media(self, media_path: str, pessoa: str, human: bool = False):
         """
-        Envia um arquivo de mídia no chat atual (sem legenda).
-        A mensagem de texto já foi enviada separadamente antes desta chamada.
-        Sempre envia como DOCUMENTO para evitar que imagens virem figurinha.
-        
-        Raises Exception se falhar (para que _send_message retorne False).
+        Envia um arquivo no chat atual.
+
+        Caminho principal (Windows): menu de anexo → "Fotos e vídeos" /
+        "Documento" → janela nativa preenchida por mensagens Win32. É o fluxo
+        oficial do WhatsApp, o único que entrega FOTO GRANDE.
+
+        Por que não os outros caminhos (todos testados no WhatsApp Web atual):
+          - o único input[type=file] do DOM tem accept="image/*" e abre o editor
+            de FIGURINHA (a imagem chega pequena);
+          - evento de drop sintético (DataTransfer via JS) é ignorado.
+
+        Fallback: input[type=file]. Para imagem/vídeo, um preview sem campo de
+        legenda é tratado como figurinha e descartado — nunca enviado.
         """
-        # Passo 1: Clicar no botão de anexo (clip/plus icon)
-        attach_btn = None
-        attach_selectors = [
-            'span[data-icon="plus"]',
-            'span[data-icon="clip"]',
-            'span[data-icon="attach-menu-plus"]',
-            'div[title="Anexar"]',
-            'div[title="Attach"]',
-            'button[aria-label="Anexar"]',
-            'button[aria-label="Attach"]',
-        ]
+        is_image_video = self._is_image_or_video(media_path)
+        tipo = "foto/vídeo" if is_image_video else "documento"
+        abs_path = os.path.abspath(media_path)
+        file_logger.info(f"Enviando {abs_path} como {tipo} para {pessoa}")
 
-        for selector in attach_selectors:
+        ultimo_erro = "não foi possível abrir o preview do anexo"
+
+        # --- Caminho principal: menu + janela nativa do Windows ---
+        if win_dialog.IS_WINDOWS:
+            erro = self._send_media_via_dialog(abs_path, is_image_video, pessoa)
+            if erro:
+                ultimo_erro = erro
+                file_logger.warning(f"Caminho do menu de anexo falhou: {erro}")
+            else:
+                resultado = self._detect_attach_preview(is_image_video, timeout=25.0)
+                file_logger.info(f"Preview após a janela nativa: '{resultado or 'nenhum'}'")
+
+                if resultado == "midia":
+                    self._finalizar_envio_de_anexo(pessoa, media_path, tipo)
+                    return
+
+                if resultado == "figurinha":
+                    ultimo_erro = "o menu de anexo abriu o editor de figurinha"
+                    file_logger.warning(ultimo_erro)
+                    self._close_modal()
+                else:
+                    ultimo_erro = "o preview não abriu depois de escolher o arquivo"
+                    file_logger.warning(ultimo_erro)
+                    self._close_modal()
+
+        # --- Fallback: input[type=file] ---
+        file_logger.warning(
+            f"Tentando os input[type=file] como fallback para {pessoa} ({ultimo_erro})"
+        )
+        ja_tentados = set()
+
+        for _ in range(4):
+            candidato = self._pick_file_input(is_image_video, ja_tentados)
+            if not candidato:
+                break
+
+            classe, accept, file_input = candidato
+            ja_tentados.add(accept)
+            file_logger.info(f"Tentando input [{classe}] accept='{accept}' para {pessoa}")
+
+            self._reveal_file_input(file_input)
             try:
-                attach_btn = WebDriverWait(self._driver, 5).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                )
-                if attach_btn:
-                    break
-            except (TimeoutException, Exception):
+                file_input.send_keys(abs_path)
+            except Exception as e:
+                if self._is_session_dead(e):
+                    raise BrowserClosedError(str(e))
+                ultimo_erro = f"input [{classe}] recusou o arquivo ({e})"
+                file_logger.warning(ultimo_erro)
                 continue
 
-        if not attach_btn:
-            raise RuntimeError(f"Não encontrou botão de anexo para {pessoa}")
+            resultado = self._detect_attach_preview(is_image_video, timeout=20.0)
 
-        attach_btn.click()
+            if resultado == "figurinha":
+                ultimo_erro = f"input [{classe}] abriu o editor de figurinha"
+                file_logger.warning(f"{ultimo_erro} — descartando e tentando outro input")
+                self._close_modal()
+                continue
+
+            if not resultado:
+                ultimo_erro = f"preview do anexo não abriu pelo input [{classe}]"
+                file_logger.warning(ultimo_erro)
+                self._close_modal()
+                continue
+
+            self._finalizar_envio_de_anexo(pessoa, media_path, tipo)
+            return
+
+        raise RuntimeError(
+            f"Não foi possível anexar {os.path.basename(media_path)} para {pessoa}: {ultimo_erro}"
+        )
+
+    def _finalizar_envio_de_anexo(self, pessoa: str, media_path: str, tipo: str):
+        """Com o preview correto aberto, clica em enviar e confirma o envio."""
         time.sleep(random.uniform(1.0, 2.0))
+        send_btn = self._click_send_button_modal(pessoa)
 
-        # Passo 2: Clicar na opção "Documento" do menu de anexo
-        # Isso garante que o arquivo seja enviado como documento, não como imagem/figurinha
-        doc_btn = None
-        file_input = None
-        doc_selectors = [
-            'span[data-icon="attach-document"]',
-            'button[aria-label="Documento"]',
-            'button[aria-label="Document"]',
+        if not self._wait_attachment_sent(send_btn, timeout=30.0):
+            file_logger.warning(
+                f"Modal de anexo não fechou para {pessoa} após clicar em enviar — "
+                f"verifique a conversa manualmente"
+            )
+
+        time.sleep(random.uniform(2.0, 4.0))
+        self._log(f"📎 Anexo enviado para {pessoa} como {tipo}: {os.path.basename(media_path)}")
+        file_logger.info(
+            f"Mídia enviada como {tipo} para {pessoa}: {os.path.abspath(media_path)}"
+        )
+
+    def _type_caption_in_modal(self, caption: str, pessoa: str, human: bool = False):
+        """
+        Digita a legenda (caption) no campo de texto do modal de preview de imagem.
+        O modal de foto/vídeo tem um campo editável para adicionar legenda.
+        """
+        caption_selectors = [
+            'div[contenteditable="true"][data-testid="media-caption-input-container"]',
+            'div.copyable-text[contenteditable="true"][data-tab]',
+            # O modal tem um contenteditable que NÃO é o footer
+            'div[role="dialog"] div[contenteditable="true"]',
+            'div.overlay div[contenteditable="true"]',
+            # Genérico: segundo contenteditable na página (o primeiro é o chat principal)
         ]
 
-        for selector in doc_selectors:
+        caption_field = None
+        for selector in caption_selectors:
             try:
-                el = self._driver.find_element(By.CSS_SELECTOR, selector)
-                if el:
-                    doc_btn = el
-                    break
-            except Exception:
-                continue
-
-        # Se encontrou o botão de documento, clica nele
-        if doc_btn:
-            try:
-                doc_btn.click()
-                time.sleep(random.uniform(0.5, 1.0))
-            except Exception:
-                pass
-
-        # Passo 3: Encontrar o input[type=file] para documento
-        # Procura o input de documento (accept="*" ou sem accept restritivo de imagem)
-        input_selectors = [
-            'input[accept="*"]',
-            'input[accept="*/*"]',
-        ]
-
-        for selector in input_selectors:
-            try:
-                file_input = WebDriverWait(self._driver, 5).until(
+                caption_field = WebDriverWait(self._driver, 5).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                 )
-                if file_input:
+                if caption_field:
+                    file_logger.info(f"Campo de legenda encontrado via: {selector}")
                     break
             except (TimeoutException, Exception):
                 continue
 
-        # Fallback: pega todos os inputs file e escolhe o que NÃO é de imagem
-        if not file_input:
+        # Fallback: procura contenteditable que NÃO seja o footer
+        if not caption_field:
             try:
-                inputs = self._driver.find_elements(By.CSS_SELECTOR, 'input[type="file"]')
-                for inp in inputs:
-                    accept = inp.get_attribute("accept") or ""
-                    # Pula inputs que aceitam apenas imagem/vídeo
-                    if "image/" in accept and "*" not in accept:
-                        continue
-                    file_input = inp
-                    break
-                # Se todos são de imagem, pega o último (geralmente é documento)
-                if not file_input and inputs:
-                    file_input = inputs[-1]
-            except Exception:
-                pass
-
-        if not file_input:
-            # Fecha o menu e levanta erro
-            try:
-                self._driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
-            except Exception:
-                pass
-            raise RuntimeError(f"Não encontrou input de arquivo para {pessoa}")
-
-        # Envia o caminho do arquivo para o input
-        file_input.send_keys(os.path.abspath(media_path))
-
-        # Passo 4: Aguardar o modal de preview carregar
-        time.sleep(random.uniform(3.0, 5.0))
-
-        # Passo 5: Clicar no botão de enviar do modal
-        send_btn = None
-        send_selectors = [
-            'span[data-icon="wds-ic-send-filled"]',
-            'div[role="button"][aria-label*="Enviar"]',
-            'div[role="button"][aria-label*="Send"]',
-            'span[data-icon="send"]',
-            'span[data-icon="send-light"]',
-            'button[aria-label="Enviar"]',
-            'button[aria-label="Send"]',
-        ]
-
-        for selector in send_selectors:
-            try:
-                send_btn = WebDriverWait(self._driver, 10).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                fields = self._driver.find_elements(
+                    By.CSS_SELECTOR, 'div[contenteditable="true"]'
                 )
-                if send_btn:
+                for f in fields:
+                    # Pula o campo de texto do chat (que está no footer)
+                    try:
+                        parent = f.find_element(By.XPATH, "./ancestor::footer")
+                        continue  # É o campo do footer, pula
+                    except Exception:
+                        pass
+                    caption_field = f
+                    file_logger.info("Campo de legenda encontrado via fallback (non-footer contenteditable)")
                     break
-            except (TimeoutException, Exception):
-                continue
-
-        if not send_btn:
-            # Tenta fechar o modal
-            try:
-                self._driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
             except Exception:
                 pass
+
+        if not caption_field:
+            file_logger.warning(f"Não encontrou campo de legenda para {pessoa} — enviando sem caption")
+            return
+
+        # Clica no campo para focar
+        caption_field.click()
+        time.sleep(random.uniform(0.3, 0.6))
+
+        # Digita a legenda
+        if human:
+            self._human_type(caption_field, caption)
+        else:
+            self._type_with_newlines(caption_field, caption)
+
+        time.sleep(random.uniform(0.5, 1.0))
+
+    # Seletores do botão "enviar" do preview de anexo
+    _SEND_BUTTON_SELECTORS = [
+        '[data-testid="send"]',
+        'span[data-icon="wds-ic-send-filled"]',
+        'span[data-icon="send"]',
+        'span[data-icon="send-light"]',
+        'div[role="button"][aria-label*="Enviar"]',
+        'div[role="button"][aria-label*="Send"]',
+        'button[aria-label="Enviar"]',
+        'button[aria-label="Send"]',
+    ]
+
+    def _find_send_button_modal(self, timeout: float = 10.0):
+        """
+        Procura o botão de enviar do modal de preview de anexo.
+        Retorna o elemento visível ou None. Não levanta exceção.
+        """
+        fim = time.time() + max(0.1, timeout)
+        while True:
+            for selector in self._SEND_BUTTON_SELECTORS:
+                try:
+                    for btn in self._driver.find_elements(By.CSS_SELECTOR, selector):
+                        if btn.is_displayed():
+                            return btn
+                except Exception:
+                    continue
+            if time.time() >= fim:
+                return None
+            time.sleep(0.3)
+
+    def _click_send_button_modal(self, pessoa: str):
+        """
+        Clica no botão enviar do modal de preview de anexo.
+        Retorna o elemento clicado (usado para detectar o fechamento do modal).
+        """
+        btn = self._find_send_button_modal(timeout=10.0)
+        if btn is None:
+            self._close_modal()
             raise RuntimeError(f"Não encontrou botão enviar no modal para {pessoa}")
 
-        send_btn.click()
+        try:
+            btn.click()
+        except Exception as e:
+            if self._is_session_dead(e):
+                raise BrowserClosedError(str(e))
+            # Ícone pode estar coberto pelo <button> pai: clica via JS
+            file_logger.warning(f"Clique direto no enviar falhou ({e}), tentando via JS")
+            try:
+                self._driver.execute_script("arguments[0].click();", btn)
+            except Exception as e2:
+                self._close_modal()
+                raise RuntimeError(f"Não conseguiu clicar em enviar para {pessoa}: {e2}")
 
-        # Aguarda envio completar
-        time.sleep(random.uniform(3.0, 6.0))
+        return btn
 
-        self._log(f"📎 Anexo enviado para {pessoa}: {os.path.basename(media_path)}")
-        file_logger.info(f"Mídia enviada para {pessoa}: {media_path}")
+    def _wait_attachment_sent(self, send_btn, timeout: float = 30.0) -> bool:
+        """
+        Espera o modal de anexo fechar (o botão enviar fica stale ou invisível),
+        o que confirma que o WhatsApp aceitou o envio.
+        """
+        fim = time.time() + timeout
+        while time.time() < fim:
+            try:
+                if not send_btn.is_displayed():
+                    return True
+            except StaleElementReferenceException:
+                return True
+            except Exception:
+                return True
+            time.sleep(0.5)
+        return False
 
     def start(self):
         """
@@ -1110,7 +1612,7 @@ class WhatsAppSender:
                             self._log(f"✅ {pessoa} — mensagem enviada com sucesso.")
                             self._notify_contact_update(idx, numero, "enviado", data_envio)
                         else:
-                            self._log(f"⚠️ {pessoa} — falha ao enviar, será tentado novamente na próxima rodada.")
+                            self._registrar_falha(df, idx, pessoa, numero, "erro no envio")
 
                     except BrowserClosedError as e:
                         # Sessão morta: abortar tudo. Continuar só queimaria
@@ -1151,6 +1653,12 @@ class WhatsAppSender:
                             break
                         file_logger.error(f"Erro ao enviar para {pessoa} ({numero}): {e}\n{traceback.format_exc()}")
                         self._log(f"⚠️ {pessoa} ({numero}) — erro inesperado: {e}")
+                        try:
+                            self._registrar_falha(df, idx, pessoa, numero, "erro inesperado")
+                        except Exception as reg_err:
+                            file_logger.error(
+                                f"Não foi possível registrar a falha de {pessoa}: {reg_err}"
+                            )
 
                     # Delay entre mensagens — pulado quando a cota da rodada
                     # já foi atingida (não faz sentido esperar antes de encerrar)
