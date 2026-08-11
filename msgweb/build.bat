@@ -4,6 +4,25 @@ echo   Build - WhatsApp Automacao (.exe)
 echo ============================================
 echo.
 
+:: Versão via parâmetro (ex: build.bat 1.2.0)
+if "%~1"=="" (
+    echo ERRO: Informe a versao como parametro.
+    echo Uso: build.bat 1.2.0
+    pause
+    exit /b 1
+)
+set "VERSION=%~1"
+echo Versao: %VERSION%
+echo.
+
+:: Atualiza version.py com a versão informada
+(
+echo # Versao do aplicativo - atualizada automaticamente pelo build.bat
+echo APP_VERSION = "%VERSION%"
+)> version.py
+echo version.py atualizado para %VERSION%
+echo.
+
 :: Gera o CSS Tailwind local antes de empacotar
 where node >nul 2>&1
 if errorlevel 1 (
@@ -100,25 +119,25 @@ echo.
 echo Gerando arquivo .zip...
 
 :: Remove zip anterior se existir
-if exist "dist\WhatsAppAutomacao.zip" del /q "dist\WhatsAppAutomacao.zip"
+if exist "dist\WhatsAppAutomacao-v%VERSION%.zip" del /q "dist\WhatsAppAutomacao-v%VERSION%.zip"
 
 :: Compacta a pasta usando PowerShell
-powershell -NoProfile -Command "Compress-Archive -Path 'dist\WhatsAppAutomacao' -DestinationPath 'dist\WhatsAppAutomacao.zip' -Force"
+powershell -NoProfile -Command "Compress-Archive -Path 'dist\WhatsAppAutomacao' -DestinationPath 'dist\WhatsAppAutomacao-v%VERSION%.zip' -Force"
 
 if %errorlevel% neq 0 (
     echo.
     echo AVISO: Falha ao gerar o .zip. A pasta dist\WhatsAppAutomacao ainda esta disponivel.
 ) else (
-    echo   Arquivo gerado: dist\WhatsAppAutomacao.zip
+    echo   Arquivo gerado: dist\WhatsAppAutomacao-v%VERSION%.zip
 )
 
 echo.
 echo ============================================
-echo   Build concluido!
+echo   Build concluido! (v%VERSION%)
 echo ============================================
 echo.
 echo   Pasta de distribuicao: dist\WhatsAppAutomacao\
-echo   Arquivo zip: dist\WhatsAppAutomacao.zip
+echo   Arquivo zip: dist\WhatsAppAutomacao-v%VERSION%.zip
 echo.
 echo   O cliente executa: WhatsAppAutomacao.exe
 echo ============================================

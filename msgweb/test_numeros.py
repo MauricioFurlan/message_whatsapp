@@ -604,7 +604,6 @@ class TestCotaDaRodada(unittest.TestCase):
                 "Número": f"1199999{i:04d}",
                 "Mensagem": "Olá, mensagem de teste.",
                 "Arquivo": "",
-                "Prefixo": "",
                 "Enviado": "",
                 "DataEnvio": "",
                 "Invalido": "",
@@ -629,7 +628,7 @@ class TestCotaDaRodada(unittest.TestCase):
             log_callback=lambda m: None,
         )
 
-        def fake_send(pessoa, numero, mensagem, arquivo="", prefixo=""):
+        def fake_send(pessoa, numero, mensagem, arquivo=""):
             tentados.append(numero)
             resultado = por_numero[numero]
             if resultado == "timeout":
@@ -742,7 +741,6 @@ class TestCotaDaRodada(unittest.TestCase):
             "Número": "11999990000",
             "Mensagem": "oi",
             "Arquivo": "",
-            "Prefixo": "",
             "Enviado": "",
             "DataEnvio": "",
             "Invalido": "",

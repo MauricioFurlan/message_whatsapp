@@ -119,6 +119,31 @@
         </div>
     </header>
 
+    <!-- Banner de Atualização -->
+    <div id="update-banner" class="hidden px-4 py-2 bg-blue-50 border-b border-blue-200 flex-shrink-0">
+        <div class="flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                </svg>
+                <span class="text-sm text-blue-800">
+                    Nova versão <strong id="update-version"></strong> disponível!
+                </span>
+            </div>
+            <div class="flex items-center gap-2">
+                <a id="update-download-link" href="#" target="_blank"
+                    class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-md transition-colors">
+                    Baixar Atualização
+                </a>
+                <button onclick="dismissUpdate()" class="text-blue-400 hover:text-blue-600 transition-colors" title="Dispensar">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Main area: two columns -->
     <div class="flex-1 flex overflow-hidden">
 
@@ -146,7 +171,6 @@
                         <thead class="bg-gray-50 text-gray-500 sticky top-0 z-10">
                             <tr>
                                 <th class="text-center px-1 py-2 font-medium w-8 text-gray-400">#</th>
-                                <th class="text-left px-1 py-2 font-medium w-14">Prefixo</th>
                                 <th class="text-left px-2 py-2 font-medium w-36">Nome</th>
                                 <th class="text-left px-2 py-2 font-medium w-36">Número</th>
                                 <th class="text-left px-2 py-2 font-medium">Mensagem <span class="font-normal text-gray-400" title="Use {nome} na mensagem para inserir o nome em qualquer posição. Exemplo: Olá {nome} esta é uma mensagem de teste.">· {nome}</span></th>
@@ -783,21 +807,12 @@
             const arquivoPath = contact.arquivo || '';
             const arquivoNome = arquivoPath ? arquivoPath.split(/[/\\]/).pop() : '';
 
-            // Prefixo por contato (editável)
-            const prefixoValue = contact.prefixo || '';
-
             tr.innerHTML = `
                 <td class="contact-row-num text-center px-1 py-1 text-xs text-gray-400 select-none"></td>
-                <td class="px-1 py-1">
-                    <input type="text" value="${escapeHtml(prefixoValue)}" placeholder="Oi"
-                        title="${prefixoValue && contact.pessoa && contact.pessoa.trim() ? escapeHtml(prefixoValue) + ' ' + escapeHtml(contact.pessoa.trim()) + ', ' + escapeHtml(contact.mensagem || '') : 'Ex: Oi, Olá, Sr.'}"
-                        oninput="updateRowPrefixo(this.closest('tr'));"
-                        class="contact-prefixo w-full border border-transparent hover:border-gray-200 focus:border-green-500 focus:ring-1 focus:ring-green-500 rounded px-1 py-1 text-xs text-center focus:outline-none">
-                </td>
                 <td class="px-2 py-1">
                     <input type="text" value="${escapeHtml(contact.pessoa)}" placeholder="Nome"
                         title="${escapeHtml(contact.pessoa)}"
-                        oninput="this.title = this.value; updateRowPrefixo(this.closest('tr'));"
+                        oninput="this.title = this.value;"
                         class="contact-pessoa w-full border border-transparent hover:border-gray-200 focus:border-green-500 focus:ring-1 focus:ring-green-500 rounded px-2 py-1 text-sm focus:outline-none">
                 </td>
                 <td class="px-2 py-1">
@@ -806,7 +821,7 @@
                         class="contact-numero w-full border border-transparent hover:border-gray-200 focus:border-green-500 focus:ring-1 focus:ring-green-500 rounded px-2 py-1 text-sm focus:outline-none">
                 </td>
                 <td class="px-2 py-1">
-                    <textarea rows="1" oninput="this.title = this.value; updateRowPrefixo(this.closest('tr')); autoResizeTextarea(this); updateGlobalMessageHints();"
+                    <textarea rows="1" oninput="this.title = this.value; autoResizeTextarea(this); updateGlobalMessageHints();"
                         onfocus="autoResizeTextarea(this);" onblur="this.style.height = '28px'; updateGlobalMessageHints();"
                         title="${escapeHtml(contact.mensagem)}"
                         class="contact-mensagem w-full border border-transparent hover:border-gray-200 focus:border-green-500 focus:ring-1 focus:ring-green-500 rounded px-2 py-1 text-sm focus:outline-none resize-none overflow-hidden"
@@ -838,19 +853,6 @@
             tr.dataset.motivo = contact.motivo || '';
 
             tbody.appendChild(tr);
-        }
-
-        // Atualiza o tooltip do prefixo de uma linha específica
-        function updateRowPrefixo(tr) {
-            const prefixoInput = tr.querySelector('.contact-prefixo');
-            const prefixo = prefixoInput.value.trim();
-            const nome = tr.querySelector('.contact-pessoa').value.trim();
-            const msg = tr.querySelector('.contact-mensagem').value;
-            if (prefixo && nome) {
-                prefixoInput.title = `${prefixo} ${nome}, ${msg}`;
-            } else {
-                prefixoInput.title = 'Ex: Oi, Olá, Sr.';
-            }
         }
 
         // Reenvio: limpa Enviado, Invalido e DataEnvio para reprocessar na próxima execução
@@ -988,7 +990,7 @@
         }
 
         function addContactRow() {
-            renderContactRow({ pessoa: '', numero: '', mensagem: '', arquivo: '', prefixo: '', enviado: false, invalido: false, data_envio: '' });
+            renderContactRow({ pessoa: '', numero: '', mensagem: '', arquivo: '', enviado: false, invalido: false, data_envio: '' });
             markUnsaved();
             updateContactsCount();
             document.getElementById('contacts-section').classList.remove('hidden');
@@ -1007,7 +1009,6 @@
                     numero: tr.querySelector('.contact-numero').value.replace(/\D/g, ''),
                     mensagem: tr.querySelector('.contact-mensagem').value,
                     arquivo: tr.querySelector('.contact-arquivo').value,
-                    prefixo: tr.querySelector('.contact-prefixo').value,
                     enviado: tr.dataset.enviado === '1',
                     invalido: tr.dataset.invalido === '1',
                     data_envio: tr.dataset.dataEnvio || '',
@@ -1595,7 +1596,34 @@
             checkSessionStatus();
             // Carrega mensagem global
             loadGlobalMessage();
+            // Verifica atualizações
+            checkForUpdates();
         });
+
+        // --- Atualização ---
+        async function checkForUpdates() {
+            try {
+                const resp = await fetch('/check-update');
+                const data = await resp.json();
+                if (data.update_available && data.download_url) {
+                    // Não exibir se o usuário já dispensou esta versão
+                    const dismissed = localStorage.getItem('update_dismissed_version');
+                    if (dismissed === data.latest_version) return;
+
+                    document.getElementById('update-version').textContent = 'v' + data.latest_version;
+                    document.getElementById('update-download-link').href = data.download_url;
+                    document.getElementById('update-banner').classList.remove('hidden');
+                }
+            } catch (e) {
+                // Silencioso — não atrapalha o uso normal
+            }
+        }
+
+        function dismissUpdate() {
+            const version = document.getElementById('update-version').textContent.replace('v', '');
+            localStorage.setItem('update_dismissed_version', version);
+            document.getElementById('update-banner').classList.add('hidden');
+        }
 
         // --- Licença ---
         async function checkLicense() {

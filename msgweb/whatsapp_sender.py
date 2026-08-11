@@ -298,11 +298,6 @@ class WhatsAppSender:
             df["Arquivo"] = ""
         else:
             df["Arquivo"] = df["Arquivo"].fillna("").astype(str).str.strip()
-        # Coluna Prefixo (saudação por contato: Oi, Olá, Sr., etc.)
-        if "Prefixo" not in df.columns:
-            df["Prefixo"] = ""
-        else:
-            df["Prefixo"] = df["Prefixo"].fillna("").astype(str).str.strip()
         # Coluna Tentativas (falhas de envio acumuladas — limita as retentativas)
         if "Tentativas" not in df.columns:
             df["Tentativas"] = 0
@@ -713,7 +708,7 @@ class WhatsAppSender:
         return f"{t[:limite]}... (+{len(t) - limite} caracteres)"
 
     @staticmethod
-    def _format_texto(pessoa: str, mensagem: str, prefixo: str = "") -> tuple:
+    def _format_texto(pessoa: str, mensagem: str) -> tuple:
         """
         Monta o texto final da mensagem e devolve (texto, regra_aplicada).
 
@@ -723,11 +718,9 @@ class WhatsAppSender:
 
         Regras, em ordem:
           1. mensagem com {nome}  -> substitui o placeholder pelo nome
-          2. coluna Prefixo preenchida -> "<prefixo> <nome>, <mensagem>"
-          3. nenhuma das duas -> mensagem exatamente como está
+          2. nenhuma das duas -> mensagem exatamente como está
         """
         pessoa_limpo = pessoa.strip() if pessoa else ""
-        prefixo_limpo = prefixo.strip() if prefixo else ""
         nome_vazio = pessoa_limpo.lower() in ("nan", "none", "")
 
         if "{nome}" in mensagem:
@@ -735,16 +728,13 @@ class WhatsAppSender:
             nome_subst = "" if nome_vazio else pessoa_limpo
             texto = mensagem.replace("{nome}", nome_subst)
             regra = f"placeholder {{nome}} -> '{nome_subst}' (coluna Nome da planilha)"
-        elif prefixo_limpo and not nome_vazio:
-            texto = f"{prefixo_limpo} {pessoa_limpo}, {mensagem}"
-            regra = f"prefixo '{prefixo_limpo}' + nome '{pessoa_limpo}' (coluna Nome da planilha)"
         else:
             texto = mensagem
             regra = "texto puro (sem substituição de nome)"
 
         return texto, regra
 
-    def _send_message(self, pessoa: str, numero: str, mensagem: str, arquivo: str = "", prefixo: str = "") -> bool:
+    def _send_message(self, pessoa: str, numero: str, mensagem: str, arquivo: str = "") -> bool:
         """
         Envia uma mensagem para um contato.
         Se há arquivo associado, envia primeiro o texto e depois o anexo separadamente.
@@ -752,8 +742,8 @@ class WhatsAppSender:
         Retorna True se enviou com sucesso, False se falhou.
         Levanta TimeoutException se número é inválido.
         """
-        # Formata mensagem com prefixo por contato ou placeholder {nome}
-        texto, regra = self._format_texto(pessoa, mensagem, prefixo)
+        # Formata mensagem com placeholder {nome} se presente
+        texto, regra = self._format_texto(pessoa, mensagem)
 
         # Formata número (remove caracteres não numéricos e notação float)
         numero_limpo = self._clean_number(numero)
@@ -1644,12 +1634,9 @@ class WhatsAppSender:
                     numero = self._clean_number(row["Número"])
                     mensagem = str(row["Mensagem"])
                     arquivo = str(row.get("Arquivo", "")).strip()
-                    prefixo = str(row.get("Prefixo", "")).strip()
                     # Limpa valores inválidos do pandas
                     if arquivo.lower() in ("", "nan", "none"):
                         arquivo = ""
-                    if prefixo.lower() in ("nan", "none"):
-                        prefixo = ""
                     # Fallback: usa mensagem global se a do contato está vazia
                     usou_global = False
                     if mensagem.strip().lower() in ("", "nan", "none") and self.global_message.strip():
@@ -1692,7 +1679,7 @@ class WhatsAppSender:
                     )
 
                     try:
-                        success = self._send_message(pessoa, numero, mensagem, arquivo, prefixo)
+                        success = self._send_message(pessoa, numero, mensagem, arquivo)
 
                         if success:
                             # Marca como enviado

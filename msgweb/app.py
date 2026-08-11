@@ -21,8 +21,12 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import requests as http_requests
+
 from whatsapp_sender import WhatsAppSender
 from license import validar_licenca, ativar_licenca, desativar_licenca, get_cached_key
+from version import APP_VERSION
+GITHUB_REPO = "MauricioFurlan/message_whatsapp"
 
 # --- File Logger Setup ---
 LOG_FILE = Path("log.txt")
@@ -131,6 +135,14 @@ def get_excel_info() -> dict:
 async def startup_event():
     """Captura o event loop principal do asyncio e restaura estado."""
     state._loop = asyncio.get_event_loop()
+    # Se o path já foi definido via CLI (--planilha), respeita essa escolha
+    if state.excel_path and state.excel_source == "cli":
+        p = Path(state.excel_path)
+        if p.exists():
+            add_log(f"Planilha carregada via CLI: {state.excel_path}")
+        else:
+            add_log(f"AVISO: planilha informada via CLI não encontrada: {state.excel_path}")
+        return
     # Restaura planilha se já existia (sobrevive a reloads)
     upload_path = Path("uploads/contatos.xlsx")
     if upload_path.exists():
@@ -269,6 +281,52 @@ async def license_deactivate():
     return result
 
 
+# --- Atualização ---
+
+def _fetch_latest_release():
+    """Busca última release do GitHub (roda em thread para não bloquear o event loop)."""
+    resp = http_requests.get(
+        f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+        timeout=10,
+        headers={"Accept": "application/vnd.github.v3+json"},
+    )
+    return resp
+
+
+@app.get("/check-update")
+async def check_update():
+    """Verifica se há nova versão disponível no GitHub Releases."""
+    try:
+        loop = asyncio.get_event_loop()
+        resp = await loop.run_in_executor(None, _fetch_latest_release)
+        if resp.status_code == 404:
+            return {"update_available": False, "current_version": APP_VERSION}
+        resp.raise_for_status()
+        data = resp.json()
+        latest_tag = data.get("tag_name", "").lstrip("v")
+        download_url = ""
+        for asset in data.get("assets", []):
+            if asset["name"].endswith(".zip"):
+                download_url = asset["browser_download_url"]
+                break
+        update_available = latest_tag > APP_VERSION if latest_tag else False
+        return {
+            "update_available": update_available,
+            "current_version": APP_VERSION,
+            "latest_version": latest_tag,
+            "download_url": download_url,
+            "changelog": data.get("body", ""),
+        }
+    except Exception:
+        return {"update_available": False, "current_version": APP_VERSION}
+
+
+@app.get("/version")
+async def get_version():
+    """Retorna a versão atual do app."""
+    return {"version": APP_VERSION}
+
+
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """Upload da planilha Excel com contatos."""
@@ -298,13 +356,11 @@ async def upload_file(file: UploadFile = File(...)):
             )
 
         # Adiciona colunas de controle se não existirem
-        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo", "Prefixo", "Motivo"]:
+        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo", "Motivo"]:
             if col not in df.columns:
                 df[col] = ""
             else:
                 if col == "Arquivo":
-                    df[col] = df[col].fillna("").astype(str).str.strip()
-                elif col == "Prefixo":
                     df[col] = df[col].fillna("").astype(str).str.strip()
                 elif col == "Motivo":
                     df[col] = df[col].fillna("").astype(str).str.strip()
@@ -532,7 +588,7 @@ async def get_contacts():
     try:
         df = pd.read_excel(state.excel_path)
         # Garante colunas de controle
-        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo", "Prefixo", "Motivo"]:
+        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo", "Motivo"]:
             if col not in df.columns:
                 df[col] = ""
             else:
@@ -563,7 +619,6 @@ async def get_contacts():
                 "numero": _safe_numero_str(row.get("Número", "")),
                 "mensagem": str(row.get("Mensagem", "")),
                 "arquivo": str(row.get("Arquivo", "")),
-                "prefixo": str(row.get("Prefixo", "")),
                 "enviado": str(row.get("Enviado", "")).strip().upper() == "X",
                 "invalido": str(row.get("Invalido", "")).strip().upper() == "X",
                 "data_envio": str(row.get("DataEnvio", "")),
@@ -580,7 +635,6 @@ class ContactModel(BaseModel):
     numero: str = ""
     mensagem: str = ""
     arquivo: str = ""
-    prefixo: str = ""
     enviado: bool = False
     invalido: bool = False
     data_envio: str = ""
@@ -617,14 +671,13 @@ async def save_contacts(payload: ContactsPayload):
             "Número": c.numero.strip(),
             "Mensagem": c.mensagem.strip(),
             "Arquivo": c.arquivo.strip(),
-            "Prefixo": c.prefixo.strip(),
             "Enviado": "X" if c.enviado else "",
             "DataEnvio": c.data_envio.strip(),
             "Invalido": "X" if c.invalido else "",
             "Motivo": c.motivo.strip(),
         })
 
-    df = pd.DataFrame(rows, columns=["Nome", "Número", "Mensagem", "Arquivo", "Prefixo", "Enviado", "DataEnvio", "Invalido", "Motivo"])
+    df = pd.DataFrame(rows, columns=["Nome", "Número", "Mensagem", "Arquivo", "Enviado", "DataEnvio", "Invalido", "Motivo"])
 
     upload_dir = Path("uploads")
     upload_dir.mkdir(exist_ok=True)
@@ -798,26 +851,62 @@ async def sse_events():
 
 
 if __name__ == "__main__":
+    import argparse
     import signal
     import sys
     import asyncio
     from hypercorn.config import Config
     from hypercorn.asyncio import serve
 
+    parser = argparse.ArgumentParser(description="WhatsApp Automação Web")
+    parser.add_argument(
+        "--planilha",
+        default="uploads/contatos.xlsx",
+        help="Caminho para a planilha de contatos (default: uploads/contatos.xlsx)",
+    )
+    args = parser.parse_args()
+
+    # Aplica o caminho da planilha informado via CLI
+    path = args.planilha
+    if path == 'test':
+        path = 'uploads/test_contatos.xlsx'
+    _cli_planilha = Path(path)
+    if _cli_planilha.exists():
+        state.excel_path = str(_cli_planilha)
+        _set_excel_source("cli", _cli_planilha)
+    else:
+        print(f"AVISO: planilha '{args.planilha}' não encontrada. Será usada quando disponível.")
+        state.excel_path = str(_cli_planilha)
+
+    print(f"Planilha: {args.planilha}")
     print('Acesse: http://localhost:8000')
 
-    def force_exit(sig, frame):
-        """Força encerramento no segundo CTRL+C."""
-        print("\nForçando encerramento...")
-        if state.sender and state.sender._driver:
-            try:
-                state.sender._driver.quit()
-            except Exception:
-                pass
-        sys.exit(0)
+    # Evento que sinaliza shutdown para o Hypercorn
+    _shutdown_event = asyncio.Event()
 
-    signal.signal(signal.SIGINT, force_exit)
+    def _signal_handler(sig, frame):
+        """Primeiro CTRL+C: sinaliza shutdown gracioso. Segundo: força saída."""
+        if _shutdown_event.is_set():
+            # Segundo CTRL+C — força encerramento imediato
+            print("\nForçando encerramento...")
+            if state.sender and hasattr(state.sender, '_driver') and state.sender._driver:
+                try:
+                    state.sender._driver.quit()
+                except Exception:
+                    pass
+            os._exit(0)
+        else:
+            print("\nEncerrando servidor... (CTRL+C novamente para forçar)")
+            _shutdown_event.set()
 
-    config = Config()
-    config.bind = ["0.0.0.0:8000"]
-    asyncio.run(serve(app, config))
+    signal.signal(signal.SIGINT, _signal_handler)
+    if hasattr(signal, 'SIGBREAK'):
+        signal.signal(signal.SIGBREAK, _signal_handler)
+
+    async def _main():
+        config = Config()
+        config.bind = ["0.0.0.0:8000"]
+        config.graceful_timeout = 3  # Espera no máximo 3s para fechar conexões
+        await serve(app, config, shutdown_trigger=_shutdown_event.wait)
+
+    asyncio.run(_main())
