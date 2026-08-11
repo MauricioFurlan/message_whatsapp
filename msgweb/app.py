@@ -85,6 +85,13 @@ class AppState:
         "max_tentativas_contato": 3,
     })
     excel_path: Optional[str] = None
+    # Procedência da planilha em uso: "upload" (enviada agora), "editor"
+    # (salva pela tabela da tela) ou "restaurada" (cópia da sessão anterior).
+    # Existe porque o sistema trabalha SEMPRE sobre a cópia uploads/contatos.xlsx:
+    # editar o .xlsx original no disco não tem efeito nenhum sem novo upload, e
+    # isso já gerou relato de "enviou o nome antigo do contato".
+    excel_source: str = ""
+    excel_saved_at: str = ""
     sender: Optional[WhatsAppSender] = None
     sender_thread: Optional[Thread] = None
     logs: list = field(default_factory=list)
@@ -97,6 +104,29 @@ class AppState:
 state = AppState()
 
 
+def _file_timestamp(path) -> str:
+    """Data/hora da última gravação do arquivo, formatada, ou '' se não existir."""
+    try:
+        return datetime.fromtimestamp(Path(path).stat().st_mtime).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return ""
+
+
+def _set_excel_source(origem: str, path) -> None:
+    """Registra de onde veio a planilha em uso e quando ela foi gravada."""
+    state.excel_source = origem
+    state.excel_saved_at = _file_timestamp(path)
+
+
+def get_excel_info() -> dict:
+    """Procedência da planilha em uso, para a tela avisar o usuário."""
+    return {
+        "origem": state.excel_source,
+        "atualizado_em": state.excel_saved_at,
+        "arquivo": state.excel_path or "",
+    }
+
+
 @app.on_event("startup")
 async def startup_event():
     """Captura o event loop principal do asyncio e restaura estado."""
@@ -105,7 +135,12 @@ async def startup_event():
     upload_path = Path("uploads/contatos.xlsx")
     if upload_path.exists():
         state.excel_path = str(upload_path)
-        add_log("Planilha restaurada do upload anterior.")
+        _set_excel_source("restaurada", upload_path)
+        add_log(
+            f"Planilha restaurada da sessão anterior (gravada em {state.excel_saved_at}). "
+            "Atenção: o sistema usa esta cópia — alterações feitas no arquivo .xlsx "
+            "original só valem depois de um novo upload."
+        )
 
 
 @app.on_event("shutdown")
@@ -191,6 +226,7 @@ def get_status_dict() -> dict:
         "total_contacts": sender_status["total_contacts"],
         "config": state.config,
         "excel_loaded": state.excel_path is not None,
+        "excel_info": get_excel_info(),
         "logs": state.logs[-200:],
     }
 
@@ -324,6 +360,7 @@ async def upload_file(file: UploadFile = File(...)):
         if temp_path.exists():
             os.remove(temp_path)
         state.excel_path = str(file_path)
+        _set_excel_source("upload", file_path)
 
         total = len(df)
         enviados = len(df[df["Enviado"] == "X"])
@@ -411,6 +448,21 @@ async def start_sending():
     for key, value in state.config.items():
         file_logger.info(f"  {key}: {value}")
     file_logger.info(f"  Planilha: {state.excel_path}")
+    file_logger.info(
+        f"  Procedência da planilha: {state.excel_source or 'desconhecida'} "
+        f"(gravada em {state.excel_saved_at or 'n/d'})"
+    )
+    file_logger.info(
+        f"  Mensagem global: {'ATIVA' if state.global_message_active and state.global_message.strip() else 'inativa'}"
+    )
+
+    # Mesmas informações no log da tela: são as três perguntas que sempre
+    # aparecem quando o cliente relata comportamento inesperado.
+    add_log(
+        f"Comportamento humano: {'ON (digitação simulada)' if state.config.get('human_behavior') else 'OFF (mensagem enviada de uma vez)'}"
+        f" | Mensagem global: {'ATIVA' if state.global_message_active and state.global_message.strip() else 'inativa'}"
+        f" | Planilha: {state.excel_source or 'desconhecida'} de {state.excel_saved_at or 'n/d'}"
+    )
 
     # Log contagem da planilha
     try:
@@ -572,6 +624,7 @@ async def save_contacts(payload: ContactsPayload):
     file_path = upload_dir / "contatos.xlsx"
     df.to_excel(file_path, index=False)
     state.excel_path = str(file_path)
+    _set_excel_source("editor", file_path)
 
     total = len(df)
     enviados = len(df[df["Enviado"] == "X"])

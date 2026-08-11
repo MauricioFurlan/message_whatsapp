@@ -10,6 +10,21 @@
             font-family: 'Courier New', monospace;
             font-size: 0.8rem;
         }
+        /* Linha do log que tem explicação no tooltip (contato inválido/falha) */
+        .log-help {
+            cursor: help;
+        }
+        .log-help:hover {
+            text-decoration: underline dotted;
+            text-underline-offset: 2px;
+        }
+        /* Uma cor por tipo de problema — ver logProblemInfo() no script */
+        .log-sheet    { color: #fdba74; }  /* laranja: dado errado na planilha  */
+        .log-nowhats  { color: #f87171; }  /* vermelho: número sem WhatsApp     */
+        .log-giveup   { color: #f472b6; }  /* rosa: abandonado após N falhas    */
+        .log-retry    { color: #fbbf24; }  /* âmbar: falhou, vai tentar de novo */
+        .log-tech     { color: #38bdf8; }  /* azul: erro técnico inesperado     */
+        .log-skipped  { color: #a1a1aa; }  /* cinza: já inválido de antes       */
         @keyframes pulse-dot {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.4; }
@@ -364,6 +379,8 @@
         let currentState = 'aguardando';
         let totalRodadas = 3;
         let configLoaded = false;
+        let configDirty = false;   // usuário mexeu na config: /status não sobrescreve mais
+        let excelSourceWarned = false;  // aviso de planilha restaurada já exibido
         let stopping = false;  // true enquanto aguarda a parada graceful concluir
         let starting = false;  // true entre clicar "Iniciar" e o backend confirmar que está rodando
 
@@ -472,7 +489,7 @@
             if (status.config) {
                 totalRodadas = status.config.total_rodadas;
                 // Só preenche os inputs na primeira carga para não atrapalhar edição
-                if (!configLoaded) {
+                if (!configLoaded && !configDirty) {
                     configLoaded = true;
                     document.getElementById('cfg-msgs').value = status.config.msgs_por_rodada;
                     document.getElementById('cfg-rodadas').value = status.config.total_rodadas;
@@ -494,6 +511,23 @@
                     updateTotalMsgsCalc();
                 }
             }
+
+            showExcelSourceWarning(status.excel_info);
+        }
+
+        // Avisa que a planilha em uso é a cópia da sessão anterior. O sistema
+        // trabalha sobre uploads/contatos.xlsx, então editar o .xlsx original no
+        // disco não muda nada até um novo upload — origem de relatos de "enviou
+        // o nome antigo do contato".
+        function showExcelSourceWarning(info) {
+            if (!info || info.origem !== 'restaurada' || excelSourceWarned) return;
+            const statusEl = document.getElementById('upload-status');
+            if (!statusEl || statusEl.textContent.trim()) return;  // não atropela mensagem de upload
+            excelSourceWarned = true;
+            statusEl.textContent =
+                `Usando a planilha da sessão anterior (gravada em ${info.atualizado_em || 'data desconhecida'}). ` +
+                `Se você editou o arquivo .xlsx no computador, faça o upload novamente para valer.`;
+            statusEl.className = 'px-4 pb-2 text-sm text-amber-600';
         }
 
         // --- Log ---
@@ -503,18 +537,118 @@
             logs.forEach(entry => addLogEntry(entry));
         }
 
+        // Classifica uma linha do log de problema: cor + explicação no tooltip.
+        //
+        // Antes todo contato inválido saía no mesmo vermelho. Cada motivo tem
+        // uma ação diferente por trás (arrumar a planilha, aceitar que o número
+        // não tem WhatsApp, ou só esperar a retentativa), então cada um tem sua
+        // cor — dá para bater o olho no log e separar os casos sem ler linha a
+        // linha. A linha é curta; o motivo completo fica no tooltip.
+        //
+        // Retorna { cor, motivo } ou null para linhas comuns.
+        function logProblemInfo(message) {
+            const m = String(message || '');
+
+            // Contato já marcado em execução anterior
+            if (m.includes('[SKIP]')) {
+                if (m.includes('inválido')) {
+                    return {
+                        cor: 'log-skipped',
+                        motivo: 'Motivo: este contato já estava marcado como inválido na planilha (coluna Invalido = X), '
+                              + 'de uma rodada ou execução anterior.\n'
+                              + 'Como resolver: corrija o número/mensagem na tabela e use o botão de reenviar na linha do contato '
+                              + 'para colocá-lo de volta na fila.',
+                    };
+                }
+                return null;
+            }
+
+            // --- Dado errado na planilha: corrigível pelo usuário -----------
+            if (m.includes('mensagem vazia')) {
+                return {
+                    cor: 'log-sheet',
+                    motivo: 'Motivo: a coluna Mensagem está vazia nesta linha e não havia mensagem global ativa para usar no lugar.\n'
+                          + 'Como resolver: escreva a mensagem do contato na tabela, ou ative a mensagem global para valer '
+                          + 'para todos os contatos sem texto próprio.',
+                };
+            }
+            if (m.includes('número ausente')) {
+                return {
+                    cor: 'log-sheet',
+                    motivo: 'Motivo: a coluna Número está vazia nesta linha.\n'
+                          + 'Como resolver: preencha o telefone com DDD (ex: 11999998888). O contato foi pulado sem abrir o WhatsApp.',
+                };
+            }
+
+            // --- Número recusado pelo WhatsApp ------------------------------
+            if (m.includes('não encontrado no WhatsApp')) {
+                return {
+                    cor: 'log-nowhats',
+                    motivo: 'Motivo: o WhatsApp Web não abriu a conversa dentro do tempo limite. Na maioria dos casos o número '
+                          + 'não tem conta no WhatsApp.\n'
+                          + 'Também pode acontecer com internet lenta ou sessão do WhatsApp caída — nesse caso o número pode estar certo.\n'
+                          + 'Como resolver: confira o número (DDD e dígito 9) e, se a conexão estava instável, use o botão de reenviar.',
+                };
+            }
+            if (m.includes('número inválido')) {
+                return {
+                    cor: 'log-sheet',
+                    motivo: 'Motivo: o número tem menos de 10 dígitos depois de remover símbolos e espaços — falta DDD ou faltam dígitos '
+                          + 'do telefone.\n'
+                          + 'Como resolver: preencha o número completo com DDD (ex: 11999998888). O contato foi pulado sem abrir o WhatsApp.',
+                };
+            }
+
+            // --- Falhas de envio -------------------------------------------
+            const abandono = m.match(/falhou (\d+)x \(([^)]+)\)/);
+            if (abandono) {
+                return {
+                    cor: 'log-giveup',
+                    motivo: `Motivo: o envio falhou ${abandono[1]} vezes seguidas (${abandono[2]}), atingindo o limite de tentativas.\n`
+                          + 'O contato foi marcado como inválido para não consumir as próximas rodadas.\n'
+                          + 'Como resolver: confira número, mensagem e anexo do contato e use o botão de reenviar para tentar de novo.',
+                };
+            }
+            const retentativa = m.match(/falha ao enviar \(([^)]+)\)\. Tentativa (\d+)\/(\d+)/);
+            if (retentativa) {
+                return {
+                    cor: 'log-retry',
+                    motivo: `Motivo: ${retentativa[1]}. Esta foi a tentativa ${retentativa[2]} de ${retentativa[3]}.\n`
+                          + 'O contato continua pendente e será tentado novamente na próxima rodada. Ainda não é um contato inválido.',
+                };
+            }
+            if (m.includes('erro inesperado')) {
+                return {
+                    cor: 'log-tech',
+                    motivo: 'Motivo: erro técnico não previsto durante o envio (o detalhe do erro está no fim da linha e no arquivo de log).\n'
+                          + 'O contato continua pendente e será tentado novamente, até o limite de tentativas.',
+                };
+            }
+            return null;
+        }
+
+        // Só o texto do tooltip (a cor fica em logProblemInfo).
+        function logTooltip(message) {
+            const info = logProblemInfo(message);
+            return info ? info.motivo : null;
+        }
+
         function addLogEntry(message) {
             const logArea = document.getElementById('log-area');
             if (logArea.querySelector('.text-gray-500')) {
                 logArea.innerHTML = '';
             }
             const entry = document.createElement('div');
-            // Cor baseada no conteúdo
-            if (message.includes('atualizados via editor') || message.includes('Configuração') || message.includes('Planilha')) {
+            const problema = logProblemInfo(message);
+            if (problema) {
+                // Cor por tipo de problema + tooltip com o motivo completo
+                entry.className = `${problema.cor} mb-0.5 log-help`;
+                entry.title = problema.motivo;
+            } else if (message.includes('atualizados via editor') || message.includes('Configuração') || message.includes('Planilha')) {
                 entry.className = 'text-purple-400 mb-0.5';
             } else if (message.includes('[SKIP]')) {
                 entry.className = 'text-yellow-400 mb-0.5';
-            } else if (message.includes('❌') || message.includes('ERRO') || message.includes('Erro') || message.includes('inválido ou não')) {
+            } else if (message.includes('❌') || message.includes('ERRO') || message.includes('Erro')) {
                 entry.className = 'text-red-400 mb-0.5';
             } else {
                 entry.className = 'text-green-400 mb-0.5';
@@ -983,7 +1117,7 @@
             }
         }
 
-        async function saveConfig() {
+        async function saveConfig(silent = false) {
             const statusEl = document.getElementById('config-status');
 
             const config = {
@@ -1010,19 +1144,30 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    statusEl.textContent = 'Configuração salva.';
+                    statusEl.textContent = silent ? 'Configuração sincronizada ✓' : 'Configuração salva.';
                     statusEl.className = 'mt-2 text-sm text-green-600';
                     totalRodadas = config.total_rodadas;
-                } else {
-                    statusEl.textContent = `Erro: ${data.detail}`;
-                    statusEl.className = 'mt-2 text-sm text-red-600';
+                    setTimeout(() => { statusEl.textContent = ''; }, 3000);
+                    return true;
                 }
+                statusEl.textContent = `Erro: ${data.detail}`;
+                statusEl.className = 'mt-2 text-sm text-red-600';
+                return false;
             } catch (err) {
                 statusEl.textContent = `Erro: ${err.message}`;
                 statusEl.className = 'mt-2 text-sm text-red-600';
+                return false;
             }
+        }
 
-            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+        // Toda alteração de configuração vai direto para o servidor. Antes, o
+        // valor visível na tela só chegava ao backend ao clicar em "Salvar
+        // Config": marcar "Comportamento humano" e iniciar o envio podia rodar
+        // com o valor antigo (padrão OFF), e o envio saía sem humanização.
+        function autoSaveConfig() {
+            configDirty = true;   // não deixa o /status sobrescrever o que o usuário mexeu
+            configLoaded = true;
+            saveConfig(true);
         }
 
         // --- Controles ---
@@ -1036,7 +1181,18 @@
             lockContactsEditing(true);
 
             // Salva a configuração no servidor antes de iniciar (garante que os valores visíveis são os usados)
-            await saveConfig();
+            const cfgOk = await saveConfig(true);
+            if (!cfgOk) {
+                // Sem confirmação do servidor não há garantia de qual config será usada
+                // (ex.: comportamento humano ficaria no padrão OFF sem o usuário saber).
+                starting = false;
+                document.getElementById('btn-start').disabled = false;
+                document.getElementById('btn-stop').disabled = true;
+                lockContactsEditing(false);
+                statusEl.textContent = 'Não foi possível salvar a configuração no servidor. Envio cancelado.';
+                statusEl.className = 'mt-2 text-sm text-red-600';
+                return;
+            }
 
             // Salva a mensagem global no servidor (garante sync do toggle e texto)
             if (isGlobalMessageActive()) {
@@ -1227,7 +1383,7 @@
                     _mediaTargetRow.querySelector('.contact-arquivo-nome').textContent = allNames.join(', ');
                     _mediaTargetRow.querySelector('.contact-arquivo-nome').title = allPaths;
                     // Mostra botão de remover
-                    _mediaTargetRow.querySelectorAll('td')[3].querySelector('button:last-of-type').classList.remove('hidden');
+                    _mediaTargetRow.querySelector('.contact-arquivo-btn').closest('td').querySelector('button:last-of-type').classList.remove('hidden');
                 }
 
                 _mediaTargetRow = null;
@@ -1277,6 +1433,15 @@
         document.getElementById('cfg-hora-inicio').addEventListener('input', updateTotalMsgsCalc);
         document.getElementById('cfg-hora-fim').addEventListener('input', updateTotalMsgsCalc);
         document.getElementById('cfg-skip-weekends').addEventListener('change', updateTotalMsgsCalc);
+
+        // Sincroniza a configuração com o servidor a cada alteração
+        [
+            'cfg-msgs', 'cfg-rodadas', 'cfg-intervalo', 'cfg-delay-min', 'cfg-delay-max',
+            'cfg-hora-inicio', 'cfg-hora-fim', 'cfg-skip-weekends', 'cfg-human-behavior',
+        ].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('change', autoSaveConfig);
+        });
 
         // --- Atalhos de teclado ---
         document.addEventListener('keydown', (e) => {

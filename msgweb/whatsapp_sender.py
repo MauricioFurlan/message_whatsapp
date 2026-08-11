@@ -432,6 +432,31 @@ class WhatsAppSender:
         """Verifica se o modo comportamento humano está ativo."""
         return self.config.get("human_behavior", False)
 
+    def _type_budget(self, length: int) -> float:
+        """
+        Orçamento de tempo da digitação humanizada, proporcional ao tamanho
+        do texto.
+
+        Antes o orçamento era fixo (25s). Mensagem longa — o caso típico da
+        mensagem global — estourava o limite no meio da digitação e o restante
+        ia numa única chamada: na tela a mensagem "aparecia inteira de uma vez",
+        e o cliente concluía (com razão) que o comportamento humano não estava
+        valendo para a mensagem global. Agora o orçamento cresce com o texto:
+
+            orçamento = base + segundos_por_caractere * len(texto)   (com teto)
+
+        Base <= 0 continua significando "sem orçamento": manda tudo de uma vez.
+        É o escape para navegador degradado e o modo usado nos testes.
+        """
+        base = float(self.config.get("human_type_max_seconds", 25))
+        if base <= 0:
+            return 0.0
+        por_char = float(self.config.get("human_type_seconds_per_char", 0.05))
+        teto = float(self.config.get("human_type_budget_cap", 180))
+        # Teto nunca pode ficar abaixo da base, senão a config se contradiz
+        teto = max(teto, base)
+        return min(base + por_char * max(0, length), teto)
+
     def _gaussian_delay(self, d_min: float, d_max: float) -> float:
         """
         Gera um delay com distribuição gaussiana (mais natural que uniforme).
@@ -471,15 +496,16 @@ class WhatsAppSender:
         de 400 caracteres gerava 400 chamadas e levava minutos — o bot parecia
         travado e nunca enviava (bug real em produção).
 
-        Em ambos os modos existe um orçamento de tempo (`human_type_max_seconds`,
-        padrão 25s): se estourar, o restante vai de uma vez. É a rede de
-        segurança para o caso de o navegador estar muito degradado.
+        Em ambos os modos existe um orçamento de tempo (ver `_type_budget`,
+        padrão 25s + 0,05s por caractere, com teto de 180s): se estourar, o
+        restante vai de uma vez. É a rede de segurança para o caso de o
+        navegador estar muito degradado.
 
         Nota sobre detecção: agrupar não é colar. O send_keys("abc") faz o
         ChromeDriver disparar os eventos de tecla de cada caractere; o que muda
         é apenas o intervalo entre eles.
         """
-        budget = float(self.config.get("human_type_max_seconds", 25))
+        budget = self._type_budget(len(text))
         limite_char = int(self.config.get("human_type_char_limit", 200))
 
         # Textos curtos: caractere por caractere (fidelidade máxima)
@@ -661,6 +687,51 @@ class WhatsAppSender:
         variacao = random.choice([-2, -1, 0, 1, 2])
         return max(1, base + variacao)
 
+    @staticmethod
+    def _preview_texto(texto: str, limite: int = 300) -> str:
+        """
+        Versão do texto segura para o arquivo de log: uma linha só e truncada.
+
+        Existe para diagnóstico remoto — quando o cliente diz "enviou o nome
+        errado", o log precisa mostrar exatamente o texto que o sistema montou.
+        """
+        t = (texto or "").replace("\r", "").replace("\n", "\\n")
+        if len(t) <= limite:
+            return t
+        return f"{t[:limite]}... (+{len(t) - limite} caracteres)"
+
+    @staticmethod
+    def _format_texto(pessoa: str, mensagem: str, prefixo: str = "") -> tuple:
+        """
+        Monta o texto final da mensagem e devolve (texto, regra_aplicada).
+
+        O nome vem SEMPRE da coluna `Nome` da planilha — o sistema nunca lê o
+        nome do contato salvo no WhatsApp. A `regra` é só descrição para o log,
+        para diagnosticar relatos de "enviou o nome errado".
+
+        Regras, em ordem:
+          1. mensagem com {nome}  -> substitui o placeholder pelo nome
+          2. coluna Prefixo preenchida -> "<prefixo> <nome>, <mensagem>"
+          3. nenhuma das duas -> mensagem exatamente como está
+        """
+        pessoa_limpo = pessoa.strip() if pessoa else ""
+        prefixo_limpo = prefixo.strip() if prefixo else ""
+        nome_vazio = pessoa_limpo.lower() in ("nan", "none", "")
+
+        if "{nome}" in mensagem:
+            # Placeholder: substitui {nome} pelo nome do contato (ou remove se vazio)
+            nome_subst = "" if nome_vazio else pessoa_limpo
+            texto = mensagem.replace("{nome}", nome_subst)
+            regra = f"placeholder {{nome}} -> '{nome_subst}' (coluna Nome da planilha)"
+        elif prefixo_limpo and not nome_vazio:
+            texto = f"{prefixo_limpo} {pessoa_limpo}, {mensagem}"
+            regra = f"prefixo '{prefixo_limpo}' + nome '{pessoa_limpo}' (coluna Nome da planilha)"
+        else:
+            texto = mensagem
+            regra = "texto puro (sem substituição de nome)"
+
+        return texto, regra
+
     def _send_message(self, pessoa: str, numero: str, mensagem: str, arquivo: str = "", prefixo: str = "") -> bool:
         """
         Envia uma mensagem para um contato.
@@ -670,17 +741,7 @@ class WhatsAppSender:
         Levanta TimeoutException se número é inválido.
         """
         # Formata mensagem com prefixo por contato ou placeholder {nome}
-        pessoa_limpo = pessoa.strip() if pessoa else ""
-        prefixo_limpo = prefixo.strip() if prefixo else ""
-
-        if "{nome}" in mensagem:
-            # Placeholder: substitui {nome} pelo nome do contato (ou remove se vazio)
-            nome_subst = pessoa_limpo if pessoa_limpo.lower() not in ("nan", "none", "") else ""
-            texto = mensagem.replace("{nome}", nome_subst)
-        elif prefixo_limpo and pessoa_limpo and pessoa_limpo.lower() not in ("nan", "none", ""):
-            texto = f"{prefixo_limpo} {pessoa_limpo}, {mensagem}"
-        else:
-            texto = mensagem
+        texto, regra = self._format_texto(pessoa, mensagem, prefixo)
 
         # Formata número (remove caracteres não numéricos e notação float)
         numero_limpo = self._clean_number(numero)
@@ -688,6 +749,15 @@ class WhatsAppSender:
             numero_limpo = "55" + numero_limpo
 
         human = self._human_behavior_enabled()
+
+        # Diagnóstico: registra o texto EXATO que será enviado, o nome usado e o
+        # modo de digitação. É o que permite responder objetivamente a relatos do
+        # tipo "enviou outro nome" ou "não digitou como humano".
+        file_logger.info(
+            f"Texto final para '{pessoa}' ({numero_limpo}) — {len(texto)} caracteres, "
+            f"regra: {regra}, modo: {'humanizado' if human else 'rápido (texto pré-preenchido na URL)'} "
+            f"| {self._preview_texto(texto)}"
+        )
         
         # Suporta múltiplos arquivos separados por vírgula
         media_files = []
@@ -1569,8 +1639,10 @@ class WhatsAppSender:
                     if prefixo.lower() in ("nan", "none"):
                         prefixo = ""
                     # Fallback: usa mensagem global se a do contato está vazia
+                    usou_global = False
                     if mensagem.strip().lower() in ("", "nan", "none") and self.global_message.strip():
                         mensagem = self.global_message
+                        usou_global = True
 
                     # Validação prévia: não aciona o Selenium se o contato
                     # não tiver número válido ou mensagem.
@@ -1592,7 +1664,10 @@ class WhatsAppSender:
                     # não devem consumir o teto da rodada.
                     tentativas += 1
 
-                    self._log(f"Enviando para {pessoa} ({numero})...")
+                    self._log(
+                        f"Enviando para {pessoa} ({numero})"
+                        f"{' [mensagem global]' if usou_global else ''}..."
+                    )
 
                     try:
                         success = self._send_message(pessoa, numero, mensagem, arquivo, prefixo)

@@ -64,6 +64,24 @@ msgweb/
 └── chrome_profile/        # Perfil Chrome (mantém sessão WhatsApp)
 ```
 
+## 🧪 Testes
+
+```bash
+venv\Scripts\python.exe -m unittest test_numeros test_mensagem_global test_app_estado -v
+```
+
+- `test_numeros.py` — números da planilha, digitação humanizada, cota das rodadas, anexos
+- `test_mensagem_global.py` — montagem do texto ({nome}, prefixo), mensagem global, comportamento humano, orçamento de digitação
+- `test_app_estado.py` — procedência da planilha, deduplicação do upload, configuração que chega ao sender
+
+```bash
+node tests/test_contact_update.js
+node tests/test_log_tooltip.js
+```
+
+- `tests/test_contact_update.js` — status do contato na tabela via SSE (identificação por linha)
+- `tests/test_log_tooltip.js` — cor e tooltip de cada tipo de contato inválido/falha no log
+
 ## 🛑 Parar Envio
 
 Clique em "Parar Envio" para interromper graciosamente. O sistema finaliza a mensagem atual e para. O progresso é salvo na planilha.
