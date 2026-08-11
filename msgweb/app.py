@@ -188,7 +188,7 @@ def _broadcast_event(event_type: str, data: str):
             pass
 
 
-def broadcast_contact_update(row_index: int, numero: str, status: str, data_envio: str = ""):
+def broadcast_contact_update(row_index: int, numero: str, status: str, data_envio: str = "", motivo: str = ""):
     """
     Emite um evento SSE para atualizar o status de um contato na tabela do frontend.
 
@@ -196,10 +196,12 @@ def broadcast_contact_update(row_index: int, numero: str, status: str, data_envi
     linha de dados). O número segue no payload apenas para conferência no frontend —
     identificar por número marcava todas as linhas com o mesmo telefone, e marcava
     a tabela inteira quando o número era vazio.
+
+    motivo: texto explicando por que foi marcado como inválido (tooltip no badge).
     """
     import json as _json
     payload = _json.dumps(
-        {"row_index": int(row_index), "numero": numero, "status": status, "data_envio": data_envio},
+        {"row_index": int(row_index), "numero": numero, "status": status, "data_envio": data_envio, "motivo": motivo},
         ensure_ascii=False,
     )
     _broadcast_event("contact_update", payload)
@@ -296,13 +298,15 @@ async def upload_file(file: UploadFile = File(...)):
             )
 
         # Adiciona colunas de controle se não existirem
-        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo", "Prefixo"]:
+        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo", "Prefixo", "Motivo"]:
             if col not in df.columns:
                 df[col] = ""
             else:
                 if col == "Arquivo":
                     df[col] = df[col].fillna("").astype(str).str.strip()
                 elif col == "Prefixo":
+                    df[col] = df[col].fillna("").astype(str).str.strip()
+                elif col == "Motivo":
                     df[col] = df[col].fillna("").astype(str).str.strip()
                 else:
                     df[col] = df[col].fillna("").astype(str).str.strip().str.upper()
@@ -528,7 +532,7 @@ async def get_contacts():
     try:
         df = pd.read_excel(state.excel_path)
         # Garante colunas de controle
-        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo", "Prefixo"]:
+        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo", "Prefixo", "Motivo"]:
             if col not in df.columns:
                 df[col] = ""
             else:
@@ -563,6 +567,7 @@ async def get_contacts():
                 "enviado": str(row.get("Enviado", "")).strip().upper() == "X",
                 "invalido": str(row.get("Invalido", "")).strip().upper() == "X",
                 "data_envio": str(row.get("DataEnvio", "")),
+                "motivo": str(row.get("Motivo", "")),
             })
 
         return {"status": "ok", "contacts": contacts}
@@ -579,6 +584,7 @@ class ContactModel(BaseModel):
     enviado: bool = False
     invalido: bool = False
     data_envio: str = ""
+    motivo: str = ""
 
 
 class ContactsPayload(BaseModel):
@@ -615,9 +621,10 @@ async def save_contacts(payload: ContactsPayload):
             "Enviado": "X" if c.enviado else "",
             "DataEnvio": c.data_envio.strip(),
             "Invalido": "X" if c.invalido else "",
+            "Motivo": c.motivo.strip(),
         })
 
-    df = pd.DataFrame(rows, columns=["Nome", "Número", "Mensagem", "Arquivo", "Prefixo", "Enviado", "DataEnvio", "Invalido"])
+    df = pd.DataFrame(rows, columns=["Nome", "Número", "Mensagem", "Arquivo", "Prefixo", "Enviado", "DataEnvio", "Invalido", "Motivo"])
 
     upload_dir = Path("uploads")
     upload_dir.mkdir(exist_ok=True)

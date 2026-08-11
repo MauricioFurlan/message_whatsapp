@@ -60,6 +60,7 @@ echo.
 
 :: Empacota com PyInstaller
 pyinstaller ^
+    --noconfirm ^
     --name "WhatsAppAutomacao" ^
     --onedir ^
     --console ^

@@ -101,17 +101,20 @@ class WhatsAppSender:
         if self.log_callback:
             self.log_callback(message)
 
-    def _notify_contact_update(self, row_index: int, numero: str, status: str, data_envio: str = ""):
+    def _notify_contact_update(self, row_index: int, numero: str, status: str, data_envio: str = "", motivo: str = ""):
         """
         Notifica o frontend sobre mudança de status de um contato.
 
         row_index é o índice da linha na planilha (0 = primeira linha de dados),
         e é o que identifica o contato. O número vai apenas como conferência,
         porque números repetidos ou vazios não identificam uma linha.
+
+        motivo: texto explicando a razão da invalidação (exibido como tooltip
+        no badge "Inválido" da tabela de contatos).
         """
         if self.contact_update_callback:
             try:
-                self.contact_update_callback(int(row_index), numero, status, data_envio)
+                self.contact_update_callback(int(row_index), numero, status, data_envio, motivo)
             except Exception:
                 pass
 
@@ -307,6 +310,11 @@ class WhatsAppSender:
             df["Tentativas"] = (
                 pd.to_numeric(df["Tentativas"], errors="coerce").fillna(0).astype(int)
             )
+        # Coluna Motivo (razão da invalidação — persiste o tooltip entre sessões)
+        if "Motivo" not in df.columns:
+            df["Motivo"] = ""
+        else:
+            df["Motivo"] = df["Motivo"].fillna("").astype(str).str.strip()
         return df
 
     def _max_tentativas_contato(self) -> int:
@@ -335,6 +343,7 @@ class WhatsAppSender:
 
         if falhas >= limite:
             df.at[idx, "Invalido"] = "X"
+            df.at[idx, "Motivo"] = f"Falhou {falhas} vezes seguidas ({motivo}). Limite de tentativas atingido."
             self._save_contacts(df)
             with self._lock:
                 self._total_pending -= 1
@@ -345,7 +354,10 @@ class WhatsAppSender:
                 f"❌ {pessoa} — falhou {falhas}x ({motivo}). Desistindo deste contato "
                 f"para não travar as próximas rodadas."
             )
-            self._notify_contact_update(idx, numero, "invalido")
+            self._notify_contact_update(
+                idx, numero, "invalido", "",
+                f"Falhou {falhas} vezes seguidas ({motivo}). Limite de tentativas atingido.",
+            )
         else:
             self._save_contacts(df)
             self._log(
@@ -1649,6 +1661,16 @@ class WhatsAppSender:
                     valido, motivo = self._validate_contact(numero, mensagem)
                     if not valido:
                         df.at[idx, "Invalido"] = "X"
+                        # Monta tooltip conforme o tipo de erro de validação
+                        if motivo == "mensagem vazia":
+                            tooltip_motivo = "Coluna Mensagem vazia e sem mensagem global ativa."
+                        elif motivo == "número ausente":
+                            tooltip_motivo = "Coluna Número vazia. Preencha com DDD + telefone."
+                        elif motivo == "número inválido":
+                            tooltip_motivo = "Número com menos de 10 dígitos. Confira DDD + telefone."
+                        else:
+                            tooltip_motivo = motivo
+                        df.at[idx, "Motivo"] = tooltip_motivo
                         self._save_contacts(df)
 
                         with self._lock:
@@ -1656,7 +1678,7 @@ class WhatsAppSender:
 
                         file_logger.warning(f"Contato inválido ({motivo}): {pessoa} ({numero})")
                         self._log(f"❌ {pessoa} ({numero}) — {motivo}, marcado como inválido (pulado sem abrir o WhatsApp).")
-                        self._notify_contact_update(idx, numero, "invalido")
+                        self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
                         continue
 
                     # Só conta como tentativa a partir daqui: contatos inválidos
@@ -1706,6 +1728,7 @@ class WhatsAppSender:
                     except TimeoutException:
                         # Número inválido
                         df.at[idx, "Invalido"] = "X"
+                        df.at[idx, "Motivo"] = "Número não encontrado no WhatsApp (timeout ao abrir conversa)."
                         self._save_contacts(df)
 
                         with self._lock:
@@ -1713,7 +1736,10 @@ class WhatsAppSender:
 
                         file_logger.warning(f"Número inválido (timeout): {pessoa} ({numero})")
                         self._log(f"❌ {pessoa} ({numero}) — número inválido ou não encontrado no WhatsApp, marcado como inválido.")
-                        self._notify_contact_update(idx, numero, "invalido")
+                        self._notify_contact_update(
+                            idx, numero, "invalido", "",
+                            "Número não encontrado no WhatsApp (timeout ao abrir conversa).",
+                        )
 
                     except Exception as e:
                         if self._is_session_dead(e):

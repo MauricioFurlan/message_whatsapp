@@ -1,0 +1,44 @@
+============================================
+  WhatsApp Automação - Guia Rápido
+============================================
+
+COMO USAR:
+----------
+
+1. Execute "WhatsAppAutomacao.exe"
+   - Uma janela preta (console) vai abrir — NÃO feche ela
+   - Seu navegador vai abrir automaticamente
+
+2. Na primeira vez, insira sua chave de licença
+   - A chave foi enviada junto com sua compra
+   - Formato: XXXX-XXXX-XXXX-XXXX
+
+3. Carregue sua planilha de contatos (.xlsx)
+   - Use o modelo em "uploads/modelo_contatos.xlsx" como base
+   - Colunas obrigatórias: Nome, Número, Mensagem
+
+4. Configure os parâmetros de envio
+   - Mensagens por rodada, intervalo, horário, etc.
+
+5. Clique em "Iniciar Envio"
+   - Na primeira vez, escaneie o QR Code do WhatsApp Web
+   - Nas próximas vezes, o login é automático
+
+REQUISITOS:
+-----------
+- Google Chrome instalado
+- Conexão com a internet
+- Windows 10 ou superior
+
+IMPORTANTE:
+-----------
+- NÃO feche a janela preta enquanto estiver enviando
+- Para parar, use o botão "Parar Envio" na interface
+- A planilha é salva automaticamente a cada envio
+
+SUPORTE:
+--------
+Em caso de dúvidas ou problemas, entre em contato:
+[SEU CONTATO AQUI]
+
+============================================
