@@ -694,6 +694,88 @@ class WhatsAppSender:
         variacao = random.choice([-2, -1, 0, 1, 2])
         return max(1, base + variacao)
 
+    def _generate_burst_plan(self, total_msgs: int, tempo_minutos: int) -> list:
+        """
+        Gera um plano de envio em rajadas (bursts) com distribuição irregular.
+
+        Em vez de enviar 1 msg a cada X segundos (metrônomo), simula o
+        comportamento real de uma pessoa: manda umas 4-5 seguidas, para,
+        manda mais 2-3, etc.
+
+        Retorna uma lista de dicts:
+        [
+            {"burst_size": 5, "intra_delay": 18, "pause_after": 300},
+            {"burst_size": 3, "intra_delay": 15, "pause_after": 180},
+            ...
+        ]
+
+        - burst_size: quantas msgs mandar seguidas nessa rajada
+        - intra_delay: delay entre msgs dentro da rajada (curto, 15-25s)
+        - pause_after: pausa após essa rajada antes da próxima (mais longa)
+          O último burst tem pause_after = 0 (não precisa esperar depois)
+        """
+        DELAY_INTRA_MIN = 15   # delay mínimo entre msgs dentro de um burst
+        DELAY_INTRA_MAX = 25   # delay máximo entre msgs dentro de um burst
+        BURST_MIN = 2          # tamanho mínimo de uma rajada
+        BURST_MAX = 8          # tamanho máximo de uma rajada
+
+        if total_msgs <= 0:
+            return []
+
+        # Caso trivial: poucas mensagens — um único burst
+        if total_msgs <= BURST_MAX:
+            intra_delay = random.uniform(DELAY_INTRA_MIN, DELAY_INTRA_MAX)
+            return [{"burst_size": total_msgs, "intra_delay": intra_delay, "pause_after": 0}]
+
+        # Gera bursts com tamanhos aleatórios até somar total_msgs
+        bursts = []
+        restante = total_msgs
+        while restante > 0:
+            if restante <= BURST_MAX:
+                bursts.append(restante)
+                restante = 0
+            else:
+                size = random.randint(BURST_MIN, min(BURST_MAX, restante - 1))
+                bursts.append(size)
+                restante -= size
+
+        # Calcula o tempo total disponível e distribui as pausas
+        tempo_segundos = tempo_minutos * 60
+
+        # Tempo gasto dentro dos bursts (intra-delays)
+        intra_delays = []
+        tempo_intra_total = 0
+        for size in bursts:
+            d = random.uniform(DELAY_INTRA_MIN, DELAY_INTRA_MAX)
+            intra_delays.append(d)
+            # Dentro de cada burst há (size - 1) intervalos
+            tempo_intra_total += (size - 1) * d
+
+        # Tempo restante para distribuir entre as pausas dos bursts
+        tempo_para_pausas = max(0, tempo_segundos - tempo_intra_total)
+
+        # Distribui pausas com pesos aleatórios (distribuição Dirichlet-like)
+        num_pausas = len(bursts) - 1  # última rajada não tem pausa depois
+        if num_pausas > 0 and tempo_para_pausas > 0:
+            # Gera pesos aleatórios
+            pesos = [random.uniform(0.5, 2.0) for _ in range(num_pausas)]
+            soma_pesos = sum(pesos)
+            pausas = [(p / soma_pesos) * tempo_para_pausas for p in pesos]
+        else:
+            pausas = []
+
+        # Monta o plano final
+        plan = []
+        for i, size in enumerate(bursts):
+            pause = pausas[i] if i < len(pausas) else 0
+            plan.append({
+                "burst_size": size,
+                "intra_delay": intra_delays[i],
+                "pause_after": pause,
+            })
+
+        return plan
+
     @staticmethod
     def _preview_texto(texto: str, limite: int = 300) -> str:
         """
@@ -1540,272 +1622,234 @@ class WhatsAppSender:
                 self._total_contacts = len(df)
 
             # Configurações
-            msgs_por_rodada = self.config.get("msgs_por_rodada", 5)
-            total_rodadas = self.config.get("total_rodadas", 3)
-            intervalo_min = self.config.get("intervalo_rodadas_min", 30)
+            total_msgs = self.config.get("total_msgs", 10)
+            tempo_minutos = self.config.get("tempo_minutos", 60)
 
-            # Inicia envio por rodadas
+            # Gera plano de envio em bursts (rajadas irregulares)
+            burst_plan = self._generate_burst_plan(total_msgs, tempo_minutos)
+            total_bursts = len(burst_plan)
+
+            # Inicia envio por bursts
             self._set_state("enviando")
-            compensacao = 0  # Rastreia débito/crédito entre rodadas para manter total exato
-            browser_died = False  # Sinaliza que a sessão do Chrome morreu
+            browser_died = False
 
-            for rodada in range(1, total_rodadas + 1):
-                if self._should_stop() or browser_died:
-                    break
+            # Carrega contatos pendentes
+            df = self._load_contacts()
+            pending = self._get_pending_contacts(df)
 
-                # Verifica horário comercial
-                self._wait_for_business_hours()
-                if self._should_stop():
-                    break
+            # Log de contatos já processados
+            enviados_df = df[df["Enviado"] == "X"]
+            invalidos_df = df[df["Invalido"] == "X"]
+            if len(enviados_df) > 0:
+                for _, row in enviados_df.iterrows():
+                    self._log(f"[SKIP] {row['Nome']} — já enviado, pulando.")
+            if len(invalidos_df) > 0:
+                for _, row in invalidos_df.iterrows():
+                    self._log(f"[SKIP] {row['Nome']} — número inválido, pulando.")
 
-                with self._lock:
-                    self._current_round = rodada
+            with self._lock:
+                self._total_pending = len(pending)
 
-                self._log(f"📤 Rodada {rodada}/{total_rodadas} iniciada")
+            if len(pending) == 0:
+                self._log("✅ Todos os contatos já foram processados!")
+            else:
+                self._log(
+                    f"📤 Iniciando envio: {len(pending)} pendentes, "
+                    f"{total_bursts} rajadas planejadas em {tempo_minutos}min"
+                )
 
-                # Recarrega planilha para pegar estado atualizado
-                df = self._load_contacts()
-                pending = self._get_pending_contacts(df)
+                # Iterador dos contatos pendentes
+                pending_iter = pending.iterrows()
+                total_enviados_sessao = 0
 
-                # Log de contatos já enviados (pulados)
-                enviados_df = df[df["Enviado"] == "X"]
-                invalidos_df = df[df["Invalido"] == "X"]
-                if len(enviados_df) > 0:
-                    for _, row in enviados_df.iterrows():
-                        self._log(f"[SKIP] {row['Nome']} — já enviado, pulando.")
-                if len(invalidos_df) > 0:
-                    for _, row in invalidos_df.iterrows():
-                        self._log(f"[SKIP] {row['Nome']} — número inválido, pulando.")
-
-                with self._lock:
-                    self._total_pending = len(pending)
-
-                if len(pending) == 0:
-                    self._log("✅ Todos os contatos já foram processados!")
-                    break
-
-                # Na última rodada, não aplica variação — manda exatamente o que falta
-                # para garantir que o total bata
-                if rodada == total_rodadas:
-                    batch_size = max(1, msgs_por_rodada + compensacao)
-                else:
-                    batch_size = self._get_batch_size(msgs_por_rodada, compensacao)
-
-                # A cota da rodada conta apenas ENVIOS EFETIVOS. Antes o batch era
-                # uma fatia fixa (pending.head), então um número inexistente ou uma
-                # falha de envio "gastava" uma vaga da rodada e o cliente recebia
-                # menos mensagens do que configurou.
-                alvo_rodada = batch_size
-                # Teto de contatos examinados, para uma planilha cheia de números
-                # ruins não transformar uma rodada em algo interminável
-                # (cada número inválido custa ~30s de timeout no WhatsApp).
-                max_tentativas = max(batch_size * 3, batch_size + 10)
-
-                enviados_rodada = 0
-                tentativas = 0
-
-                for idx, row in pending.iterrows():
+                for burst_idx, burst in enumerate(burst_plan):
                     if self._should_stop() or browser_died:
                         break
 
-                    # Cota da rodada atingida
-                    if enviados_rodada >= alvo_rodada:
-                        break
-
-                    # Proteção contra rodada interminável por números ruins
-                    if tentativas >= max_tentativas:
-                        self._log(
-                            f"⚠️ Rodada {rodada}: {tentativas} tentativas de envio e "
-                            f"apenas {enviados_rodada} efetivas. Encerrando a rodada — "
-                            f"os pendentes continuam para a próxima."
-                        )
-                        file_logger.warning(
-                            f"Rodada {rodada} atingiu o teto de {max_tentativas} "
-                            f"tentativas com {enviados_rodada} envios efetivos"
-                        )
-                        break
-
-                    # Verifica horário comercial antes de cada mensagem
+                    # Verifica horário comercial antes de cada burst
                     self._wait_for_business_hours()
                     if self._should_stop():
                         break
 
-                    pessoa = str(row["Nome"])
-                    numero = self._clean_number(row["Número"])
-                    mensagem = str(row["Mensagem"])
-                    arquivo = str(row.get("Arquivo", "")).strip()
-                    # Limpa valores inválidos do pandas
-                    if arquivo.lower() in ("", "nan", "none"):
-                        arquivo = ""
-                    # Fallback: usa mensagem global se a do contato está vazia
-                    usou_global = False
-                    if mensagem.strip().lower() in ("", "nan", "none") and self.global_message.strip():
-                        mensagem = self.global_message
-                        usou_global = True
+                    burst_size = burst["burst_size"]
+                    intra_delay = burst["intra_delay"]
+                    pause_after = burst["pause_after"]
 
-                    # Validação prévia: não aciona o Selenium se o contato
-                    # não tiver número válido ou mensagem.
-                    valido, motivo = self._validate_contact(numero, mensagem)
-                    if not valido:
-                        df.at[idx, "Invalido"] = "X"
-                        # Monta tooltip conforme o tipo de erro de validação
-                        if motivo == "mensagem vazia":
-                            tooltip_motivo = "Coluna Mensagem vazia e sem mensagem global ativa."
-                        elif motivo == "número ausente":
-                            tooltip_motivo = "Coluna Número vazia. Preencha com DDD + telefone."
-                        elif motivo == "número inválido":
-                            tooltip_motivo = "Número com menos de 10 dígitos. Confira DDD + telefone."
-                        else:
-                            tooltip_motivo = motivo
-                        df.at[idx, "Motivo"] = tooltip_motivo
-                        self._save_contacts(df)
-
-                        with self._lock:
-                            self._total_pending -= 1
-
-                        file_logger.warning(f"Contato inválido ({motivo}): {pessoa} ({numero})")
-                        self._log(f"❌ {pessoa} ({numero}) — {motivo}, marcado como inválido (pulado sem abrir o WhatsApp).")
-                        self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
-                        continue
-
-                    # Só conta como tentativa a partir daqui: contatos inválidos
-                    # por validação são instantâneos (nem abrem o navegador) e
-                    # não devem consumir o teto da rodada.
-                    tentativas += 1
+                    with self._lock:
+                        self._current_round = burst_idx + 1
 
                     self._log(
-                        f"Enviando para {pessoa} ({numero})"
-                        f"{' [mensagem global]' if usou_global else ''}..."
+                        f"📨 Rajada {burst_idx + 1}/{total_bursts} "
+                        f"({burst_size} msgs, ~{intra_delay:.0f}s entre)"
                     )
 
-                    try:
-                        success = self._send_message(pessoa, numero, mensagem, arquivo)
+                    enviados_burst = 0
 
-                        if success:
-                            # Marca como enviado
-                            df.at[idx, "Enviado"] = "X"
-                            data_envio = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            df.at[idx, "DataEnvio"] = data_envio
+                    for msg_in_burst in range(burst_size):
+                        if self._should_stop() or browser_died:
+                            break
+
+                        # Pega próximo contato pendente
+                        try:
+                            idx, row = next(pending_iter)
+                        except StopIteration:
+                            # Não há mais contatos pendentes
+                            self._log("✅ Todos os contatos foram processados!")
+                            break
+
+                        # Verifica horário comercial antes de cada mensagem
+                        self._wait_for_business_hours()
+                        if self._should_stop():
+                            break
+
+                        pessoa = str(row["Nome"])
+                        numero = self._clean_number(row["Número"])
+                        mensagem = str(row["Mensagem"])
+                        arquivo = str(row.get("Arquivo", "")).strip()
+                        if arquivo.lower() in ("", "nan", "none"):
+                            arquivo = ""
+                        usou_global = False
+                        if mensagem.strip().lower() in ("", "nan", "none") and self.global_message.strip():
+                            mensagem = self.global_message
+                            usou_global = True
+
+                        # Validação prévia
+                        valido, motivo = self._validate_contact(numero, mensagem)
+                        if not valido:
+                            df.at[idx, "Invalido"] = "X"
+                            if motivo == "mensagem vazia":
+                                tooltip_motivo = "Coluna Mensagem vazia e sem mensagem global ativa."
+                            elif motivo == "número ausente":
+                                tooltip_motivo = "Coluna Número vazia. Preencha com DDD + telefone."
+                            elif motivo == "número inválido":
+                                tooltip_motivo = "Número com menos de 10 dígitos. Confira DDD + telefone."
+                            else:
+                                tooltip_motivo = motivo
+                            df.at[idx, "Motivo"] = tooltip_motivo
                             self._save_contacts(df)
 
                             with self._lock:
-                                self._messages_sent += 1
                                 self._total_pending -= 1
 
-                            enviados_rodada += 1
-                            self._log(f"✅ {pessoa} — mensagem enviada com sucesso.")
-                            self._notify_contact_update(idx, numero, "enviado", data_envio)
-                        else:
-                            self._registrar_falha(df, idx, pessoa, numero, "erro no envio")
+                            file_logger.warning(f"Contato inválido ({motivo}): {pessoa} ({numero})")
+                            self._log(f"❌ {pessoa} ({numero}) — {motivo}, marcado como inválido.")
+                            self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
+                            # Contato inválido não conta como msg do burst — tenta o próximo
+                            # mas precisa compensar no burst_size
+                            burst_size += 1
+                            continue
 
-                    except BrowserClosedError as e:
-                        # Sessão morta: abortar tudo. Continuar só queimaria
-                        # contatos com falhas instantâneas.
-                        file_logger.error(
-                            f"Navegador fechado durante o envio para {pessoa} ({numero}): {e}"
-                        )
                         self._log(
-                            "🛑 O navegador foi fechado ou perdeu a conexão. "
-                            "Envio abortado — nenhum contato foi perdido, os pendentes "
-                            "continuam marcados para a próxima execução."
-                        )
-                        browser_died = True
-                        break
-
-                    except TimeoutException:
-                        # Número inválido
-                        df.at[idx, "Invalido"] = "X"
-                        df.at[idx, "Motivo"] = "Número não encontrado no WhatsApp (timeout ao abrir conversa)."
-                        self._save_contacts(df)
-
-                        with self._lock:
-                            self._total_pending -= 1
-
-                        file_logger.warning(f"Número inválido (timeout): {pessoa} ({numero})")
-                        self._log(f"❌ {pessoa} ({numero}) — número inválido ou não encontrado no WhatsApp, marcado como inválido.")
-                        self._notify_contact_update(
-                            idx, numero, "invalido", "",
-                            "Número não encontrado no WhatsApp (timeout ao abrir conversa).",
+                            f"Enviando para {pessoa} ({numero})"
+                            f"{' [mensagem global]' if usou_global else ''}..."
                         )
 
-                    except Exception as e:
-                        if self._is_session_dead(e):
+                        try:
+                            success = self._send_message(pessoa, numero, mensagem, arquivo)
+
+                            if success:
+                                df.at[idx, "Enviado"] = "X"
+                                data_envio = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                df.at[idx, "DataEnvio"] = data_envio
+                                self._save_contacts(df)
+
+                                with self._lock:
+                                    self._messages_sent += 1
+                                    self._total_pending -= 1
+
+                                enviados_burst += 1
+                                total_enviados_sessao += 1
+                                self._log(f"✅ {pessoa} — mensagem enviada com sucesso.")
+                                self._notify_contact_update(idx, numero, "enviado", data_envio)
+                            else:
+                                self._registrar_falha(df, idx, pessoa, numero, "erro no envio")
+
+                        except BrowserClosedError as e:
                             file_logger.error(
-                                f"Sessão morta detectada em {pessoa} ({numero}): {e}"
+                                f"Navegador fechado durante o envio para {pessoa} ({numero}): {e}"
                             )
                             self._log(
                                 "🛑 O navegador foi fechado ou perdeu a conexão. "
-                                "Envio abortado."
+                                "Envio abortado — os pendentes continuam para a próxima execução."
                             )
                             browser_died = True
                             break
-                        file_logger.error(f"Erro ao enviar para {pessoa} ({numero}): {e}\n{traceback.format_exc()}")
-                        self._log(f"⚠️ {pessoa} ({numero}) — erro inesperado: {e}")
-                        try:
-                            self._registrar_falha(df, idx, pessoa, numero, "erro inesperado")
-                        except Exception as reg_err:
-                            file_logger.error(
-                                f"Não foi possível registrar a falha de {pessoa}: {reg_err}"
+
+                        except TimeoutException:
+                            df.at[idx, "Invalido"] = "X"
+                            df.at[idx, "Motivo"] = "Número não encontrado no WhatsApp (timeout ao abrir conversa)."
+                            self._save_contacts(df)
+
+                            with self._lock:
+                                self._total_pending -= 1
+
+                            file_logger.warning(f"Número inválido (timeout): {pessoa} ({numero})")
+                            self._log(f"❌ {pessoa} ({numero}) — número inválido ou não encontrado no WhatsApp.")
+                            self._notify_contact_update(
+                                idx, numero, "invalido", "",
+                                "Número não encontrado no WhatsApp (timeout ao abrir conversa).",
                             )
 
-                    # Delay entre mensagens — pulado quando a cota da rodada
-                    # já foi atingida (não faz sentido esperar antes de encerrar)
+                        except Exception as e:
+                            if self._is_session_dead(e):
+                                file_logger.error(f"Sessão morta em {pessoa} ({numero}): {e}")
+                                self._log("🛑 O navegador foi fechado ou perdeu a conexão. Envio abortado.")
+                                browser_died = True
+                                break
+                            file_logger.error(f"Erro ao enviar para {pessoa} ({numero}): {e}\n{traceback.format_exc()}")
+                            self._log(f"⚠️ {pessoa} ({numero}) — erro inesperado: {e}")
+                            try:
+                                self._registrar_falha(df, idx, pessoa, numero, "erro inesperado")
+                            except Exception as reg_err:
+                                file_logger.error(f"Não foi possível registrar a falha de {pessoa}: {reg_err}")
+
+                        # Delay intra-burst (entre msgs dentro da rajada)
+                        # Pulado na última msg do burst e quando vai parar
+                        if (
+                            not self._should_stop()
+                            and not browser_died
+                            and msg_in_burst < burst_size - 1
+                        ):
+                            # Variação gaussiana no intra_delay para ser mais natural
+                            if self._human_behavior_enabled():
+                                delay = self._gaussian_delay(
+                                    intra_delay * 0.7, intra_delay * 1.3
+                                )
+                            else:
+                                delay = random.uniform(intra_delay * 0.8, intra_delay * 1.2)
+                            self._log(f"Aguardando {delay:.0f}s...")
+                            time.sleep(delay)
+
+                    # Fim do burst — log e pausa entre bursts
+                    self._log(f"📊 Rajada {burst_idx + 1} finalizada: {enviados_burst} msgs enviadas")
+
+                    if browser_died:
+                        break
+
+                    # Verifica se ainda há pendentes
+                    df = self._load_contacts()
+                    remaining = self._get_pending_contacts(df)
+                    with self._lock:
+                        self._total_pending = len(remaining)
+
+                    if len(remaining) == 0:
+                        self._log("✅ Todos os contatos foram processados!")
+                        break
+
+                    # Pausa entre bursts (a última rajada não tem pausa)
                     if (
-                        not self._should_stop()
-                        and not browser_died
-                        and enviados_rodada < alvo_rodada
-                        and tentativas < max_tentativas
+                        pause_after > 0
+                        and burst_idx < total_bursts - 1
+                        and not self._should_stop()
                     ):
-                        d_min = self.config.get("delay_min", 15)
-                        d_max = self.config.get("delay_max", 30)
-                        if self._human_behavior_enabled():
-                            delay = self._gaussian_delay(d_min, d_max)
-                        else:
-                            delay = random.uniform(d_min, d_max)
-                        self._log(f"Aguardando {delay:.0f}s antes da próxima mensagem...")
-                        time.sleep(delay)
+                        pause_min = pause_after / 60
+                        self._log(f"⏸️ Pausa de ~{pause_min:.1f} min antes da próxima rajada...")
 
-                self._log(
-                    f"📊 Rodada {rodada} finalizada: {enviados_rodada} mensagens enviadas"
-                )
-
-                # Sessão do Chrome morreu: não faz sentido iniciar outra rodada
-                if browser_died:
-                    break
-
-                # Atualiza compensação: diferença entre o esperado e o que de fato enviou
-                # Se mandou 4 e era pra mandar 5, compensacao fica +1 (próxima manda 1 a mais)
-                compensacao = (msgs_por_rodada - enviados_rodada) + compensacao
-
-                # Verifica se ainda há pendentes antes de esperar
-                df = self._load_contacts()
-                remaining = self._get_pending_contacts(df)
-                with self._lock:
-                    self._total_pending = len(remaining)
-
-                if len(remaining) == 0:
-                    self._log("Todos os contatos foram processados.")
-                    break
-
-                # Intervalo entre rodadas (com jitter)
-                if rodada < total_rodadas and not self._should_stop():
-                    # Jitter: ±20% do intervalo
-                    jitter = intervalo_min * 0.2
-                    wait_time = random.uniform(
-                        (intervalo_min - jitter) * 60,
-                        (intervalo_min + jitter) * 60,
-                    )
-                    wait_minutes = wait_time / 60
-                    self._log(
-                        f"⏰ Próxima rodada em ~{wait_minutes:.0f} minutos. "
-                        f"Aguardando..."
-                    )
-
-                    # Espera em intervalos curtos para poder parar
-                    elapsed = 0
-                    while elapsed < wait_time and not self._should_stop():
-                        time.sleep(min(2, wait_time - elapsed))
-                        elapsed += 2
+                        # Espera em intervalos curtos para poder parar
+                        elapsed = 0
+                        while elapsed < pause_after and not self._should_stop():
+                            time.sleep(min(2, pause_after - elapsed))
+                            elapsed += 2
 
             # Finalização
             if browser_died:

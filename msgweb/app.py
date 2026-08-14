@@ -59,16 +59,12 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # --- Models ---
 
 class ConfigModel(BaseModel):
-    msgs_por_rodada: int = 5
-    total_rodadas: int = 3
-    intervalo_rodadas_min: int = 30
+    total_msgs: int = 10
+    tempo_minutos: int = 60
     hora_inicio: str = "08:00"
     hora_fim: str = "18:00"
     skip_weekends: bool = True
-    delay_min: int = 15
-    delay_max: int = 30
-    human_behavior: bool = False
-    max_tentativas_contato: int = 3
+    human_behavior: bool = True
 
 
 # --- Global State ---
@@ -76,16 +72,12 @@ class ConfigModel(BaseModel):
 @dataclass
 class AppState:
     config: dict = field(default_factory=lambda: {
-        "msgs_por_rodada": 5,
-        "total_rodadas": 3,
-        "intervalo_rodadas_min": 30,
+        "total_msgs": 10,
+        "tempo_minutos": 60,
         "hora_inicio": "08:00",
         "hora_fim": "18:00",
         "skip_weekends": True,
-        "delay_min": 15,
-        "delay_max": 30,
-        "human_behavior": False,
-        # Falhas de envio toleradas por contato antes de desistir dele
+        "human_behavior": True,
         "max_tentativas_contato": 3,
     })
     excel_path: Optional[str] = None
@@ -451,11 +443,20 @@ async def upload_file(file: UploadFile = File(...)):
 
 @app.post("/config")
 async def set_config(config: ConfigModel):
-    """Atualiza configuração de envio."""
-    state.config = config.model_dump()
+    """Atualiza configuração de envio. Recebe parâmetros simplificados do usuário."""
+    state.config = {
+        # Parâmetros do usuário (para restaurar na tela e para o sender)
+        "total_msgs": config.total_msgs,
+        "tempo_minutos": config.tempo_minutos,
+        "hora_inicio": config.hora_inicio,
+        "hora_fim": config.hora_fim,
+        "skip_weekends": config.skip_weekends,
+        "human_behavior": config.human_behavior,
+        "max_tentativas_contato": 3,
+    }
+
     add_log(
-        f"Configuração atualizada: {config.msgs_por_rodada} msgs/rodada, "
-        f"{config.total_rodadas} rodadas, intervalo {config.intervalo_rodadas_min}min, "
+        f"Configuração atualizada: {config.total_msgs} msgs em {config.tempo_minutos}min, "
         f"horário {config.hora_inicio}h-{config.hora_fim}h"
     )
     return {"status": "ok", "config": state.config}

@@ -228,8 +228,8 @@
                             <p id="status-state" class="text-sm font-semibold mt-0.5 text-gray-700">—</p>
                         </div>
                         <div class="bg-gray-50 rounded-md p-2 text-center">
-                            <p class="text-xs text-gray-500">Rodada</p>
-                            <p id="status-round" class="text-sm font-semibold mt-0.5 text-gray-700">0/0</p>
+                            <p class="text-xs text-gray-500">Rajada</p>
+                            <p id="status-round" class="text-sm font-semibold mt-0.5 text-gray-700">—</p>
                         </div>
                         <div class="bg-gray-50 rounded-md p-2 text-center">
                             <p class="text-xs text-gray-500">Enviadas</p>
@@ -257,31 +257,30 @@
                         <div class="pt-2">
                             <div class="grid grid-cols-2 gap-2">
                                 <div>
-                                    <label class="block text-xs text-gray-600 mb-0.5">Msgs/Rodada</label>
-                                    <input type="number" id="cfg-msgs" value="5" min="1" max="50"
+                                    <label class="block text-xs text-gray-600 mb-0.5">Quantas mensagens?</label>
+                                    <input type="number" id="cfg-total-msgs-input" value="10" min="1" max="9999"
+                                        placeholder="Ex: 50"
                                         class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
                                 </div>
                                 <div>
-                                    <label class="block text-xs text-gray-600 mb-0.5">Rodadas</label>
-                                    <input type="number" id="cfg-rodadas" value="3" min="1" max="100"
-                                        class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
-                                </div>
-                                <div>
-                                    <label class="block text-xs text-gray-600 mb-0.5">Intervalo (min)</label>
-                                    <input type="number" id="cfg-intervalo" value="30" min="1" max="480"
-                                        class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
-                                </div>
-                                <div class="flex gap-1">
-                                    <div class="flex-1">
-                                        <label class="block text-xs text-gray-600 mb-0.5">Delay mín(s)</label>
-                                        <input type="number" id="cfg-delay-min" value="15" min="1" max="300"
-                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
-                                    </div>
-                                    <div class="flex-1">
-                                        <label class="block text-xs text-gray-600 mb-0.5">Delay máx(s)</label>
-                                        <input type="number" id="cfg-delay-max" value="30" min="1" max="300"
-                                            class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none">
-                                    </div>
+                                    <label class="block text-xs text-gray-600 mb-0.5">Em quanto tempo?</label>
+                                    <select id="cfg-tempo" class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none bg-white">
+                                        <option value="5">5 minutos</option>
+                                        <option value="10">10 minutos</option>
+                                        <option value="15">15 minutos</option>
+                                        <option value="20">20 minutos</option>
+                                        <option value="30">30 minutos</option>
+                                        <option value="45">45 minutos</option>
+                                        <option value="60" selected>1 hora</option>
+                                        <option value="90">1h30</option>
+                                        <option value="120">2 horas</option>
+                                        <option value="150">2h30</option>
+                                        <option value="180">3 horas</option>
+                                        <option value="240">4 horas</option>
+                                        <option value="300">5 horas</option>
+                                        <option value="360">6 horas</option>
+                                        <option value="720">12 horas</option>
+                                    </select>
                                 </div>
                                 <div>
                                     <label class="block text-xs text-gray-600 mb-0.5">Hora Início</label>
@@ -295,6 +294,14 @@
                                 </div>
                             </div>
 
+                            <!-- Estimativa -->
+                            <div class="mt-2 pt-2 border-t border-gray-100">
+                                <p id="cfg-estimativa" class="text-xs text-gray-500 font-medium cursor-help"
+                                    title="Valor aproximado. O comportamento humano aplica delays variáveis entre as mensagens, o que pode aumentar o tempo total de envio.">
+                                </p>
+                                <p id="cfg-aviso-ritmo" class="text-xs text-red-500 mt-1 hidden"></p>
+                            </div>
+
                             <div class="mt-2 pt-2 border-t border-gray-100">
                                 <label class="inline-flex items-center gap-1.5 cursor-pointer">
                                     <input type="checkbox" id="cfg-skip-weekends" checked
@@ -305,8 +312,8 @@
 
                             <div class="mt-1.5">
                                 <label class="inline-flex items-center gap-1.5 cursor-pointer"
-                                    title="Ao ativar, o envio simula comportamento humano:&#10;• Digitação caractere por caractere com pausas variáveis&#10;• Scroll aleatório na lista de conversas antes de enviar&#10;• Delays com distribuição gaussiana (menos previsível)&#10;• Variação de ±1-2 mensagens por rodada (total final sempre bate)&#10;• Pausas extras como se estivesse relendo a mensagem">
-                                    <input type="checkbox" id="cfg-human-behavior"
+                                    title="Simula comportamento humano:&#10;• Digitação caractere por caractere&#10;• Pausas variáveis entre mensagens&#10;• Delays com distribuição gaussiana&#10;• Pausas como se estivesse relendo a mensagem">
+                                    <input type="checkbox" id="cfg-human-behavior" checked
                                         class="w-3.5 h-3.5 text-green-600 border-gray-300 rounded focus:ring-green-500">
                                     <span class="text-xs text-gray-700">Comportamento humano</span>
                                 </label>
@@ -401,7 +408,6 @@
         // --- State ---
         let eventSource = null;
         let currentState = 'aguardando';
-        let totalRodadas = 3;
         let configLoaded = false;
         let configDirty = false;   // usuário mexeu na config: /status não sobrescreve mais
         let excelSourceWarned = false;  // aviso de planilha restaurada já exibido
@@ -472,7 +478,6 @@
         // --- Dashboard ---
         function updateDashboard(status) {
             currentState = status.state;
-            totalRodadas = status.config?.total_rodadas || 3;
 
             const stateEl = document.getElementById('status-state');
             const stateMap = {
@@ -489,7 +494,7 @@
             stateEl.textContent = info.text;
             stateEl.className = `text-sm font-semibold mt-0.5 ${info.cls}`;
 
-            document.getElementById('status-round').textContent = `${status.current_round}/${totalRodadas}`;
+            document.getElementById('status-round').textContent = status.current_round || '—';
             document.getElementById('status-sent').textContent = status.messages_sent;
             document.getElementById('status-pending').textContent = status.total_pending;
 
@@ -511,28 +516,28 @@
             lockContactsEditing(locked);
 
             if (status.config) {
-                totalRodadas = status.config.total_rodadas;
                 // Só preenche os inputs na primeira carga para não atrapalhar edição
                 if (!configLoaded && !configDirty) {
                     configLoaded = true;
-                    document.getElementById('cfg-msgs').value = status.config.msgs_por_rodada;
-                    document.getElementById('cfg-rodadas').value = status.config.total_rodadas;
-                    document.getElementById('cfg-intervalo').value = status.config.intervalo_rodadas_min;
-                    document.getElementById('cfg-hora-inicio').value = status.config.hora_inicio;
-                    document.getElementById('cfg-hora-fim').value = status.config.hora_fim;
+                    if (status.config.total_msgs) {
+                        document.getElementById('cfg-total-msgs-input').value = status.config.total_msgs;
+                    }
+                    if (status.config.tempo_minutos) {
+                        document.getElementById('cfg-tempo').value = status.config.tempo_minutos;
+                    }
+                    if (status.config.hora_inicio) {
+                        document.getElementById('cfg-hora-inicio').value = status.config.hora_inicio;
+                    }
+                    if (status.config.hora_fim) {
+                        document.getElementById('cfg-hora-fim').value = status.config.hora_fim;
+                    }
                     if ('skip_weekends' in status.config) {
                         document.getElementById('cfg-skip-weekends').checked = status.config.skip_weekends;
-                    }
-                    if ('delay_min' in status.config) {
-                        document.getElementById('cfg-delay-min').value = status.config.delay_min;
-                    }
-                    if ('delay_max' in status.config) {
-                        document.getElementById('cfg-delay-max').value = status.config.delay_max;
                     }
                     if ('human_behavior' in status.config) {
                         document.getElementById('cfg-human-behavior').checked = status.config.human_behavior;
                     }
-                    updateTotalMsgsCalc();
+                    updateEstimativa();
                 }
             }
 
@@ -1103,16 +1108,13 @@
             if (!saved) return;
             try {
                 const config = JSON.parse(saved);
-                if (config.msgs_por_rodada) document.getElementById('cfg-msgs').value = config.msgs_por_rodada;
-                if (config.total_rodadas) document.getElementById('cfg-rodadas').value = config.total_rodadas;
-                if (config.intervalo_rodadas_min) document.getElementById('cfg-intervalo').value = config.intervalo_rodadas_min;
+                if (config.total_msgs) document.getElementById('cfg-total-msgs-input').value = config.total_msgs;
+                if (config.tempo_minutos) document.getElementById('cfg-tempo').value = config.tempo_minutos;
                 if (config.hora_inicio) document.getElementById('cfg-hora-inicio').value = config.hora_inicio;
                 if (config.hora_fim) document.getElementById('cfg-hora-fim').value = config.hora_fim;
                 if ('skip_weekends' in config) document.getElementById('cfg-skip-weekends').checked = config.skip_weekends;
-                if (config.delay_min) document.getElementById('cfg-delay-min').value = config.delay_min;
-                if (config.delay_max) document.getElementById('cfg-delay-max').value = config.delay_max;
                 if ('human_behavior' in config) document.getElementById('cfg-human-behavior').checked = config.human_behavior;
-                updateTotalMsgsCalc();
+                updateEstimativa();
                 configLoaded = true;
 
                 // Sincroniza com o servidor para garantir que o backend tenha os mesmos valores
@@ -1130,14 +1132,11 @@
             const statusEl = document.getElementById('config-status');
 
             const config = {
-                msgs_por_rodada: parseInt(document.getElementById('cfg-msgs').value),
-                total_rodadas: parseInt(document.getElementById('cfg-rodadas').value),
-                intervalo_rodadas_min: parseInt(document.getElementById('cfg-intervalo').value),
+                total_msgs: parseInt(document.getElementById('cfg-total-msgs-input').value) || 10,
+                tempo_minutos: parseInt(document.getElementById('cfg-tempo').value) || 60,
                 hora_inicio: document.getElementById('cfg-hora-inicio').value,
                 hora_fim: document.getElementById('cfg-hora-fim').value,
                 skip_weekends: document.getElementById('cfg-skip-weekends').checked,
-                delay_min: parseInt(document.getElementById('cfg-delay-min').value),
-                delay_max: parseInt(document.getElementById('cfg-delay-max').value),
                 human_behavior: document.getElementById('cfg-human-behavior').checked,
             };
 
@@ -1155,7 +1154,6 @@
                 if (response.ok) {
                     statusEl.textContent = silent ? 'Configuração sincronizada ✓' : 'Configuração salva.';
                     statusEl.className = 'mt-2 text-sm text-green-600';
-                    totalRodadas = config.total_rodadas;
                     setTimeout(() => { statusEl.textContent = ''; }, 3000);
                     return true;
                 }
@@ -1276,66 +1274,51 @@
         }
 
 
-        // --- Cálculo total de mensagens ---
-        function updateTotalMsgsCalc() {
-            const msgs = parseInt(document.getElementById('cfg-msgs').value) || 0;
-            const rodadas = parseInt(document.getElementById('cfg-rodadas').value) || 0;
-            const intervalo = parseInt(document.getElementById('cfg-intervalo').value) || 0;
-            const horaInicioStr = document.getElementById('cfg-hora-inicio').value || "08:00";
-            const horaFimStr = document.getElementById('cfg-hora-fim').value || "18:00";
-            const [hiH, hiM] = horaInicioStr.split(':').map(Number);
-            const [hfH, hfM] = horaFimStr.split(':').map(Number);
-            const inicioMin = hiH * 60 + (hiM || 0);
-            const fimMin = hfH * 60 + (hfM || 0);
-            const delayMin = parseInt(document.getElementById('cfg-delay-min').value) || 15;
-            const delayMax = parseInt(document.getElementById('cfg-delay-max').value) || 30;
-            const skipWeekends = document.getElementById('cfg-skip-weekends').checked;
+        // --- Cálculo de estimativa ---
+        function updateEstimativa() {
+            const totalMsgs = parseInt(document.getElementById('cfg-total-msgs-input').value) || 0;
+            const tempoMin = parseInt(document.getElementById('cfg-tempo').value) || 60;
 
-            const total = msgs * rodadas;
+            const estimativaEl = document.getElementById('cfg-estimativa');
+            const avisoEl = document.getElementById('cfg-aviso-ritmo');
+            const headerEl = document.getElementById('cfg-total-msgs-header');
 
-            // Tempo estimado de envio por rodada (delay médio entre msgs)
-            const delayMedio = (delayMin + delayMax) / 2;
-            const tempoEnvioRodadaMin = (msgs * delayMedio) / 60; // em minutos
-
-            // Tempo total = envio de cada rodada + intervalos entre rodadas
-            const tempoTotalMin = (rodadas * tempoEnvioRodadaMin) + ((rodadas - 1) * intervalo);
-
-            // Janela diária disponível (em minutos)
-            const janelaDiariaMin = fimMin > inicioMin ? (fimMin - inicioMin) : 0;
-
-            // Estimativa de dias necessários
-            let diasTexto = '';
-            if (janelaDiariaMin > 0 && tempoTotalMin > janelaDiariaMin) {
-                let diasUteis = Math.ceil(tempoTotalMin / janelaDiariaMin);
-                if (skipWeekends) {
-                    // Converte dias úteis em dias corridos (5 úteis = 7 corridos)
-                    const semanasCompletas = Math.floor(diasUteis / 5);
-                    const diasRestantes = diasUteis % 5;
-                    const diasCorridos = (semanasCompletas * 7) + diasRestantes;
-                    diasTexto = ` · ~${diasUteis} dia${diasUteis > 1 ? 's' : ''} útei${diasUteis > 1 ? 's' : 'l'}`;
-                } else {
-                    diasTexto = ` · ~${diasUteis} dia${diasUteis > 1 ? 's' : ''}`;
-                }
+            if (totalMsgs <= 0) {
+                estimativaEl.textContent = '';
+                avisoEl.classList.add('hidden');
+                if (headerEl) headerEl.textContent = '';
+                return;
             }
 
-            // Formatar tempo
-            let tempoTexto = '';
-            if (tempoTotalMin >= 60) {
-                const h = Math.floor(tempoTotalMin / 60);
-                const m = Math.round(tempoTotalMin % 60);
+            // Calcula delay médio necessário
+            const tempoSegundos = tempoMin * 60;
+            const delayMedio = totalMsgs > 1 ? tempoSegundos / totalMsgs : tempoSegundos;
+
+            // Verifica se o ritmo é seguro (delay mínimo = 15s)
+            const DELAY_MINIMO = 15;
+            if (delayMedio < DELAY_MINIMO) {
+                const msgsMaximas = Math.floor(tempoSegundos / DELAY_MINIMO);
+                avisoEl.textContent = `⚠️ Ritmo muito rápido! Máximo seguro: ${msgsMaximas} msgs nesse tempo.`;
+                avisoEl.classList.remove('hidden');
+            } else {
+                avisoEl.classList.add('hidden');
+            }
+
+            // Formata tempo total
+            let tempoTexto;
+            if (tempoMin >= 60) {
+                const h = Math.floor(tempoMin / 60);
+                const m = tempoMin % 60;
                 tempoTexto = m > 0 ? `${h}h${m}min` : `${h}h`;
             } else {
-                tempoTexto = `${Math.round(tempoTotalMin)}min`;
+                tempoTexto = `${tempoMin}min`;
             }
 
-            const texto = `${total} msg · ~${tempoTexto}${diasTexto}`;
+            const texto = `${totalMsgs} msgs em ${tempoTexto}`;
+            estimativaEl.textContent = texto;
 
-            // Atualiza no header (visível sempre)
-            const headerEl = document.getElementById('cfg-total-msgs-header');
-            if (headerEl) headerEl.textContent = texto;
-            // Atualiza dentro do details também
-            const innerEl = document.getElementById('cfg-total-msgs');
-            if (innerEl) innerEl.textContent = texto;
+            // Header resumido (visível com details fechado)
+            if (headerEl) headerEl.textContent = `${totalMsgs} msgs · ${tempoTexto}`;
         }
 
 
@@ -1433,19 +1416,13 @@
             }
         });
 
-        // Recalcula total ao alterar qualquer campo de configuração relevante
-        document.getElementById('cfg-msgs').addEventListener('input', updateTotalMsgsCalc);
-        document.getElementById('cfg-rodadas').addEventListener('input', updateTotalMsgsCalc);
-        document.getElementById('cfg-intervalo').addEventListener('input', updateTotalMsgsCalc);
-        document.getElementById('cfg-delay-min').addEventListener('input', updateTotalMsgsCalc);
-        document.getElementById('cfg-delay-max').addEventListener('input', updateTotalMsgsCalc);
-        document.getElementById('cfg-hora-inicio').addEventListener('input', updateTotalMsgsCalc);
-        document.getElementById('cfg-hora-fim').addEventListener('input', updateTotalMsgsCalc);
-        document.getElementById('cfg-skip-weekends').addEventListener('change', updateTotalMsgsCalc);
+        // Recalcula estimativa ao alterar campos de configuração
+        document.getElementById('cfg-total-msgs-input').addEventListener('input', updateEstimativa);
+        document.getElementById('cfg-tempo').addEventListener('change', updateEstimativa);
 
         // Sincroniza a configuração com o servidor a cada alteração
         [
-            'cfg-msgs', 'cfg-rodadas', 'cfg-intervalo', 'cfg-delay-min', 'cfg-delay-max',
+            'cfg-total-msgs-input', 'cfg-tempo',
             'cfg-hora-inicio', 'cfg-hora-fim', 'cfg-skip-weekends', 'cfg-human-behavior',
         ].forEach(id => {
             const el = document.getElementById(id);
@@ -1591,7 +1568,7 @@
             // Carrega contatos caso já exista planilha de sessão anterior
             loadContacts();
             // Calcula total inicial
-            updateTotalMsgsCalc();
+            updateEstimativa();
             // Verifica sessão salva
             checkSessionStatus();
             // Carrega mensagem global
