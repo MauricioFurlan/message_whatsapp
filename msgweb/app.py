@@ -65,6 +65,7 @@ class ConfigModel(BaseModel):
     hora_fim: str = "18:00"
     skip_weekends: bool = True
     human_behavior: bool = True
+    allow_duplicates: bool = False
 
 
 # --- Global State ---
@@ -79,6 +80,7 @@ class AppState:
         "skip_weekends": True,
         "human_behavior": True,
         "max_tentativas_contato": 3,
+        "allow_duplicates": False,
     })
     excel_path: Optional[str] = None
     # Procedência da planilha em uso: "upload" (enviada agora), "editor"
@@ -222,6 +224,7 @@ def get_status_dict() -> dict:
             "messages_sent": 0,
             "total_pending": 0,
             "total_contacts": 0,
+            "total_invalids": 0,
         }
 
     return {
@@ -230,6 +233,7 @@ def get_status_dict() -> dict:
         "messages_sent": sender_status["messages_sent"],
         "total_pending": sender_status["total_pending"],
         "total_contacts": sender_status["total_contacts"],
+        "total_invalids": sender_status.get("total_invalids", 0),
         "config": state.config,
         "excel_loaded": state.excel_path is not None,
         "excel_info": get_excel_info(),
@@ -453,6 +457,7 @@ async def set_config(config: ConfigModel):
         "skip_weekends": config.skip_weekends,
         "human_behavior": config.human_behavior,
         "max_tentativas_contato": 3,
+        "allow_duplicates": config.allow_duplicates,
     }
 
     add_log(
@@ -625,6 +630,46 @@ async def get_contacts():
                 "data_envio": str(row.get("DataEnvio", "")),
                 "motivo": str(row.get("Motivo", "")),
             })
+
+        # --- Detecção de duplicados ---
+        # Só marca duplicados visualmente se allow_duplicates está desativado
+        allow_duplicates = state.config.get("allow_duplicates", False)
+        if not allow_duplicates:
+            # Normaliza números para detectar duplicatas (mesma lógica de _clean_number)
+            def _normalize_for_dup(numero_str: str) -> str:
+                s = numero_str.strip()
+                if s.lower() in ("", "nan", "none"):
+                    return ""
+                try:
+                    f = float(s)
+                    if f.is_integer():
+                        s = str(int(f))
+                except (ValueError, OverflowError):
+                    pass
+                digits = "".join(c for c in s if c.isdigit())
+                if len(digits) > 11 and digits.startswith("55"):
+                    digits = digits[2:]
+                return digits
+
+            # Mapeia número normalizado -> índice da primeira ocorrência
+            numeros_vistos: dict[str, int] = {}
+            for i, contact in enumerate(contacts):
+                num_norm = _normalize_for_dup(contact["numero"])
+                if not num_norm:
+                    contact["duplicado"] = False
+                    continue
+                if num_norm in numeros_vistos:
+                    first_idx = numeros_vistos[num_norm]
+                    first_nome = contacts[first_idx]["pessoa"] or f"linha {first_idx + 1}"
+                    contact["duplicado"] = True
+                    contact["motivo_duplicado"] = f"Número duplicado (mesmo que {first_nome}, linha {first_idx + 1})"
+                else:
+                    numeros_vistos[num_norm] = i
+                    contact["duplicado"] = False
+        else:
+            # Modo teste: não marca duplicados
+            for contact in contacts:
+                contact["duplicado"] = False
 
         return {"status": "ok", "contacts": contacts}
     except Exception as e:

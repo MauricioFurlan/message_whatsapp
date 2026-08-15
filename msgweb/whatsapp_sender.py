@@ -48,6 +48,47 @@ class BrowserClosedError(RuntimeError):
     """
 
 
+class AttachmentError(RuntimeError):
+    """
+    Levantada quando o envio de um anexo falha (arquivo não encontrado no disco,
+    ou falha ao anexar no WhatsApp Web).
+
+    Quando o anexo falha, a mensagem inteira é considerada inválida — o texto
+    NÃO deve ser enviado. O contato é marcado como inválido imediatamente,
+    sem retentativas.
+    """
+
+
+class InvalidNumberError(RuntimeError):
+    """
+    Levantada quando o WhatsApp Web exibe o popup de 'número inválido' ao
+    tentar abrir uma conversa. Isso acontece quando:
+      - O número não existe no WhatsApp
+      - O número está bloqueado no aparelho do remetente
+      - O formato do número é inválido
+
+    Diferente de um TimeoutException genérico: aqui temos certeza de que o
+    WhatsApp rejeitou o número (o popup apareceu explicitamente).
+    """
+
+
+# Textos que o WhatsApp Web exibe no popup quando o número é inválido/bloqueado.
+# Incluímos variações em PT-BR, EN e ES para cobrir diferentes idiomas do navegador.
+_INVALID_NUMBER_MARKERS = (
+    "número de telefone compartilhado por meio de url é inválido",
+    "phone number shared via url is invalid",
+    "número de teléfono compartido a través de url no es válido",
+    "o número de telefone compartilhado",
+    "phone number shared via",
+    "número inválido",
+    "invalid phone number",
+    "não tem uma conta",
+    "doesn't have an account",
+    "doesn't have a whatsapp account",
+    "não tem whatsapp",
+)
+
+
 # Trechos de mensagem que indicam que o navegador/sessão morreu
 _DEAD_SESSION_MARKERS = (
     "invalid session id",
@@ -90,8 +131,9 @@ class WhatsAppSender:
         self._messages_sent = 0
         self._total_pending = 0
         self._total_contacts = 0
+        self._total_invalids = 0
         self._running = False
-        self._stop_requested = False
+        self._stop_event = threading.Event()
 
         # Selenium
         self._driver: Optional[webdriver.Chrome] = None
@@ -132,6 +174,7 @@ class WhatsAppSender:
                 "messages_sent": self._messages_sent,
                 "total_pending": self._total_pending,
                 "total_contacts": self._total_contacts,
+                "total_invalids": self._total_invalids,
             }
 
     def is_running(self) -> bool:
@@ -140,15 +183,36 @@ class WhatsAppSender:
             return self._running
 
     def stop(self):
-        """Solicita parada graceful do envio."""
-        with self._lock:
-            self._stop_requested = True
-        self._log("Parada solicitada. Finalizando após mensagem atual...")
+        """Solicita parada imediata do envio."""
+        self._stop_event.set()
+        self._log("Parada solicitada. Interrompendo...")
 
     def _should_stop(self) -> bool:
         """Verifica se deve parar."""
-        with self._lock:
-            return self._stop_requested
+        return self._stop_event.is_set()
+
+    def _interruptible_sleep(self, seconds: float) -> bool:
+        """
+        Sleep interruptível. Retorna True se a parada foi solicitada
+        (ou seja, a operação corrente deve ser abortada imediatamente).
+        Usa Event.wait() que acorda instantaneamente quando stop() é chamado.
+        """
+        return self._stop_event.wait(timeout=seconds)
+
+    def _dismiss_on_stop(self):
+        """
+        Pressiona ESC para fechar modais/overlays abertos quando a parada
+        é detectada no meio de uma operação. Garante que não fica nenhum
+        modal travado na tela após interromper.
+        """
+        if not self._driver:
+            return
+        try:
+            ActionChains(self._driver).send_keys(Keys.ESCAPE).perform()
+            time.sleep(0.3)
+            ActionChains(self._driver).send_keys(Keys.ESCAPE).perform()
+        except Exception:
+            pass
 
     def _init_driver(self) -> webdriver.Chrome:
         """Inicializa o Chrome WebDriver."""
@@ -278,7 +342,7 @@ class WhatsAppSender:
         self._log(f"Fora do horário comercial. {motivo}. Aguardando próximo horário...")
 
         while not self._is_business_hours() and not self._should_stop():
-            time.sleep(2)  # Verifica a cada 2s para responder rápido ao stop
+            self._interruptible_sleep(2)
 
         if not self._should_stop():
             self._set_state("enviando")
@@ -342,6 +406,7 @@ class WhatsAppSender:
             self._save_contacts(df)
             with self._lock:
                 self._total_pending -= 1
+                self._total_invalids += 1
             file_logger.error(
                 f"Contato abandonado após {falhas} falhas: {pessoa} ({numero}) — {motivo}"
             )
@@ -475,11 +540,79 @@ class WhatsAppSender:
         # Clamp para não sair dos limites
         return max(d_min * 0.8, min(d_max * 1.2, delay))
 
+    @staticmethod
+    def _has_non_bmp(text: str) -> bool:
+        """Verifica se o texto contém caracteres fora do BMP (emojis, bandeiras etc.)."""
+        return any(ord(c) > 0xFFFF for c in text)
+
+    def _clear_input_field(self, element):
+        """
+        Limpa qualquer texto residual do campo de input antes de digitar.
+
+        Usa Ctrl+A (seleciona tudo) seguido de Delete para garantir que o campo
+        esteja vazio. Isso evita que texto pré-existente (de uma navegação
+        anterior, rascunho não enviado, etc.) se misture com a mensagem nova.
+        """
+        try:
+            element.click()
+            time.sleep(0.1)
+            # Ctrl+A seleciona tudo, depois Delete apaga
+            ActionChains(self._driver).key_down(Keys.CONTROL).send_keys("a").key_up(Keys.CONTROL).perform()
+            time.sleep(0.05)
+            element.send_keys(Keys.DELETE)
+            time.sleep(0.1)
+        except Exception as e:
+            file_logger.debug(f"_clear_input_field: não conseguiu limpar campo: {e}")
+
+    def _paste_text(self, element, text: str):
+        """
+        Insere texto no campo usando clipboard (Ctrl+V) via JavaScript.
+
+        Necessário para caracteres fora do BMP (emojis compostos, bandeiras,
+        família etc.) que o ChromeDriver não suporta via send_keys.
+        Preserva quebras de linha usando insertText que respeita o contenteditable.
+        """
+        # Foca no elemento
+        element.click()
+        time.sleep(0.2)
+
+        # Usa execCommand insertText via JS — preserva quebras de linha
+        # e funciona em contenteditable do WhatsApp Web
+        js_script = """
+        var element = arguments[0];
+        var text = arguments[1];
+        element.focus();
+
+        // Usa a Clipboard API para colar texto com emojis
+        var dt = new DataTransfer();
+        dt.setData('text/plain', text);
+        var pasteEvent = new ClipboardEvent('paste', {
+            clipboardData: dt,
+            bubbles: true,
+            cancelable: true
+        });
+        element.dispatchEvent(pasteEvent);
+
+        // Fallback: se o paste event não inseriu, usa insertText
+        if (element.textContent.length === 0 || !element.textContent.includes(text.substring(0, 10))) {
+            document.execCommand('insertText', false, text);
+        }
+        """
+        self._driver.execute_script(js_script, element, text)
+        time.sleep(0.3)
+
     def _type_with_newlines(self, element, text: str):
         """
         Digita texto de forma rápida (não-human) mas tratando quebras de linha
         como Shift+Enter para o WhatsApp Web não enviar a mensagem prematuramente.
+
+        Se o texto contém caracteres fora do BMP (emojis compostos, bandeiras etc.),
+        usa clipboard (Ctrl+V) pois send_keys do ChromeDriver não suporta.
         """
+        if self._has_non_bmp(text):
+            self._paste_text(element, text)
+            return
+
         lines = text.split('\n')
         for i, line in enumerate(lines):
             if line:
@@ -488,9 +621,12 @@ class WhatsAppSender:
                 # Shift+Enter para quebra de linha
                 ActionChains(self._driver).key_down(Keys.SHIFT).send_keys(Keys.ENTER).key_up(Keys.SHIFT).perform()
 
-    def _human_type(self, element, text: str):
+    def _human_type(self, element, text: str) -> bool:
         """
         Digita texto simulando digitação humana.
+        
+        Retorna True se completou a digitação, False se foi interrompido pelo stop.
+        Quando interrompido, o texto parcial NÃO deve ser enviado (ENTER não é pressionado).
 
         Mensagens normais (até `human_type_char_limit`, padrão 200 caracteres)
         são digitadas CARACTERE POR CARACTERE, com micro-pausas variáveis —
@@ -511,7 +647,22 @@ class WhatsAppSender:
         Nota sobre detecção: agrupar não é colar. O send_keys("abc") faz o
         ChromeDriver disparar os eventos de tecla de cada caractere; o que muda
         é apenas o intervalo entre eles.
+
+        Se o texto contém caracteres fora do BMP (emojis), usa clipboard (Ctrl+V)
+        pois send_keys do ChromeDriver não suporta esses caracteres.
         """
+        # Fallback para emojis e caracteres não-BMP
+        if self._has_non_bmp(text):
+            file_logger.info(
+                f"_human_type: texto contém caracteres fora do BMP (emojis), "
+                f"usando clipboard para {len(text)} caracteres"
+            )
+            # Simula uma pausa "humana" antes de colar
+            if self._interruptible_sleep(random.uniform(0.5, 1.5)):
+                return False
+            self._paste_text(element, text)
+            return True
+
         budget = self._type_budget(len(text))
         limite_char = int(self.config.get("human_type_char_limit", 200))
 
@@ -527,6 +678,7 @@ class WhatsAppSender:
         )
 
         lines = text.split("\n")
+        char_count = 0
 
         for line_idx, line in enumerate(lines):
             if line:
@@ -537,6 +689,14 @@ class WhatsAppSender:
                     if not token:
                         continue
 
+                    # Checkpoint de parada a cada 5 caracteres (ou cada palavra)
+                    char_count += len(token)
+                    if char_count >= 5 or not por_caractere:
+                        if self._should_stop():
+                            file_logger.info("_human_type: interrompido pelo stop")
+                            return False
+                        char_count = 0
+
                     # Estourou o orçamento: acumula e manda o resto de uma vez
                     if time.monotonic() - started > budget:
                         pendente += token
@@ -546,14 +706,19 @@ class WhatsAppSender:
 
                     # Ritmo humano: pausa maior após espaço e pontuação
                     if token[-1] in (" ", ".", ",", "!", "?"):
-                        time.sleep(random.uniform(0.08, 0.25))
+                        if self._interruptible_sleep(random.uniform(0.08, 0.25)):
+                            return False
                     else:
-                        time.sleep(random.uniform(0.03, 0.12))
+                        if self._interruptible_sleep(random.uniform(0.03, 0.12)):
+                            return False
                     # Ocasionalmente uma pausa maior, como se pensasse
                     if random.random() < 0.02:
-                        time.sleep(random.uniform(0.3, 0.8))
+                        if self._interruptible_sleep(random.uniform(0.3, 0.8)):
+                            return False
 
                 if pendente:
+                    if self._should_stop():
+                        return False
                     element.send_keys(pendente)
                     file_logger.warning(
                         f"_human_type: orçamento de {budget:.0f}s estourado, "
@@ -561,17 +726,21 @@ class WhatsAppSender:
                     )
 
             if line_idx < len(lines) - 1:
+                if self._should_stop():
+                    return False
                 # Shift+Enter para quebra de linha no WhatsApp Web
                 ActionChains(self._driver).key_down(Keys.SHIFT).send_keys(
                     Keys.ENTER
                 ).key_up(Keys.SHIFT).perform()
-                time.sleep(random.uniform(0.1, 0.3))
+                if self._interruptible_sleep(random.uniform(0.1, 0.3)):
+                    return False
 
         elapsed = time.monotonic() - started
         file_logger.info(
             f"_human_type: {len(text)} caracteres digitados em {elapsed:.1f}s "
             f"(modo {modo})"
         )
+        return True
 
     @staticmethod
     def _split_palavras(line: str) -> list:
@@ -650,7 +819,10 @@ class WhatsAppSender:
                 # Não conseguimos verificar: não bloqueia o fluxo
                 file_logger.warning(f"Falha ao confirmar envio: {e}")
                 return True
-            time.sleep(0.5)
+            # Sleep interruptível — se stop foi pedido, considera enviado
+            # (ENTER já foi pressionado neste ponto)
+            if self._interruptible_sleep(0.5):
+                return True
 
         file_logger.warning(
             f"Campo de texto ainda contém a mensagem após {timeout:.0f}s "
@@ -671,10 +843,11 @@ class WhatsAppSender:
             self._driver.execute_script(
                 "arguments[0].scrollTop += arguments[1];", pane, amount
             )
-            time.sleep(random.uniform(0.5, 1.5))
+            if self._interruptible_sleep(random.uniform(0.5, 1.5)):
+                return
             # Volta ao topo
             self._driver.execute_script("arguments[0].scrollTop = 0;", pane)
-            time.sleep(random.uniform(0.3, 0.8))
+            self._interruptible_sleep(random.uniform(0.3, 0.8))
         except Exception:
             pass  # Se falhar o scroll, segue normalmente
 
@@ -819,10 +992,13 @@ class WhatsAppSender:
     def _send_message(self, pessoa: str, numero: str, mensagem: str, arquivo: str = "") -> bool:
         """
         Envia uma mensagem para um contato.
-        Se há arquivo associado, envia primeiro o texto e depois o anexo separadamente.
+        Se há arquivo associado, envia primeiro o(s) anexo(s) e depois o texto.
+        Se o anexo falhar (arquivo não encontrado ou erro ao enviar), a mensagem
+        de texto NÃO é enviada e o contato é marcado como inválido (AttachmentError).
         Se não há arquivo, envia apenas texto.
         Retorna True se enviou com sucesso, False se falhou.
         Levanta TimeoutException se número é inválido.
+        Levanta AttachmentError se o anexo falhar (contato deve ser marcado inválido).
         """
         # Formata mensagem com placeholder {nome} se presente
         texto, regra = self._format_texto(pessoa, mensagem)
@@ -848,16 +1024,22 @@ class WhatsAppSender:
         if arquivo:
             for f in arquivo.split(","):
                 f = f.strip()
-                if f and os.path.isfile(f):
+                if not f:
+                    continue
+                if os.path.isfile(f):
                     media_files.append(f)
-                elif f:
-                    self._log(f"⚠️ Anexo não encontrado para {pessoa}: {f} — enviando sem mídia")
-                    file_logger.warning(f"Anexo não encontrado: {f} (contato: {pessoa})")
+                else:
+                    # Arquivo especificado mas não existe no disco: aborta o envio
+                    # inteiro (texto + anexo). Contato será marcado como inválido.
+                    raise AttachmentError(
+                        f"Anexo não encontrado: {os.path.basename(f)} "
+                        f"(caminho: {f})"
+                    )
         has_media = len(media_files) > 0
 
-        # O texto é sempre enviado como mensagem separada, antes do(s) anexo(s).
-        # Imagens/vídeos vão pelo input de mídia do WhatsApp (foto grande inline);
-        # os demais arquivos vão pelo input de documento.
+        # O anexo é enviado ANTES do texto. Se o anexo falhar, o texto não é
+        # enviado e o contato é marcado como inválido. Imagens/vídeos vão pelo
+        # input de mídia do WhatsApp (foto grande inline); os demais vão como documento.
         all_images = False
 
         # Navega para o chat (sempre sem texto pré-preenchido quando human ou mídia)
@@ -875,43 +1057,117 @@ class WhatsAppSender:
             self._driver.get(url)
 
             # Espera a página carregar (pane-side indica que o WhatsApp carregou)
-            WebDriverWait(self._driver, 30).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "#pane-side"))
-            )
+            # Usa espera interruptível em vez de WebDriverWait monolítico
+            pane_found = False
+            pane_deadline = time.monotonic() + 30
+            while time.monotonic() < pane_deadline:
+                if self._should_stop():
+                    self._dismiss_on_stop()
+                    return False
+                try:
+                    self._driver.find_element(By.CSS_SELECTOR, "#pane-side")
+                    pane_found = True
+                    break
+                except Exception:
+                    pass
+                if self._interruptible_sleep(0.5):
+                    self._dismiss_on_stop()
+                    return False
+            if not pane_found:
+                raise TimeoutException("Timeout esperando WhatsApp carregar (pane-side)")
 
-            # Espera o chat carregar (campo de texto no rodapé)
-            WebDriverWait(self._driver, 20).until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "footer div[contenteditable='true']")
-                )
-            )
+            # Espera o chat carregar OU detecta popup de número inválido/bloqueado.
+            # O WhatsApp Web mostra um popup imediatamente quando o número é
+            # inválido ou bloqueado — detectá-lo evita esperar o timeout inteiro
+            # de 20s e permite dar feedback preciso ao usuário.
+            self._wait_chat_or_invalid_popup(numero_limpo, pessoa, timeout=20)
 
             # Pequena pausa antes de interagir
             if human:
-                time.sleep(random.uniform(1.5, 4.0))
+                if self._interruptible_sleep(random.uniform(1.5, 4.0)):
+                    self._dismiss_on_stop()
+                    return False
             else:
-                time.sleep(random.uniform(1.5, 3.0))
+                if self._interruptible_sleep(random.uniform(1.5, 3.0)):
+                    self._dismiss_on_stop()
+                    return False
 
-            # Passo 1: Envia a mensagem de texto (SOMENTE se NÃO for enviar como legenda de imagem)
+            # Passo 1: Se tem mídia, envia os anexos PRIMEIRO.
+            # Se o anexo falhar, a mensagem de texto NÃO será enviada e o
+            # contato será marcado como inválido. Isso garante que não se
+            # entrega uma mensagem "solta" (sem o anexo prometido).
+            if has_media:
+                for media_file in media_files:
+                    if self._should_stop():
+                        self._dismiss_on_stop()
+                        return False
+                    if self._interruptible_sleep(random.uniform(1.0, 2.0)):
+                        self._dismiss_on_stop()
+                        return False
+                    try:
+                        self._send_media(media_file, pessoa, human)
+                    except BrowserClosedError:
+                        raise
+                    except Exception as e:
+                        if self._is_session_dead(e):
+                            raise BrowserClosedError(str(e))
+                        raise AttachmentError(
+                            f"Falha ao enviar anexo {os.path.basename(media_file)}: {e}"
+                        )
+
+            if self._should_stop():
+                self._dismiss_on_stop()
+                return False
+
+            if human:
+                if self._interruptible_sleep(random.uniform(2.0, 5.0)):
+                    self._dismiss_on_stop()
+                    return False
+            else:
+                if self._interruptible_sleep(random.uniform(2.0, 4.0)):
+                    self._dismiss_on_stop()
+                    return False
+
+            # Passo 2: Envia a mensagem de texto (SOMENTE se NÃO for enviar como legenda de imagem)
             if not all_images:
                 input_field = self._driver.find_element(
                     By.CSS_SELECTOR, "footer div[contenteditable='true']"
                 )
 
+                # Garante que o campo está vazio antes de digitar (evita sobrescrever
+                # rascunhos ou texto residual de navegação anterior)
+                if human or has_media:
+                    self._clear_input_field(input_field)
+
                 if human:
-                    self._human_type(input_field, texto)
-                    time.sleep(random.uniform(0.8, 2.0))
+                    typing_ok = self._human_type(input_field, texto)
+                    if not typing_ok:
+                        # Stop requested during typing — do NOT send
+                        self._dismiss_on_stop()
+                        return False
+                    if self._interruptible_sleep(random.uniform(0.8, 2.0)):
+                        self._dismiss_on_stop()
+                        return False
                 else:
                     # Se não usou human, o texto já está no campo via URL (exceto com mídia)
                     if has_media:
                         # Envia texto com suporte a quebras de linha (Shift+Enter)
                         self._type_with_newlines(input_field, texto)
-                        time.sleep(random.uniform(0.5, 1.0))
+                        if self._interruptible_sleep(random.uniform(0.5, 1.0)):
+                            self._dismiss_on_stop()
+                            return False
+
+                # Verifica stop antes de pressionar ENTER (ponto sem retorno)
+                if self._should_stop():
+                    self._dismiss_on_stop()
+                    return False
 
                 # Se a mensagem contém um link, o WhatsApp gera um preview card.
                 has_link = "http://" in texto or "https://" in texto or "www." in texto
                 if has_link:
-                    time.sleep(random.uniform(2.0, 4.0))
+                    if self._interruptible_sleep(random.uniform(2.0, 4.0)):
+                        self._dismiss_on_stop()
+                        return False
 
                 input_field.send_keys(Keys.ENTER)
 
@@ -939,23 +1195,14 @@ class WhatsAppSender:
                             f"Verifique manualmente esta conversa."
                         )
 
-            if human:
-                time.sleep(random.uniform(2.0, 5.0))
-            else:
-                time.sleep(random.uniform(2.0, 4.0))
-
-            # Passo 2: Se tem mídia, envia os anexos
-            # Texto já foi enviado como mensagem separada acima.
-            # Imagem/vídeo = foto grande inline; outros tipos = documento.
-            if has_media:
-                for media_file in media_files:
-                    time.sleep(random.uniform(1.0, 2.0))
-                    self._send_media(media_file, pessoa, human)
-
             return True
 
         except BrowserClosedError:
             raise  # Sessão morta: aborta o envio inteiro
+        except AttachmentError:
+            raise  # Falha no anexo: contato será marcado inválido sem retentativa
+        except InvalidNumberError:
+            raise  # Número rejeitado pelo WhatsApp (popup detectado)
         except TimeoutException:
             raise  # Re-raise para marcar como inválido
         except Exception as e:
@@ -1090,6 +1337,161 @@ class WhatsAppSender:
         except Exception:
             return ""
 
+    def _detect_invalid_number_popup(self) -> str:
+        """
+        Verifica se o WhatsApp Web está exibindo o popup de 'número inválido'.
+
+        Retorna o texto do popup (minúsculo) se detectado, ou string vazia se
+        não há popup de erro visível. Isso permite diferenciar entre:
+          - Número inexistente no WhatsApp
+          - Número bloqueado (o WhatsApp mostra o mesmo popup)
+          - Timeout genérico (problema de rede, lentidão, etc.)
+        """
+        texto = self._modal_text()
+        if not texto:
+            return ""
+        for marker in _INVALID_NUMBER_MARKERS:
+            if marker in texto:
+                return texto
+        return ""
+
+    def _wait_chat_or_invalid_popup(self, numero: str, pessoa: str, timeout: float = 20.0):
+        """
+        Espera o chat abrir (campo de texto no rodapé) OU detecta:
+          1. Popup de número inválido (modal com texto "número inválido")
+          2. Contato bloqueado (conversa abre mas mostra botões "Desbloquear"/
+             "Apagar conversa" em vez do campo de digitação)
+
+        Levanta InvalidNumberError com mensagem descritiva se detectar
+        qualquer um dos cenários acima, evitando esperar o timeout inteiro.
+        """
+        fim = time.time() + timeout
+        while time.time() < fim:
+            # Verifica se o chat abriu (campo de digitação apareceu)
+            try:
+                elements = self._driver.find_elements(
+                    By.CSS_SELECTOR, "footer div[contenteditable='true']"
+                )
+                if elements:
+                    return  # Chat abriu com sucesso
+            except Exception:
+                pass
+
+            # Verifica se apareceu popup de número inválido
+            popup_text = self._detect_invalid_number_popup()
+            if popup_text:
+                # Fecha o popup (clica em OK ou ESC)
+                self._dismiss_invalid_number_popup()
+                file_logger.warning(
+                    f"Popup de número inválido detectado para {pessoa} ({numero}): "
+                    f"{popup_text[:120]}"
+                )
+                raise InvalidNumberError(
+                    f"WhatsApp rejeitou o número {numero}: {popup_text[:100]}"
+                )
+
+            # Verifica se é um contato bloqueado (aparece botão Desbloquear
+            # ou "Apagar conversa" no lugar do campo de texto)
+            blocked_reason = self._detect_blocked_contact()
+            if blocked_reason:
+                file_logger.warning(
+                    f"Contato bloqueado detectado para {pessoa} ({numero}): "
+                    f"{blocked_reason}"
+                )
+                raise InvalidNumberError(
+                    f"Contato bloqueado no WhatsApp: {pessoa} ({numero})"
+                )
+
+            if self._interruptible_sleep(0.5):
+                return  # Stop requested — caller will check _should_stop()
+
+        # Se chegou aqui, deu timeout sem chat nem popup — comportamento antigo
+        raise TimeoutException(
+            f"Timeout aguardando chat de {pessoa} ({numero}) — "
+            f"nem chat nem popup de erro apareceram em {timeout}s"
+        )
+
+    def _detect_blocked_contact(self) -> str:
+        """
+        Detecta se a conversa aberta é de um contato bloqueado.
+
+        Quando um contato está bloqueado no WhatsApp, a conversa abre mas o
+        footer mostra botões como "Desbloquear" e "Apagar conversa" em vez do
+        campo de digitação. Detectamos isso procurando por textos/botões
+        característicos na área do chat.
+
+        Retorna o motivo (string) se detectou bloqueio, ou "" se não.
+        """
+        try:
+            # Procura botões ou textos indicativos de bloqueio na página
+            # O WhatsApp Web mostra esses botões no rodapé ou corpo do chat
+            page_text = ""
+            # Verifica no footer (onde normalmente ficaria o campo de digitação)
+            footer_elements = self._driver.find_elements(By.CSS_SELECTOR, "footer")
+            for el in footer_elements:
+                try:
+                    page_text += " " + (el.text or "").lower()
+                except Exception:
+                    continue
+
+            # Verifica também na área principal do chat (span/button com texto)
+            chat_area = self._driver.find_elements(
+                By.CSS_SELECTOR,
+                'div[data-tab] button, div[data-tab] span, '
+                'div.copyable-area button, div.copyable-area span'
+            )
+            for el in chat_area:
+                try:
+                    page_text += " " + (el.text or "").lower()
+                except Exception:
+                    continue
+
+            # Marcadores de contato bloqueado (PT-BR, EN, ES)
+            blocked_markers = (
+                "desbloquear",
+                "unblock",
+                "desbloquear",  # ES é igual PT
+                "apagar conversa",
+                "delete chat",
+                "eliminar chat",
+                "you blocked this contact",
+                "você bloqueou este contato",
+                "bloqueaste este contacto",
+            )
+            for marker in blocked_markers:
+                if marker in page_text:
+                    return f"Texto '{marker}' encontrado na conversa"
+
+        except Exception:
+            pass
+        return ""
+
+    def _dismiss_invalid_number_popup(self):
+        """
+        Fecha o popup de número inválido clicando no botão OK ou enviando ESC.
+        O WhatsApp Web mostra um botão "OK" no popup de erro.
+        """
+        try:
+            # Tenta clicar no botão OK do popup
+            buttons = self._driver.find_elements(
+                By.CSS_SELECTOR,
+                'div[role="dialog"] button, div[role="dialog"] div[role="button"]'
+            )
+            for btn in buttons:
+                try:
+                    text = (btn.text or "").strip().lower()
+                    if text in ("ok", "fechar", "close"):
+                        btn.click()
+                        time.sleep(0.5)
+                        return
+                except Exception:
+                    continue
+            # Fallback: ESC
+            ActionChains(self._driver).send_keys(Keys.ESCAPE).perform()
+            time.sleep(0.5)
+        except Exception:
+            pass
+
     def _has_caption_field(self) -> bool:
         """
         Detecta o campo de legenda, que só existe no preview de foto/vídeo/
@@ -1163,7 +1565,8 @@ class WhatsAppSender:
                     # Imagem com preview aberto e sem legenda = editor de figurinha
                     return "figurinha"
 
-            time.sleep(0.4)
+            if self._interruptible_sleep(0.4):
+                return ""  # Stop requested, abort
 
         return ""
 
@@ -1415,7 +1818,10 @@ class WhatsAppSender:
 
     def _finalizar_envio_de_anexo(self, pessoa: str, media_path: str, tipo: str):
         """Com o preview correto aberto, clica em enviar e confirma o envio."""
-        time.sleep(random.uniform(1.0, 2.0))
+        self._interruptible_sleep(random.uniform(1.0, 2.0))
+        if self._should_stop():
+            self._close_modal()
+            raise RuntimeError("Parada solicitada durante envio de anexo")
         send_btn = self._click_send_button_modal(pessoa)
 
         if not self._wait_attachment_sent(send_btn, timeout=30.0):
@@ -1424,7 +1830,7 @@ class WhatsAppSender:
                 f"verifique a conversa manualmente"
             )
 
-        time.sleep(random.uniform(2.0, 4.0))
+        self._interruptible_sleep(random.uniform(2.0, 4.0))
         self._log(f"📎 Anexo enviado para {pessoa} como {tipo}: {os.path.basename(media_path)}")
         file_logger.info(
             f"Mídia enviada como {tipo} para {pessoa}: {os.path.abspath(media_path)}"
@@ -1482,6 +1888,9 @@ class WhatsAppSender:
         # Clica no campo para focar
         caption_field.click()
         time.sleep(random.uniform(0.3, 0.6))
+
+        # Limpa qualquer texto residual no campo de legenda
+        self._clear_input_field(caption_field)
 
         # Digita a legenda
         if human:
@@ -1560,7 +1969,8 @@ class WhatsAppSender:
                 return True
             except Exception:
                 return True
-            time.sleep(0.5)
+            if self._interruptible_sleep(0.5):
+                return True  # Stop requested — attachment already sent
         return False
 
     def start(self):
@@ -1570,7 +1980,7 @@ class WhatsAppSender:
         """
         with self._lock:
             self._running = True
-            self._stop_requested = False
+        self._stop_event.clear()
 
         try:
             # Inicializa o driver
@@ -1637,6 +2047,49 @@ class WhatsAppSender:
             df = self._load_contacts()
             pending = self._get_pending_contacts(df)
 
+            # --- Detecção de duplicados ---
+            # Se allow_duplicates está desativado, marca duplicados como inválidos
+            allow_duplicates = self.config.get("allow_duplicates", False)
+            if not allow_duplicates:
+                numeros_vistos: dict[str, int] = {}
+                duplicados_indices = []
+                for idx, row in pending.iterrows():
+                    num_norm = self._clean_number(row["Número"])
+                    if not num_norm:
+                        continue
+                    if num_norm in numeros_vistos:
+                        duplicados_indices.append(idx)
+                        first_idx = numeros_vistos[num_norm]
+                        first_nome = str(df.at[first_idx, "Nome"]) if first_idx in df.index else "?"
+                        pessoa = str(row["Nome"])
+                        motivo = f"Número duplicado (mesmo que {first_nome})"
+                        df.at[idx, "Invalido"] = "X"
+                        df.at[idx, "Motivo"] = motivo
+                        self._notify_contact_update(idx, num_norm, "invalido", "", motivo)
+                        self._log(f"[SKIP] {pessoa} ({num_norm}) — número duplicado, pulando.")
+                    else:
+                        numeros_vistos[num_norm] = idx
+
+                if duplicados_indices:
+                    self._save_contacts(df)
+                    # Recarrega pendentes sem os duplicados
+                    pending = self._get_pending_contacts(df)
+                    self._log(f"⚠️ {len(duplicados_indices)} contato(s) com número duplicado marcado(s) como inválido(s).")
+            else:
+                # Modo teste: reabilita contatos que foram invalidados por duplicata em execução anterior
+                reabilitados = 0
+                for idx, row in df.iterrows():
+                    if str(row.get("Invalido", "")).strip().upper() == "X":
+                        motivo = str(row.get("Motivo", "")).lower()
+                        if "duplicado" in motivo:
+                            df.at[idx, "Invalido"] = ""
+                            df.at[idx, "Motivo"] = ""
+                            reabilitados += 1
+                if reabilitados > 0:
+                    self._save_contacts(df)
+                    pending = self._get_pending_contacts(df)
+                    self._log(f"🔄 {reabilitados} contato(s) duplicado(s) reabilitado(s) (modo teste ativo).")
+
             # Log de contatos já processados
             enviados_df = df[df["Enviado"] == "X"]
             invalidos_df = df[df["Invalido"] == "X"]
@@ -1649,6 +2102,7 @@ class WhatsAppSender:
 
             with self._lock:
                 self._total_pending = len(pending)
+                self._total_invalids = len(invalidos_df)
 
             if len(pending) == 0:
                 self._log("✅ Todos os contatos já foram processados!")
@@ -1730,6 +2184,7 @@ class WhatsAppSender:
 
                             with self._lock:
                                 self._total_pending -= 1
+                                self._total_invalids += 1
 
                             file_logger.warning(f"Contato inválido ({motivo}): {pessoa} ({numero})")
                             self._log(f"❌ {pessoa} ({numero}) — {motivo}, marcado como inválido.")
@@ -1762,7 +2217,17 @@ class WhatsAppSender:
                                 self._log(f"✅ {pessoa} — mensagem enviada com sucesso.")
                                 self._notify_contact_update(idx, numero, "enviado", data_envio)
                             else:
-                                self._registrar_falha(df, idx, pessoa, numero, "erro no envio")
+                                # Falha no envio: marca como inválido imediatamente
+                                tooltip_motivo = "Falha ao enviar mensagem (veja o log para detalhes)."
+                                df.at[idx, "Invalido"] = "X"
+                                df.at[idx, "Motivo"] = tooltip_motivo
+                                self._save_contacts(df)
+                                with self._lock:
+                                    self._total_pending -= 1
+                                    self._total_invalids += 1
+                                self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
+                                # Compensa no burst para tentar o próximo contato
+                                burst_size += 1
 
                         except BrowserClosedError as e:
                             file_logger.error(
@@ -1775,6 +2240,69 @@ class WhatsAppSender:
                             browser_died = True
                             break
 
+                        except AttachmentError as e:
+                            # Falha no anexo: marca como inválido IMEDIATAMENTE, sem
+                            # retentativas. A mensagem de texto NÃO foi enviada.
+                            tooltip_motivo = f"Falha no anexo: {e}"
+                            df.at[idx, "Invalido"] = "X"
+                            df.at[idx, "Motivo"] = tooltip_motivo
+                            self._save_contacts(df)
+                            with self._lock:
+                                self._total_pending -= 1
+                                self._total_invalids += 1
+                            file_logger.error(
+                                f"Anexo falhou para {pessoa} ({numero}): {e} — "
+                                f"contato marcado como inválido (texto NÃO enviado)"
+                            )
+                            self._log(
+                                f"❌ {pessoa} ({numero}) — falha no anexo: {e}. "
+                                f"Mensagem NÃO enviada, contato marcado como inválido."
+                            )
+                            self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
+                            # Compensa no burst para tentar o próximo contato
+                            burst_size += 1
+
+                        except InvalidNumberError as e:
+                            # O WhatsApp Web indicou que o número é inválido ou
+                            # o contato está bloqueado. A mensagem da exceção
+                            # contém o detalhe (popup vs. botão Desbloquear).
+                            erro_str = str(e)
+                            if "bloqueado" in erro_str.lower() or "blocked" in erro_str.lower():
+                                tooltip_motivo = (
+                                    "Contato bloqueado no seu WhatsApp. "
+                                    "Desbloqueie para enviar."
+                                )
+                                log_msg = (
+                                    f"🚫 {pessoa} ({numero}) — contato bloqueado no "
+                                    f"seu WhatsApp. Desbloqueie para enviar."
+                                )
+                            else:
+                                tooltip_motivo = (
+                                    "Número rejeitado pelo WhatsApp "
+                                    "(inexistente ou inválido)."
+                                )
+                                log_msg = (
+                                    f"❌ {pessoa} ({numero}) — número rejeitado pelo "
+                                    f"WhatsApp (inexistente ou inválido)."
+                                )
+                            df.at[idx, "Invalido"] = "X"
+                            df.at[idx, "Motivo"] = tooltip_motivo
+                            self._save_contacts(df)
+
+                            with self._lock:
+                                self._total_pending -= 1
+                                self._total_invalids += 1
+
+                            file_logger.warning(
+                                f"Número rejeitado: {pessoa} ({numero}) — {e}"
+                            )
+                            self._log(log_msg)
+                            self._notify_contact_update(
+                                idx, numero, "invalido", "", tooltip_motivo,
+                            )
+                            # Compensa no burst para tentar o próximo contato
+                            burst_size += 1
+
                         except TimeoutException:
                             df.at[idx, "Invalido"] = "X"
                             df.at[idx, "Motivo"] = "Número não encontrado no WhatsApp (timeout ao abrir conversa)."
@@ -1782,6 +2310,7 @@ class WhatsAppSender:
 
                             with self._lock:
                                 self._total_pending -= 1
+                                self._total_invalids += 1
 
                             file_logger.warning(f"Número inválido (timeout): {pessoa} ({numero})")
                             self._log(f"❌ {pessoa} ({numero}) — número inválido ou não encontrado no WhatsApp.")
@@ -1797,11 +2326,18 @@ class WhatsAppSender:
                                 browser_died = True
                                 break
                             file_logger.error(f"Erro ao enviar para {pessoa} ({numero}): {e}\n{traceback.format_exc()}")
-                            self._log(f"⚠️ {pessoa} ({numero}) — erro inesperado: {e}")
-                            try:
-                                self._registrar_falha(df, idx, pessoa, numero, "erro inesperado")
-                            except Exception as reg_err:
-                                file_logger.error(f"Não foi possível registrar a falha de {pessoa}: {reg_err}")
+                            self._log(f"❌ {pessoa} ({numero}) — erro inesperado: {e}")
+                            # Marca como inválido imediatamente com o erro no tooltip
+                            tooltip_motivo = f"Erro inesperado: {e}"
+                            df.at[idx, "Invalido"] = "X"
+                            df.at[idx, "Motivo"] = tooltip_motivo
+                            self._save_contacts(df)
+                            with self._lock:
+                                self._total_pending -= 1
+                                self._total_invalids += 1
+                            self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
+                            # Compensa no burst para tentar o próximo contato
+                            burst_size += 1
 
                         # Delay intra-burst (entre msgs dentro da rajada)
                         # Pulado na última msg do burst e quando vai parar

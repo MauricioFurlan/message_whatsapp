@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WhatsApp Automação</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/tailwind.css">
     <style>
         .log-area {
@@ -25,12 +26,33 @@
         .log-retry    { color: #fbbf24; }  /* âmbar: falhou, vai tentar de novo */
         .log-tech     { color: #38bdf8; }  /* azul: erro técnico inesperado     */
         .log-skipped  { color: #a1a1aa; }  /* cinza: já inválido de antes       */
+        .log-blocked  { color: #e11d48; }  /* rosa-escuro: contato bloqueado     */
         @keyframes pulse-dot {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.4; }
         }
         .pulse-dot {
             animation: pulse-dot 1.5s infinite;
+        }
+        /* Barra de progresso */
+        .progress-sending {
+            background: linear-gradient(90deg, #22c55e 0%, #16a34a 100%);
+        }
+        .progress-paused {
+            background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
+        }
+        .progress-finished {
+            background: linear-gradient(90deg, #3b82f6 0%, #2563eb 100%);
+        }
+        .progress-stopped {
+            background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%);
+        }
+        @keyframes progress-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        .progress-animate {
+            animation: progress-pulse 2s ease-in-out infinite;
         }
         details[open] .config-chevron {
             transform: rotate(180deg);
@@ -197,17 +219,24 @@
                         Salvar Alterações
                     </button>
                     <input type="file" id="file-input" accept=".xlsx,.xls" class="hidden">
-                    <button onclick="document.getElementById('file-input').click()" id="btn-upload-sheet" title="Carregar planilha .xlsx"
-                        class="ml-auto px-2 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-600 hover:text-gray-800 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                    <button onclick="document.getElementById('file-input').click()" id="btn-upload-sheet"
+                        title="Clique aqui para selecionar uma planilha Excel (.xlsx) do seu computador e carregar os contatos"
+                        class="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 border border-blue-700 hover:bg-blue-700 text-white text-sm font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m4-8l-4-4m0 0l-4 4m4-4v12"/>
                         </svg>
+                        Carregar Planilha
                     </button>
-                    <button onclick="downloadContacts()" id="btn-download-contacts" title="Baixar planilha atualizada"
-                        class="px-2 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-600 hover:text-gray-800 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                    <button onclick="downloadContacts()" id="btn-download-contacts"
+                        title="Clique aqui para baixar a planilha com os contatos atualizados para o seu computador"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 text-white text-sm font-semibold rounded-md shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        style="background-color: #f97316;"
+                        onmouseover="if(!this.disabled)this.style.backgroundColor='#ea580c'"
+                        onmouseout="if(!this.disabled)this.style.backgroundColor='#f97316'">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
                         </svg>
+                        Baixar Planilha
                     </button>
                 </div>
                 <p id="upload-status" class="px-4 pb-2 text-sm text-gray-400"></p>
@@ -228,17 +257,40 @@
                             <p id="status-state" class="text-sm font-semibold mt-0.5 text-gray-700">—</p>
                         </div>
                         <div class="bg-gray-50 rounded-md p-2 text-center">
-                            <p class="text-xs text-gray-500">Rajada</p>
-                            <p id="status-round" class="text-sm font-semibold mt-0.5 text-gray-700">—</p>
-                        </div>
-                        <div class="bg-gray-50 rounded-md p-2 text-center">
                             <p class="text-xs text-gray-500">Enviadas</p>
                             <p id="status-sent" class="text-sm font-semibold mt-0.5 text-green-700">0</p>
+                        </div>
+                        <div class="bg-gray-50 rounded-md p-2 text-center relative group/invalids cursor-default">
+                            <p class="text-xs text-gray-500 flex items-center justify-center gap-1">
+                                Inválidos
+                                <!-- <span class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-red-100 text-red-500 text-[9px] font-bold cursor-help" title="Passe o mouse para ver os detalhes">?</span> -->
+                            </p>
+                            <p id="status-invalids" class="text-sm font-semibold mt-0.5 text-red-700">0</p>
+                            <!-- Tooltip com breakdown dos motivos -->
+                            <div id="invalids-tooltip" class="hidden group-hover/invalids:block absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 bg-gray-900 text-white text-xs rounded-lg shadow-lg p-2.5 pointer-events-none">
+                                <p class="font-semibold mb-1 text-gray-200">Detalhamento:</p>
+                                <div id="invalids-tooltip-content" class="space-y-0.5 text-left">
+                                    <p class="text-gray-400 italic">Nenhum inválido ainda</p>
+                                </div>
+                                <div class="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                            </div>
                         </div>
                         <div class="bg-gray-50 rounded-md p-2 text-center">
                             <p class="text-xs text-gray-500">Pendentes</p>
                             <p id="status-pending" class="text-sm font-semibold mt-0.5 text-amber-700">0</p>
                         </div>
+                    </div>
+
+                    <!-- Barra de Progresso do Envio -->
+                    <div id="progress-container" class="hidden mt-3">
+                        <div class="flex items-center justify-between mb-1">
+                            <span id="progress-label" class="text-xs font-semibold text-gray-700">Enviando...</span>
+                            <span id="progress-counter" class="text-xs font-mono text-gray-500">0/0</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+                            <div id="progress-bar" class="h-2.5 rounded-full transition-all duration-500 ease-out" style="width: 0%"></div>
+                        </div>
+                        <p id="progress-detail" class="text-[11px] text-gray-400 mt-1 text-center"></p>
                     </div>
                 </section>
 
@@ -316,6 +368,15 @@
                                     <input type="checkbox" id="cfg-human-behavior" checked
                                         class="w-3.5 h-3.5 text-green-600 border-gray-300 rounded focus:ring-green-500">
                                     <span class="text-xs text-gray-700">Comportamento humano</span>
+                                </label>
+                            </div>
+
+                            <div class="mt-1.5">
+                                <label class="inline-flex items-center gap-1.5 cursor-pointer"
+                                    title="Modo teste: permite enviar para números duplicados na planilha.&#10;Em produção, desmarque para evitar envios repetidos ao mesmo número.">
+                                    <input type="checkbox" id="cfg-allow-duplicates"
+                                        class="w-3.5 h-3.5 text-amber-600 border-gray-300 rounded focus:ring-amber-500">
+                                    <span class="text-xs text-gray-700">Permitir números duplicados <span class="text-amber-600">(teste)</span></span>
                                 </label>
                             </div>
 
@@ -439,6 +500,7 @@
             eventSource.addEventListener('contact_update', (event) => {
                 const data = JSON.parse(event.data);
                 updateContactRowStatus(data.row_index, data.numero, data.status, data.data_envio, data.motivo || '');
+                updateInvalidsTooltip();
             });
 
             eventSource.onerror = () => {
@@ -476,6 +538,78 @@
         }
 
         // --- Dashboard ---
+
+        function updateProgressBar(status) {
+            const container = document.getElementById('progress-container');
+            const bar = document.getElementById('progress-bar');
+            const label = document.getElementById('progress-label');
+            const counter = document.getElementById('progress-counter');
+            const detail = document.getElementById('progress-detail');
+
+            const activeStates = ['iniciando', 'waiting_qr', 'enviando', 'pausado', 'finalizado', 'parado'];
+            if (!activeStates.includes(status.state)) {
+                container.classList.add('hidden');
+                document.title = 'WhatsApp Automação';
+                return;
+            }
+
+            container.classList.remove('hidden');
+
+            const sent = status.messages_sent || 0;
+            const total = status.total_contacts || 0;
+            const pending = status.total_pending || 0;
+            // Total que será processado nesta sessão = enviados + pendentes
+            const sessionTotal = sent + pending;
+            const percent = sessionTotal > 0 ? Math.round((sent / sessionTotal) * 100) : 0;
+
+            // Atualiza barra
+            bar.style.width = percent + '%';
+
+            // Remove classes de cor e animação anteriores
+            bar.classList.remove('progress-sending', 'progress-paused', 'progress-finished', 'progress-stopped', 'progress-animate');
+
+            switch (status.state) {
+                case 'iniciando':
+                case 'waiting_qr':
+                    label.textContent = 'Preparando...';
+                    counter.textContent = `0/${sessionTotal}`;
+                    bar.classList.add('progress-sending', 'progress-animate');
+                    bar.style.width = '5%';
+                    detail.textContent = status.state === 'waiting_qr' ? 'Aguardando leitura do QR Code' : 'Abrindo navegador...';
+                    document.title = 'Preparando... - WhatsApp Automação';
+                    break;
+                case 'enviando':
+                    label.textContent = 'Enviando';
+                    counter.textContent = `${sent}/${sessionTotal}`;
+                    bar.classList.add('progress-sending', 'progress-animate');
+                    detail.textContent = `${percent}% concluído · ${pending} restante${pending !== 1 ? 's' : ''}`;
+                    document.title = `Enviando ${sent}/${sessionTotal} - WhatsApp Automação`;
+                    break;
+                case 'pausado':
+                    label.textContent = 'Pausado';
+                    counter.textContent = `${sent}/${sessionTotal}`;
+                    bar.classList.add('progress-paused');
+                    detail.textContent = `Aguardando próxima rajada · ${pending} restante${pending !== 1 ? 's' : ''}`;
+                    document.title = `⏸ Pausado ${sent}/${sessionTotal} - WhatsApp Automação`;
+                    break;
+                case 'finalizado':
+                    label.textContent = 'Finalizado';
+                    counter.textContent = `${sent}/${sessionTotal}`;
+                    bar.classList.add('progress-finished');
+                    bar.style.width = '100%';
+                    detail.textContent = `Todas as mensagens foram enviadas`;
+                    document.title = `✓ Finalizado - WhatsApp Automação`;
+                    break;
+                case 'parado':
+                    label.textContent = 'Parado';
+                    counter.textContent = `${sent}/${sessionTotal}`;
+                    bar.classList.add('progress-stopped');
+                    detail.textContent = `Envio interrompido · ${pending} não enviada${pending !== 1 ? 's' : ''}`;
+                    document.title = `■ Parado - WhatsApp Automação`;
+                    break;
+            }
+        }
+
         function updateDashboard(status) {
             currentState = status.state;
 
@@ -494,9 +628,13 @@
             stateEl.textContent = info.text;
             stateEl.className = `text-sm font-semibold mt-0.5 ${info.cls}`;
 
-            document.getElementById('status-round').textContent = status.current_round || '—';
+            document.getElementById('status-invalids').textContent = status.total_invalids || 0;
+            updateInvalidsTooltip();
             document.getElementById('status-sent').textContent = status.messages_sent;
             document.getElementById('status-pending').textContent = status.total_pending;
+
+            // --- Barra de Progresso ---
+            updateProgressBar(status);
 
             const isRunning = ['iniciando', 'waiting_qr', 'enviando', 'pausado'].includes(status.state);
             // Se o envio terminou (não está mais rodando), reseta o estado de "parando" e "iniciando"
@@ -536,6 +674,9 @@
                     }
                     if ('human_behavior' in status.config) {
                         document.getElementById('cfg-human-behavior').checked = status.config.human_behavior;
+                    }
+                    if ('allow_duplicates' in status.config) {
+                        document.getElementById('cfg-allow-duplicates').checked = status.config.allow_duplicates;
                     }
                     updateEstimativa();
                 }
@@ -610,6 +751,14 @@
             }
 
             // --- Número recusado pelo WhatsApp ------------------------------
+            if (m.includes('bloqueado') || m.includes('blocked')) {
+                return {
+                    cor: 'log-blocked',
+                    motivo: 'Motivo: este contato está bloqueado no seu WhatsApp. O WhatsApp Web detectou o botão "Desbloquear" '
+                          + 'na conversa em vez do campo de digitação.\n'
+                          + 'Como resolver: desbloqueie o contato no WhatsApp e use o botão de reenviar.',
+                };
+            }
             if (m.includes('não encontrado no WhatsApp')) {
                 return {
                     cor: 'log-nowhats',
@@ -629,6 +778,15 @@
             }
 
             // --- Falhas de envio -------------------------------------------
+            // Falha no anexo: contato marcado inválido sem retentativas
+            if (m.includes('falha no anexo')) {
+                return {
+                    cor: 'log-giveup',
+                    motivo: 'Motivo: o envio do anexo falhou (arquivo não encontrado no disco ou erro ao anexar no WhatsApp).\n'
+                          + 'A mensagem de texto NÃO foi enviada — o contato foi marcado como inválido imediatamente, sem retentativas.\n'
+                          + 'Como resolver: confira se o arquivo de anexo existe no caminho indicado e use o botão de reenviar.',
+                };
+            }
             const abandono = m.match(/falhou (\d+)x \(([^)]+)\)/);
             if (abandono) {
                 return {
@@ -761,7 +919,7 @@
 
         function formatPhoneOnBlur(input) {
             let digits = input.value.replace(/\D/g, '');
-            if (!digits) { input.value = ''; return; }
+            if (!digits) { input.value = ''; revalidateDuplicates(); return; }
             // Remove zero à esquerda se digitou 0XX (ex: 019 -> 19)
             if (digits.length >= 3 && digits.startsWith('0')) {
                 digits = digits.slice(1);
@@ -777,6 +935,87 @@
             if (digits.length > 2) formatted += digits.slice(2, 7);
             if (digits.length > 7) formatted += '-' + digits.slice(7);
             input.value = formatted;
+            revalidateDuplicates();
+        }
+
+        /**
+         * Revalida duplicados client-side após edição de número.
+         * Espelha a lógica de _normalize_for_dup do backend (app.py).
+         * Atualiza o status visual e data-attributes de cada linha.
+         */
+        function revalidateDuplicates() {
+            // Se "permitir duplicados" está ativado, limpa todos os flags e sai
+            const allowDuplicates = document.getElementById('cfg-allow-duplicates').checked;
+            const rows = document.querySelectorAll('#contacts-tbody tr');
+
+            if (allowDuplicates) {
+                rows.forEach(tr => {
+                    if (tr.dataset.duplicado === '1') {
+                        tr.dataset.duplicado = '0';
+                        tr.dataset.motivoDuplicado = '';
+                        _refreshStatusCell(tr);
+                    }
+                });
+                updateContactsCount();
+                return;
+            }
+
+            // Normaliza número (mesma lógica do backend)
+            function normalizeForDup(raw) {
+                let s = String(raw).replace(/\D/g, '');
+                if (!s) return '';
+                if (s.length > 11 && s.startsWith('55')) s = s.slice(2);
+                return s;
+            }
+
+            // Primeira passada: mapeia número normalizado -> índice da primeira ocorrência
+            const numerosVistos = {}; // normalized -> { idx, nome }
+            rows.forEach((tr, i) => {
+                const numRaw = tr.querySelector('.contact-numero').value;
+                const numNorm = normalizeForDup(numRaw);
+                const nome = tr.querySelector('.contact-pessoa').value || `linha ${i + 1}`;
+
+                if (!numNorm) {
+                    // Sem número: nunca é duplicado
+                    if (tr.dataset.duplicado === '1') {
+                        tr.dataset.duplicado = '0';
+                        tr.dataset.motivoDuplicado = '';
+                        _refreshStatusCell(tr);
+                    }
+                    return;
+                }
+
+                if (numNorm in numerosVistos) {
+                    // É duplicado
+                    const first = numerosVistos[numNorm];
+                    const motivo = `Número duplicado (mesmo que ${first.nome}, linha ${first.idx + 1})`;
+                    if (tr.dataset.duplicado !== '1' || tr.dataset.motivoDuplicado !== motivo) {
+                        tr.dataset.duplicado = '1';
+                        tr.dataset.motivoDuplicado = motivo;
+                        _refreshStatusCell(tr);
+                    }
+                } else {
+                    // Primeira ocorrência: não é duplicado
+                    numerosVistos[numNorm] = { idx: i, nome };
+                    if (tr.dataset.duplicado === '1') {
+                        tr.dataset.duplicado = '0';
+                        tr.dataset.motivoDuplicado = '';
+                        _refreshStatusCell(tr);
+                    }
+                }
+            });
+
+            updateContactsCount();
+        }
+
+        /** Atualiza o HTML da célula de status com base nos data-attributes atuais da linha. */
+        function _refreshStatusCell(tr) {
+            const enviado = tr.dataset.enviado === '1';
+            const invalido = tr.dataset.invalido === '1';
+            const motivo = tr.dataset.motivo || '';
+            const duplicado = tr.dataset.duplicado === '1';
+            const motivoDuplicado = tr.dataset.motivoDuplicado || '';
+            tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(enviado, invalido, motivo, duplicado, motivoDuplicado);
         }
 
         // Converte "2026-07-12 14:16:30" -> "12/07/2026 - 14:16"
@@ -788,10 +1027,17 @@
             return `${dia}/${mes}/${ano} - ${hora}:${min}`;
         }
 
-        function statusBadgeHtml(enviado, invalido, motivo) {
+        function statusBadgeHtml(enviado, invalido, motivo, duplicado, motivoDuplicado) {
+            if (duplicado) {
+                const tipText = motivoDuplicado || motivo || '';
+                const tip = tipText ? ` title="${escapeHtml(tipText)}" style="cursor:help;"` : '';
+                return `<span class="text-xs text-orange-600 font-medium"${tip}>Duplicado</span>`;
+            }
             if (invalido) {
                 const tip = motivo ? ` title="${escapeHtml(motivo)}" style="cursor:help;"` : '';
-                return `<span class="text-xs text-red-600"${tip}>Inválido</span>`;
+                const categoria = categorizeInvalidMotivo(motivo);
+                const catInfo = INVALID_CATEGORIES[categoria] || INVALID_CATEGORIES['Outros'];
+                return `<span class="text-xs ${catInfo.badgeColor} font-medium"${tip}>Inválido</span>`;
             }
             if (enviado) return '<span class="text-xs text-green-600">Enviado</span>';
             return '<span class="text-xs text-amber-600">Pendente</span>';
@@ -842,7 +1088,7 @@
                     </div>
                     <input type="hidden" class="contact-arquivo" value="${escapeHtml(arquivoPath)}">
                 </td>
-                <td class="contact-status px-3 py-1 text-center">${statusBadgeHtml(contact.enviado, contact.invalido, contact.motivo)}</td>
+                <td class="contact-status px-3 py-1 text-center">${statusBadgeHtml(contact.enviado, contact.invalido, contact.motivo, contact.duplicado, contact.motivo_duplicado)}</td>
                 <td class="contact-data px-1 py-1 text-center text-xs text-gray-500">${formatDataEnvio(contact.data_envio)}</td>
                 <td class="px-1 py-1 text-center">
                     ${resetBtn}
@@ -854,8 +1100,10 @@
             // Guarda os flags de status na própria linha (data attributes)
             tr.dataset.enviado = contact.enviado ? '1' : '0';
             tr.dataset.invalido = contact.invalido ? '1' : '0';
+            tr.dataset.duplicado = contact.duplicado ? '1' : '0';
             tr.dataset.dataEnvio = contact.data_envio || '';
             tr.dataset.motivo = contact.motivo || '';
+            tr.dataset.motivoDuplicado = contact.motivo_duplicado || '';
 
             tbody.appendChild(tr);
         }
@@ -955,16 +1203,75 @@
             }
         }
 
+        // Mapa de categorias de inválidos → cores distintas no tooltip e na tabela
+        const INVALID_CATEGORIES = {
+            'Número bloqueado':          { color: 'text-rose-400',   badgeColor: 'text-rose-600' },
+            'Número inválido':           { color: 'text-orange-300', badgeColor: 'text-orange-600' },
+            'Número ausente':            { color: 'text-orange-300', badgeColor: 'text-orange-600' },
+            'Mensagem vazia':            { color: 'text-amber-300',  badgeColor: 'text-amber-600' },
+            'Número duplicado':          { color: 'text-yellow-300', badgeColor: 'text-orange-600' },
+            'Não encontrado no WhatsApp':{ color: 'text-red-300',    badgeColor: 'text-red-600' },
+            'Falha no anexo':            { color: 'text-pink-300',   badgeColor: 'text-pink-600' },
+            'Falha no envio':            { color: 'text-fuchsia-300',badgeColor: 'text-fuchsia-600' },
+            'Sem detalhes':              { color: 'text-gray-400',   badgeColor: 'text-red-600' },
+            'Outros':                    { color: 'text-gray-300',   badgeColor: 'text-red-600' },
+        };
+
+        function categorizeInvalidMotivo(motivo) {
+            const m = (motivo || '').toLowerCase();
+            if (m.includes('bloqueado') || m.includes('blocked')) return 'Número bloqueado';
+            if (m.includes('mensagem vazia') || m.includes('coluna mensagem')) return 'Mensagem vazia';
+            if (m.includes('número vazia') || m.includes('número ausente')) return 'Número ausente';
+            if (m.includes('menos de 10') || m.includes('número inválido')) return 'Número inválido';
+            if (m.includes('duplicado')) return 'Número duplicado';
+            if (m.includes('não encontrado') || m.includes('timeout')) return 'Não encontrado no WhatsApp';
+            if (m.includes('anexo')) return 'Falha no anexo';
+            if (m.includes('falha ao enviar') || m.includes('falhou')) return 'Falha no envio';
+            if (!motivo || !motivo.trim()) return 'Sem detalhes';
+            return 'Outros';
+        }
+
+        function updateInvalidsTooltip() {
+            const rows = document.querySelectorAll('#contacts-tbody tr');
+            const motivos = {};
+            let totalInvalidos = 0;
+
+            rows.forEach(tr => {
+                if (tr.dataset.invalido !== '1') return;
+                totalInvalidos++;
+                const motivo = (tr.dataset.motivo || '').trim();
+                const categoria = categorizeInvalidMotivo(motivo);
+                motivos[categoria] = (motivos[categoria] || 0) + 1;
+            });
+
+            const tooltipContent = document.getElementById('invalids-tooltip-content');
+            if (totalInvalidos === 0) {
+                tooltipContent.innerHTML = '<p class="text-gray-400 italic">Nenhum inválido ainda</p>';
+                return;
+            }
+
+            // Ordena por quantidade (maior primeiro)
+            const sorted = Object.entries(motivos).sort((a, b) => b[1] - a[1]);
+            let html = '';
+            sorted.forEach(([cat, count]) => {
+                const catInfo = INVALID_CATEGORIES[cat] || INVALID_CATEGORIES['Outros'];
+                html += `<p class="flex justify-between gap-2"><span>${cat}</span><span class="font-semibold ${catInfo.color}">${count}</span></p>`;
+            });
+            tooltipContent.innerHTML = html;
+        }
+
         function updateContactsCount() {
             const rows = document.querySelectorAll('#contacts-tbody tr');
-            let enviados = 0, invalidos = 0;
+            let enviados = 0, invalidos = 0, duplicados = 0;
             rows.forEach(tr => {
                 if (tr.dataset.invalido === '1') invalidos++;
                 else if (tr.dataset.enviado === '1') enviados++;
+                if (tr.dataset.duplicado === '1') duplicados++;
             });
             const pendentes = rows.length - enviados - invalidos;
-            document.getElementById('contacts-count').textContent =
-                `${rows.length} contatos · ${pendentes} pendentes · ${enviados} enviados · ${invalidos} inválidos`;
+            let text = `${rows.length} contatos · ${pendentes} pendentes · ${enviados} enviados · ${invalidos} inválidos`;
+            if (duplicados > 0) text += ` · ${duplicados} duplicados`;
+            document.getElementById('contacts-count').textContent = text;
             // Renumera linhas
             renumberRows();
         }
@@ -987,6 +1294,7 @@
                 tbody.innerHTML = '';
                 data.contacts.forEach(renderContactRow);
                 updateContactsCount();
+                updateInvalidsTooltip();
                 updateGlobalMessageHints();
                 document.getElementById('contacts-section').classList.remove('hidden');
             } catch (err) {
@@ -1114,6 +1422,7 @@
                 if (config.hora_fim) document.getElementById('cfg-hora-fim').value = config.hora_fim;
                 if ('skip_weekends' in config) document.getElementById('cfg-skip-weekends').checked = config.skip_weekends;
                 if ('human_behavior' in config) document.getElementById('cfg-human-behavior').checked = config.human_behavior;
+                if ('allow_duplicates' in config) document.getElementById('cfg-allow-duplicates').checked = config.allow_duplicates;
                 updateEstimativa();
                 configLoaded = true;
 
@@ -1138,6 +1447,7 @@
                 hora_fim: document.getElementById('cfg-hora-fim').value,
                 skip_weekends: document.getElementById('cfg-skip-weekends').checked,
                 human_behavior: document.getElementById('cfg-human-behavior').checked,
+                allow_duplicates: document.getElementById('cfg-allow-duplicates').checked,
             };
 
             // Salva no localStorage
@@ -1206,9 +1516,8 @@
                 await saveGlobalMessage();
             }
 
-            // Salva as alterações da tabela de contatos antes de iniciar
-            const contactsSection = document.getElementById('contacts-section');
-            if (contactsSection && !contactsSection.classList.contains('hidden')) {
+            // Salva as alterações da tabela de contatos antes de iniciar (só se houve edição)
+            if (unsavedChanges) {
                 const saved = await saveContacts(true);
                 if (!saved) {
                     // Desfaz o bloqueio
@@ -1424,9 +1733,16 @@
         [
             'cfg-total-msgs-input', 'cfg-tempo',
             'cfg-hora-inicio', 'cfg-hora-fim', 'cfg-skip-weekends', 'cfg-human-behavior',
+            'cfg-allow-duplicates',
         ].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.addEventListener('change', autoSaveConfig);
+        });
+
+        // Recarrega contatos ao mudar a opção de duplicados (afeta a marcação visual)
+        document.getElementById('cfg-allow-duplicates').addEventListener('change', () => {
+            // Aguarda o save da config completar antes de recarregar
+            setTimeout(loadContacts, 300);
         });
 
         // --- Atalhos de teclado ---
