@@ -1,5 +1,84 @@
 # Changelog
 
+## 2026-08-15
+
+### Novo: Tooltip de inválidos no cabeçalho da coluna Status
+
+O cabeçalho "Status" da tabela de contatos ganhou um ícone `?`. Ao passar o mouse, exibe o total de inválidos desta sessão e o detalhamento por categoria (número bloqueado, inválido, duplicado, falha no anexo, etc.).
+
+### Novo: Coloração de fundo nas linhas inválidas da tabela
+
+Cada categoria de inválido tem uma cor de fundo distinta na linha da tabela:
+
+| Categoria | Cor |
+|---|---|
+| Número bloqueado | Rosa (`bg-rose-50`) |
+| Número inválido / ausente | Laranja (`bg-orange-50`) |
+| Mensagem vazia | Âmbar (`bg-amber-50`) |
+| Número duplicado | Amarelo (`bg-yellow-50`) |
+| Não encontrado no WhatsApp | Vermelho (`bg-red-50`) |
+| Falha no anexo | Pink (`bg-pink-50`) |
+| Falha no envio | Fúcsia (`bg-fuchsia-50`) |
+
+A cor é aplicada em tempo real via SSE e removida ao usar o botão de reenvio.
+
+### Correção: Status resetados corretamente ao iniciar novo envio
+
+Ao clicar "Iniciar Envio":
+- Contatos já **enviados** mantêm o badge "Enviado" (sender os pula via `[SKIP]`)
+- Contatos **inválidos** mantêm o badge "Inválido" (só o botão ↺ individual limpa)
+- Contatos **duplicados** mantêm o badge "Duplicado"
+- Contadores da sidebar refletem o estado real da planilha
+
+### Correção: Duplicados não contam como inválidos
+
+Duplicados são uma categoria separada e não entram na contagem de "Inválidos" em nenhum lugar: sidebar, barra inferior da tabela, tooltip e contador do sender. O badge continua mostrando "Duplicado" (laranja), não "Inválido".
+
+### Correção: Duplicado que já foi enviado bloqueia pendentes com o mesmo número
+
+O sender agora registra os números já enviados antes de varrer os pendentes. Um contato pendente com o mesmo número de um já-enviado é marcado como duplicado e ignorado, evitando envio duplicado entre sessões.
+
+### Correção: Botão "Iniciar Envio" travado após finalização rápida
+
+Quando o backend finalizava rapidamente (ex.: nenhum pendente), o botão "Iniciar Envio" ficava desabilitado e só voltava após F5. Corrigido: qualquer estado não-ativo (`finalizado`, `parado`, `erro`) reseta os flags de controle e reabilita o botão via SSE.
+
+### Novo: Verificação de pendentes antes de abrir o browser
+
+Ao clicar "Iniciar Envio" com todos os contatos já processados, o sistema agora detecta isso antes de abrir o Chrome e retorna imediatamente com a mensagem "Todos os contatos já foram processados!", sem abrir e fechar o navegador desnecessariamente.
+
+### Novo: Contagem de inválidos por sessão
+
+O contador "Inválidos" na sidebar agora mostra apenas os inválidos ocorridos **nesta sessão de envio**, não o acumulado histórico da planilha. Ao iniciar um novo envio, o contador zera e cresce apenas com as falhas da rodada atual.
+
+### Novo: Módulo `contact_logic.py` e testes unitários
+
+A lógica pura de contatos (normalização de número, validação, deduplicação) foi extraída para `contact_logic.py`, sem dependência de Selenium. Isso permite testes isolados sem browser.
+
+Adicionados 35 testes unitários em `tests/test_deduplication.py` cobrindo:
+- `clean_number`: float do Excel, DDI 55, formatação, vazio, nan
+- `validate_contact`: número ausente/curto, mensagem vazia
+- `get_pending_contacts`: exclusão de enviados, inválidos, df vazio
+- Deduplicação entre pendentes: 2º e 3º duplicado marcados, SSE emitido
+- **Bug corrigido**: pendente com número igual a já-enviado é bloqueado
+- `allow_duplicates=True`: reabilita duplicados anteriores, não toca outros inválidos
+
+## 2026-08-14
+
+### Novo: Detecção de número bloqueado/inválido via popup do WhatsApp
+
+Antes, quando um número estava bloqueado ou não existia no WhatsApp, o sistema esperava 20 segundos pelo timeout e mostrava uma mensagem genérica ("timeout ao abrir conversa"). Agora o sistema detecta os dois cenários em tempo real:
+
+**Número inválido/inexistente**: detecta o popup de erro do WhatsApp Web ("número de telefone compartilhado por meio de URL é inválido") em ~2-3s.
+- Log: `❌ Fulano (19999...) — número rejeitado pelo WhatsApp (inexistente ou inválido).`
+
+**Contato bloqueado**: detecta que a conversa abriu mas com botões "Desbloquear"/"Apagar conversa" em vez do campo de digitação.
+- Log: `🚫 Fulano (19999...) — contato bloqueado no seu WhatsApp. Desbloqueie para enviar.`
+
+Em ambos os casos:
+- Detecção rápida (~2-3s em vez de 20s de timeout)
+- Tooltip específico na tabela de contatos
+- Popup é fechado automaticamente e o envio segue para o próximo contato
+
 ## 2026-08-10
 
 ### Novo: Cores e tooltip no log para contatos inválidos/falha
@@ -76,10 +155,6 @@ O botão "Salvar Config" continua funcionando como ação manual explícita.
 ### Correção: Envio não inicia se config falhar ao salvar
 
 Se o `saveConfig` falhar antes de iniciar o envio (ex: servidor offline momentaneamente), o envio é cancelado com mensagem de erro, em vez de prosseguir com a config possivelmente desatualizada.
-
-### Novo: Imagem enviada como foto (não figurinha)
-
-Commit `f9115b9`: imagens são enviadas em tamanho grande em vez de como sticker/figurinha.
 
 ### Testes
 

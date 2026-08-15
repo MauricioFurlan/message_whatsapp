@@ -33,6 +33,7 @@ from selenium.common.exceptions import (
 )
 
 import win_dialog
+from contact_logic import clean_number, validate_contact, get_pending_contacts, apply_deduplication
 
 # Logger de arquivo para diagnóstico (compartilhado com app.py)
 file_logger = logging.getLogger("whatsapp_sender_file")
@@ -431,74 +432,13 @@ class WhatsAppSender:
 
     def _get_pending_contacts(self, df: pd.DataFrame) -> pd.DataFrame:
         """Retorna contatos pendentes (não enviados, não inválidos, dentro do limite de tentativas)."""
-        mask = (df["Enviado"] != "X") & (df["Invalido"] != "X")
-        if "Tentativas" in df.columns:
-            tentativas = pd.to_numeric(df["Tentativas"], errors="coerce").fillna(0)
-            mask = mask & (tentativas < self._max_tentativas_contato())
-        return df[mask]
+        return get_pending_contacts(df, max_tentativas=self._max_tentativas_contato())
 
     def _clean_number(self, numero) -> str:
-        """
-        Normaliza um número de telefone vindo da planilha, retornando
-        apenas os dígitos (DDD + telefone, sem código de país).
-
-        Trata o caso comum em que o pandas lê a coluna como float
-        (ex: 19994229146 -> "19994229146.0"), o que adicionaria um "0"
-        extra indevido ao final se apenas filtrássemos os dígitos.
-
-        Remove código de país 55 se o usuário incluiu na planilha,
-        já que o _send_message adiciona o 55 automaticamente.
-        """
-        numero_str = str(numero).strip()
-        if numero_str.lower() in ("", "nan", "none"):
-            return ""
-
-        # Remove notação de float ("19994229146.0" -> "19994229146")
-        try:
-            f = float(numero_str)
-            if f.is_integer():
-                numero_str = str(int(f))
-        except (ValueError, OverflowError):
-            pass
-
-        digits = "".join(c for c in numero_str if c.isdigit())
-
-        # Remove código de país 55 se o usuário incluiu na planilha
-        # Número brasileiro válido tem 10-11 dígitos (DDD + telefone)
-        if len(digits) > 11 and digits.startswith("55"):
-            digits = digits[2:]
-
-        return digits
+        return clean_number(numero)
 
     def _validate_contact(self, numero: str, mensagem: str) -> tuple:
-        """
-        Valida um contato antes de acionar o Selenium.
-
-        Retorna (True, "") se o contato for válido, ou (False, motivo)
-        caso não tenha número, número inválido ou mensagem vazia.
-        Regras:
-          - Número ausente/vazio ("", "nan", "none") => inválido
-          - Número com menos de 10 dígitos (DDD + telefone) => inválido
-          - Mensagem ausente/vazia => inválido
-        """
-        # Normaliza valores vindos do Excel (podem ser NaN convertido para string)
-        numero_str = str(numero).strip().lower()
-        mensagem_str = str(mensagem).strip()
-
-        # Mensagem vazia
-        if mensagem_str == "" or mensagem_str.lower() in ("nan", "none"):
-            return False, "mensagem vazia"
-
-        # Número ausente
-        if numero_str == "" or numero_str in ("nan", "none"):
-            return False, "número ausente"
-
-        # Número inválido (poucos dígitos)
-        numero_limpo = self._clean_number(numero)
-        if len(numero_limpo) < 10:
-            return False, "número inválido"
-
-        return True, ""
+        return validate_contact(numero, mensagem)
 
     def _human_behavior_enabled(self) -> bool:
         """Verifica se o modo comportamento humano está ativo."""
@@ -1611,7 +1551,7 @@ class WhatsAppSender:
                     if not el.is_displayed():
                         continue
                     el.click()
-                    time.sleep(random.uniform(0.8, 1.5))
+                    self._interruptible_sleep(random.uniform(0.8, 1.5))
                     file_logger.info(f"Menu de anexo aberto via: {seletor}")
                     return True
                 except Exception as e:
@@ -1671,7 +1611,7 @@ class WhatsAppSender:
                 "Item não apareceu após abrir o menu de anexo — o clique pode ter "
                 "fechado um menu que já estava aberto; tentando de novo"
             )
-            time.sleep(0.8)
+            self._interruptible_sleep(0.8)
 
         return None
 
@@ -1887,10 +1827,14 @@ class WhatsAppSender:
 
         # Clica no campo para focar
         caption_field.click()
-        time.sleep(random.uniform(0.3, 0.6))
+        if self._interruptible_sleep(random.uniform(0.3, 0.6)):
+            return
 
         # Limpa qualquer texto residual no campo de legenda
         self._clear_input_field(caption_field)
+
+        if self._should_stop():
+            return
 
         # Digita a legenda
         if human:
@@ -1898,7 +1842,7 @@ class WhatsAppSender:
         else:
             self._type_with_newlines(caption_field, caption)
 
-        time.sleep(random.uniform(0.5, 1.0))
+        self._interruptible_sleep(random.uniform(0.5, 1.0))
 
     # Seletores do botão "enviar" do preview de anexo
     _SEND_BUTTON_SELECTORS = [
@@ -1928,7 +1872,8 @@ class WhatsAppSender:
                     continue
             if time.time() >= fim:
                 return None
-            time.sleep(0.3)
+            if self._interruptible_sleep(0.3):
+                return None
 
     def _click_send_button_modal(self, pessoa: str):
         """
@@ -1983,8 +1928,29 @@ class WhatsAppSender:
         self._stop_event.clear()
 
         try:
-            # Inicializa o driver
+            # Verifica se há pendentes ANTES de abrir o browser.
+            # Evita abrir e fechar o Chrome imediatamente quando tudo já foi processado.
             self._set_state("iniciando")
+            df_check = self._load_contacts()
+
+            # Simula deduplicação (sem salvar nem notificar) para saber o real nº de pendentes.
+            # Duplicados não são pendentes — um número já enviado bloquearia os pendentes com o mesmo número.
+            def _noop(*a, **k): pass
+            df_check = apply_deduplication(
+                df_check,
+                allow_duplicates=self.config.get("allow_duplicates", False),
+                notify_cb=_noop,
+                log_cb=_noop,
+                save_cb=_noop,
+            )
+            pending_check = self._get_pending_contacts(df_check)
+
+            if len(pending_check) == 0:
+                self._log("✅ Todos os contatos já foram processados! Nenhuma mensagem a enviar.")
+                self._set_state("finalizado")
+                return  # _cleanup() no finally reseta _running e fecha o driver (que é None aqui)
+
+            # Inicializa o driver
             self._log("Iniciando navegador Chrome...")
 
             try:
@@ -1999,26 +1965,53 @@ class WhatsAppSender:
             self._log("WhatsApp Web aberto. Verificando sessão...")
 
             # Verifica se a sessão já está ativa (login instantâneo via perfil salvo)
-            try:
-                WebDriverWait(self._driver, 8).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "#pane-side"))
-                )
+            # Usa polling interruptível (8s) para responder ao stop durante inicialização
+            session_found = False
+            session_deadline = time.monotonic() + 8
+            while time.monotonic() < session_deadline:
+                if self._should_stop():
+                    self._set_state("parado")
+                    self._log("🛑 Envio interrompido pelo usuário.")
+                    self._cleanup()
+                    return
+                try:
+                    self._driver.find_element(By.CSS_SELECTOR, "#pane-side")
+                    session_found = True
+                    break
+                except Exception:
+                    pass
+                self._interruptible_sleep(0.5)
+
+            if session_found:
                 self._log("✅ Sessão ativa detectada! Login automático via perfil salvo.")
-            except TimeoutException:
+            else:
                 # Sessão não estava ativa — precisa escanear QR Code
                 self._set_state("waiting_qr")
                 self._log("⏳ Sessão não encontrada. Escaneie o QR Code no navegador...")
 
-                try:
-                    WebDriverWait(self._driver, 120).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "#pane-side"))
-                    )
-                    self._log("✅ Login realizado com sucesso!")
-                except TimeoutException:
+                # Aguarda até 120s pelo login, verificando stop a cada 0.5s
+                qr_found = False
+                qr_deadline = time.monotonic() + 120
+                while time.monotonic() < qr_deadline:
+                    if self._should_stop():
+                        self._set_state("parado")
+                        self._log("🛑 Envio interrompido pelo usuário.")
+                        self._cleanup()
+                        return
+                    try:
+                        self._driver.find_element(By.CSS_SELECTOR, "#pane-side")
+                        qr_found = True
+                        break
+                    except Exception:
+                        pass
+                    self._interruptible_sleep(0.5)
+
+                if not qr_found:
                     self._set_state("erro")
                     self._log("ERRO: Tempo esgotado aguardando QR Code. Tente novamente.")
                     self._cleanup()
                     return
+                self._log("✅ Login realizado com sucesso!")
 
             if self._should_stop():
                 self._set_state("parado")
@@ -2048,47 +2041,19 @@ class WhatsAppSender:
             pending = self._get_pending_contacts(df)
 
             # --- Detecção de duplicados ---
-            # Se allow_duplicates está desativado, marca duplicados como inválidos
+            # Se allow_duplicates está desativado, marca duplicados como inválidos.
+            # A verificação usa o DataFrame COMPLETO (não só pendentes) para que
+            # números já enviados sirvam de âncora — evita enviar para o mesmo
+            # número quando a primeira ocorrência já foi processada anteriormente.
             allow_duplicates = self.config.get("allow_duplicates", False)
-            if not allow_duplicates:
-                numeros_vistos: dict[str, int] = {}
-                duplicados_indices = []
-                for idx, row in pending.iterrows():
-                    num_norm = self._clean_number(row["Número"])
-                    if not num_norm:
-                        continue
-                    if num_norm in numeros_vistos:
-                        duplicados_indices.append(idx)
-                        first_idx = numeros_vistos[num_norm]
-                        first_nome = str(df.at[first_idx, "Nome"]) if first_idx in df.index else "?"
-                        pessoa = str(row["Nome"])
-                        motivo = f"Número duplicado (mesmo que {first_nome})"
-                        df.at[idx, "Invalido"] = "X"
-                        df.at[idx, "Motivo"] = motivo
-                        self._notify_contact_update(idx, num_norm, "invalido", "", motivo)
-                        self._log(f"[SKIP] {pessoa} ({num_norm}) — número duplicado, pulando.")
-                    else:
-                        numeros_vistos[num_norm] = idx
-
-                if duplicados_indices:
-                    self._save_contacts(df)
-                    # Recarrega pendentes sem os duplicados
-                    pending = self._get_pending_contacts(df)
-                    self._log(f"⚠️ {len(duplicados_indices)} contato(s) com número duplicado marcado(s) como inválido(s).")
-            else:
-                # Modo teste: reabilita contatos que foram invalidados por duplicata em execução anterior
-                reabilitados = 0
-                for idx, row in df.iterrows():
-                    if str(row.get("Invalido", "")).strip().upper() == "X":
-                        motivo = str(row.get("Motivo", "")).lower()
-                        if "duplicado" in motivo:
-                            df.at[idx, "Invalido"] = ""
-                            df.at[idx, "Motivo"] = ""
-                            reabilitados += 1
-                if reabilitados > 0:
-                    self._save_contacts(df)
-                    pending = self._get_pending_contacts(df)
-                    self._log(f"🔄 {reabilitados} contato(s) duplicado(s) reabilitado(s) (modo teste ativo).")
+            df = apply_deduplication(
+                df,
+                allow_duplicates=allow_duplicates,
+                notify_cb=self._notify_contact_update,
+                log_cb=self._log,
+                save_cb=self._save_contacts,
+            )
+            pending = self._get_pending_contacts(df)
 
             # Log de contatos já processados
             enviados_df = df[df["Enviado"] == "X"]
@@ -2100,9 +2065,14 @@ class WhatsAppSender:
                 for _, row in invalidos_df.iterrows():
                     self._log(f"[SKIP] {row['Nome']} — número inválido, pulando.")
 
+            # Duplicados são uma categoria separada — excluir da contagem de inválidos
+            duplicados_motivo = invalidos_df["Motivo"].str.lower().str.contains("duplicado", na=False)
+
             with self._lock:
                 self._total_pending = len(pending)
-                self._total_invalids = len(invalidos_df)
+                # _total_invalids começa em 0: conta apenas os inválidos desta sessão.
+                # Inválidos de sessões anteriores já estão na planilha mas não são desta rodada.
+                self._total_invalids = 0
 
             if len(pending) == 0:
                 self._log("✅ Todos os contatos já foram processados!")
@@ -2217,17 +2187,25 @@ class WhatsAppSender:
                                 self._log(f"✅ {pessoa} — mensagem enviada com sucesso.")
                                 self._notify_contact_update(idx, numero, "enviado", data_envio)
                             else:
-                                # Falha no envio: marca como inválido imediatamente
-                                tooltip_motivo = "Falha ao enviar mensagem (veja o log para detalhes)."
-                                df.at[idx, "Invalido"] = "X"
-                                df.at[idx, "Motivo"] = tooltip_motivo
-                                self._save_contacts(df)
-                                with self._lock:
-                                    self._total_pending -= 1
-                                    self._total_invalids += 1
-                                self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
-                                # Compensa no burst para tentar o próximo contato
-                                burst_size += 1
+                                if self._should_stop():
+                                    # Interrompido pelo usuário no meio do envio —
+                                    # contato permanece pendente para a próxima execução.
+                                    # Não marca como inválido nem como enviado.
+                                    file_logger.info(
+                                        f"Contato {pessoa} ({numero}) interrompido pelo stop — permanece pendente."
+                                    )
+                                else:
+                                    # Falha real no envio: marca como inválido
+                                    tooltip_motivo = "Falha ao enviar mensagem (veja o log para detalhes)."
+                                    df.at[idx, "Invalido"] = "X"
+                                    df.at[idx, "Motivo"] = tooltip_motivo
+                                    self._save_contacts(df)
+                                    with self._lock:
+                                        self._total_pending -= 1
+                                        self._total_invalids += 1
+                                    self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
+                                    # Compensa no burst para tentar o próximo contato
+                                    burst_size += 1
 
                         except BrowserClosedError as e:
                             file_logger.error(
@@ -2325,19 +2303,27 @@ class WhatsAppSender:
                                 self._log("🛑 O navegador foi fechado ou perdeu a conexão. Envio abortado.")
                                 browser_died = True
                                 break
-                            file_logger.error(f"Erro ao enviar para {pessoa} ({numero}): {e}\n{traceback.format_exc()}")
-                            self._log(f"❌ {pessoa} ({numero}) — erro inesperado: {e}")
-                            # Marca como inválido imediatamente com o erro no tooltip
-                            tooltip_motivo = f"Erro inesperado: {e}"
-                            df.at[idx, "Invalido"] = "X"
-                            df.at[idx, "Motivo"] = tooltip_motivo
-                            self._save_contacts(df)
-                            with self._lock:
-                                self._total_pending -= 1
-                                self._total_invalids += 1
-                            self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
-                            # Compensa no burst para tentar o próximo contato
-                            burst_size += 1
+                            if self._should_stop():
+                                # Excepção disparada pela interrupção (ex: RuntimeError do
+                                # _finalizar_envio_de_anexo quando stop é detectado).
+                                # Contato permanece pendente — não é culpa dele.
+                                file_logger.info(
+                                    f"Envio de {pessoa} ({numero}) interrompido pelo stop — permanece pendente."
+                                )
+                            else:
+                                file_logger.error(f"Erro ao enviar para {pessoa} ({numero}): {e}\n{traceback.format_exc()}")
+                                self._log(f"❌ {pessoa} ({numero}) — erro inesperado: {e}")
+                                # Marca como inválido imediatamente com o erro no tooltip
+                                tooltip_motivo = f"Erro inesperado: {e}"
+                                df.at[idx, "Invalido"] = "X"
+                                df.at[idx, "Motivo"] = tooltip_motivo
+                                self._save_contacts(df)
+                                with self._lock:
+                                    self._total_pending -= 1
+                                    self._total_invalids += 1
+                                self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
+                                # Compensa no burst para tentar o próximo contato
+                                burst_size += 1
 
                         # Delay intra-burst (entre msgs dentro da rajada)
                         # Pulado na última msg do burst e quando vai parar
@@ -2354,7 +2340,7 @@ class WhatsAppSender:
                             else:
                                 delay = random.uniform(intra_delay * 0.8, intra_delay * 1.2)
                             self._log(f"Aguardando {delay:.0f}s...")
-                            time.sleep(delay)
+                            self._interruptible_sleep(delay)
 
                     # Fim do burst — log e pausa entre bursts
                     self._log(f"📊 Rajada {burst_idx + 1} finalizada: {enviados_burst} msgs enviadas")
@@ -2384,7 +2370,7 @@ class WhatsAppSender:
                         # Espera em intervalos curtos para poder parar
                         elapsed = 0
                         while elapsed < pause_after and not self._should_stop():
-                            time.sleep(min(2, pause_after - elapsed))
+                            self._interruptible_sleep(min(2, pause_after - elapsed))
                             elapsed += 2
 
             # Finalização

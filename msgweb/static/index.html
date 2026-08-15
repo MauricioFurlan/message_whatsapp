@@ -197,7 +197,12 @@
                                 <th class="text-left px-2 py-2 font-medium w-36">Número</th>
                                 <th class="text-left px-2 py-2 font-medium">Mensagem <span class="font-normal text-gray-400" title="Use {nome} na mensagem para inserir o nome em qualquer posição. Exemplo: Olá {nome} esta é uma mensagem de teste.">· {nome}</span></th>
                                 <th class="text-left px-2 py-2 font-medium w-24">Arquivo</th>
-                                <th class="text-center px-1 py-2 font-medium w-14">Status</th>
+                                <th class="text-center px-1 py-2 font-medium w-14">
+                                    <span class="inline-flex items-center justify-center gap-1">
+                                        Status
+                                       
+                                    </span>
+                                </th>
                                 <th class="text-center px-1 py-2 font-medium w-24">Data Envio</th>
                                 <th class="text-center px-1 py-2 font-medium w-12"></th>
                             </tr>
@@ -637,12 +642,12 @@
             updateProgressBar(status);
 
             const isRunning = ['iniciando', 'waiting_qr', 'enviando', 'pausado'].includes(status.state);
-            // Se o envio terminou (não está mais rodando), reseta o estado de "parando" e "iniciando"
-            if (!isRunning && !starting) {
+            // Se o envio terminou (não está mais rodando), reseta ambos os flags de transição.
+            // Isso cobre o caso em que o backend vai de "iniciando" para "finalizado"
+            // rapidamente (ex.: nenhum pendente) antes que o frontend tenha recebido
+            // um estado "enviando" que resetaria o flag starting.
+            if (!isRunning) {
                 stopping = false;
-            }
-            // Quando o backend confirma que está rodando, reseta starting
-            if (isRunning) {
                 starting = false;
             }
             const locked = isRunning || starting;
@@ -1027,6 +1032,32 @@
             return `${dia}/${mes}/${ano} - ${hora}:${min}`;
         }
 
+        // Todas as classes de fundo que podem ser aplicadas a uma linha —
+        // necessário para limpá-las antes de aplicar uma nova cor.
+        const ALL_ROW_BG_CLASSES = [
+            'bg-rose-50','hover:bg-rose-100',
+            'bg-orange-50','hover:bg-orange-100',
+            'bg-amber-50','hover:bg-amber-100',
+            'bg-yellow-50','hover:bg-yellow-100',
+            'bg-red-50','hover:bg-red-100',
+            'bg-pink-50','hover:bg-pink-100',
+            'bg-fuchsia-50','hover:bg-fuchsia-100',
+            'bg-gray-50','hover:bg-gray-50',
+        ];
+
+        function applyRowColor(tr, invalido, motivo) {
+            // Remove todas as cores anteriores
+            tr.classList.remove(...ALL_ROW_BG_CLASSES);
+            if (invalido) {
+                const categoria = categorizeInvalidMotivo(motivo);
+                const catInfo = INVALID_CATEGORIES[categoria] || INVALID_CATEGORIES['Outros'];
+                tr.classList.add(catInfo.rowBg, catInfo.rowHover);
+            } else {
+                // Estado normal: hover cinza padrão
+                tr.classList.add('hover:bg-gray-50');
+            }
+        }
+
         function statusBadgeHtml(enviado, invalido, motivo, duplicado, motivoDuplicado) {
             if (duplicado) {
                 const tipText = motivoDuplicado || motivo || '';
@@ -1046,9 +1077,11 @@
         function renderContactRow(contact) {
             const tbody = document.getElementById('contacts-tbody');
             const tr = document.createElement('tr');
-            tr.className = 'border-t border-gray-100 hover:bg-gray-50';
+            tr.className = 'border-t border-gray-100';
 
             const processado = contact.enviado || contact.invalido;
+            // Aplica cor de fundo baseada no status inválido (se for o caso)
+            applyRowColor(tr, contact.invalido, contact.motivo || '');
             // Botão de reenvio: só faz sentido para contatos já enviados ou inválidos
             const resetBtn = `
                 <button onclick="resetContact(this)" title="Reenviar (limpa status e data)"
@@ -1119,6 +1152,7 @@
             tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(false, false);
             tr.querySelector('.contact-data').textContent = '—';
             btn.classList.add('hidden');
+            applyRowColor(tr, false, '');
             markUnsaved();
             updateContactsCount();
         }
@@ -1143,13 +1177,19 @@
                 tr.dataset.motivo = '';
                 tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(true, false);
                 tr.querySelector('.contact-data').textContent = formatDataEnvio(dataEnvio);
+                applyRowColor(tr, false, '');
             } else if (status === 'invalido') {
                 tr.dataset.enviado = '0';
                 tr.dataset.invalido = '1';
                 tr.dataset.dataEnvio = '';
                 tr.dataset.motivo = motivo || '';
-                tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(false, true, motivo);
+                // Contatos duplicados são marcados como inválido pelo sender, mas
+                // visualmente devem continuar mostrando "Duplicado" — repassa o flag.
+                const isDuplicado = tr.dataset.duplicado === '1';
+                tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(false, true, motivo, isDuplicado, tr.dataset.motivoDuplicado || motivo);
                 tr.querySelector('.contact-data').textContent = '—';
+                // Duplicados já têm fundo amarelo; outros inválidos recebem a cor da categoria
+                if (!isDuplicado) applyRowColor(tr, true, motivo || '');
             } else {
                 return;
             }
@@ -1203,18 +1243,18 @@
             }
         }
 
-        // Mapa de categorias de inválidos → cores distintas no tooltip e na tabela
+        // Mapa de categorias de inválidos → cores distintas no tooltip, badge e fundo da linha
         const INVALID_CATEGORIES = {
-            'Número bloqueado':          { color: 'text-rose-400',   badgeColor: 'text-rose-600' },
-            'Número inválido':           { color: 'text-orange-300', badgeColor: 'text-orange-600' },
-            'Número ausente':            { color: 'text-orange-300', badgeColor: 'text-orange-600' },
-            'Mensagem vazia':            { color: 'text-amber-300',  badgeColor: 'text-amber-600' },
-            'Número duplicado':          { color: 'text-yellow-300', badgeColor: 'text-orange-600' },
-            'Não encontrado no WhatsApp':{ color: 'text-red-300',    badgeColor: 'text-red-600' },
-            'Falha no anexo':            { color: 'text-pink-300',   badgeColor: 'text-pink-600' },
-            'Falha no envio':            { color: 'text-fuchsia-300',badgeColor: 'text-fuchsia-600' },
-            'Sem detalhes':              { color: 'text-gray-400',   badgeColor: 'text-red-600' },
-            'Outros':                    { color: 'text-gray-300',   badgeColor: 'text-red-600' },
+            'Número bloqueado':          { color: 'text-rose-400',    badgeColor: 'text-rose-600',    rowBg: 'bg-rose-50',    rowHover: 'hover:bg-rose-100' },
+            'Número inválido':           { color: 'text-orange-300',  badgeColor: 'text-orange-600',  rowBg: 'bg-orange-50',  rowHover: 'hover:bg-orange-100' },
+            'Número ausente':            { color: 'text-orange-300',  badgeColor: 'text-orange-600',  rowBg: 'bg-orange-50',  rowHover: 'hover:bg-orange-100' },
+            'Mensagem vazia':            { color: 'text-amber-300',   badgeColor: 'text-amber-600',   rowBg: 'bg-amber-50',   rowHover: 'hover:bg-amber-100' },
+            'Número duplicado':          { color: 'text-yellow-300',  badgeColor: 'text-orange-600',  rowBg: 'bg-yellow-50',  rowHover: 'hover:bg-yellow-100' },
+            'Não encontrado no WhatsApp':{ color: 'text-red-300',     badgeColor: 'text-red-600',     rowBg: 'bg-red-50',     rowHover: 'hover:bg-red-100' },
+            'Falha no anexo':            { color: 'text-pink-300',    badgeColor: 'text-pink-600',    rowBg: 'bg-pink-50',    rowHover: 'hover:bg-pink-100' },
+            'Falha no envio':            { color: 'text-fuchsia-300', badgeColor: 'text-fuchsia-600', rowBg: 'bg-fuchsia-50', rowHover: 'hover:bg-fuchsia-100' },
+            'Sem detalhes':              { color: 'text-gray-400',    badgeColor: 'text-red-600',     rowBg: 'bg-red-50',     rowHover: 'hover:bg-red-100' },
+            'Outros':                    { color: 'text-gray-300',    badgeColor: 'text-red-600',     rowBg: 'bg-red-50',     rowHover: 'hover:bg-red-100' },
         };
 
         function categorizeInvalidMotivo(motivo) {
@@ -1237,38 +1277,55 @@
             let totalInvalidos = 0;
 
             rows.forEach(tr => {
-                if (tr.dataset.invalido !== '1') return;
+                // Duplicados são uma categoria separada — não contam como inválidos
+                if (tr.dataset.invalido !== '1' || tr.dataset.duplicado === '1') return;
                 totalInvalidos++;
                 const motivo = (tr.dataset.motivo || '').trim();
                 const categoria = categorizeInvalidMotivo(motivo);
                 motivos[categoria] = (motivos[categoria] || 0) + 1;
             });
 
-            const tooltipContent = document.getElementById('invalids-tooltip-content');
-            if (totalInvalidos === 0) {
-                tooltipContent.innerHTML = '<p class="text-gray-400 italic">Nenhum inválido ainda</p>';
-                return;
-            }
-
             // Ordena por quantidade (maior primeiro)
             const sorted = Object.entries(motivos).sort((a, b) => b[1] - a[1]);
+
+            // Monta o HTML das linhas de breakdown
             let html = '';
-            sorted.forEach(([cat, count]) => {
-                const catInfo = INVALID_CATEGORIES[cat] || INVALID_CATEGORIES['Outros'];
-                html += `<p class="flex justify-between gap-2"><span>${cat}</span><span class="font-semibold ${catInfo.color}">${count}</span></p>`;
-            });
-            tooltipContent.innerHTML = html;
+            if (totalInvalidos === 0) {
+                html = '<p class="text-gray-400 italic">Nenhum inválido ainda</p>';
+            } else {
+                sorted.forEach(([cat, count]) => {
+                    const catInfo = INVALID_CATEGORIES[cat] || INVALID_CATEGORIES['Outros'];
+                    html += `<p class="flex justify-between gap-2"><span>${cat}</span><span class="font-semibold ${catInfo.color}">${count}</span></p>`;
+                });
+            }
+
+            // --- Tooltip do card lateral (sidebar) ---
+            const sidebarContent = document.getElementById('invalids-tooltip-content');
+            if (sidebarContent) sidebarContent.innerHTML = html;
+
+            // --- Tooltip do cabeçalho da tabela ---
+            const thContent = document.getElementById('status-th-tooltip-content');
+            const thTotal  = document.getElementById('status-th-tooltip-total');
+            if (thContent) thContent.innerHTML = html;
+            if (thTotal) {
+                thTotal.textContent = totalInvalidos > 0 ? `total ${totalInvalidos}` : '';
+            }
         }
 
         function updateContactsCount() {
             const rows = document.querySelectorAll('#contacts-tbody tr');
             let enviados = 0, invalidos = 0, duplicados = 0;
             rows.forEach(tr => {
-                if (tr.dataset.invalido === '1') invalidos++;
-                else if (tr.dataset.enviado === '1') enviados++;
-                if (tr.dataset.duplicado === '1') duplicados++;
+                // Duplicado tem precedência: não entra na contagem de inválidos
+                if (tr.dataset.duplicado === '1') {
+                    duplicados++;
+                } else if (tr.dataset.invalido === '1') {
+                    invalidos++;
+                } else if (tr.dataset.enviado === '1') {
+                    enviados++;
+                }
             });
-            const pendentes = rows.length - enviados - invalidos;
+            const pendentes = rows.length - enviados - invalidos - duplicados;
             let text = `${rows.length} contatos · ${pendentes} pendentes · ${enviados} enviados · ${invalidos} inválidos`;
             if (duplicados > 0) text += ` · ${duplicados} duplicados`;
             document.getElementById('contacts-count').textContent = text;
@@ -1487,6 +1544,34 @@
             saveConfig(true);
         }
 
+        // Reseta visualmente os status da tabela ao iniciar um novo envio.
+        // Regras:
+        //   - enviado=1  → mantém (sender vai pular via [SKIP])
+        //   - invalido=1 → mantém (só o botão de reenvio explícito limpa isso)
+        //   - duplicado=1 → mantém badge "Duplicado" (sender vai pular)
+        //   - pendente (enviado=0, invalido=0, duplicado=0) → nada muda, já está pronto
+        function resetAllContactsStatus() {
+            // Nada a resetar nas linhas — o único estado que muda ao iniciar é o
+            // que o sender vai emitir via SSE conforme processa cada contato.
+            // Recalcula apenas os contadores da sidebar a partir do estado atual.
+            const rows = document.querySelectorAll('#contacts-tbody tr');
+            let enviados = 0, invalidos = 0, duplicados = 0;
+            rows.forEach(tr => {
+                // Duplicado tem precedência — não entra na contagem de inválidos
+                if (tr.dataset.duplicado === '1') duplicados++;
+                else if (tr.dataset.invalido === '1') invalidos++;
+                else if (tr.dataset.enviado === '1') enviados++;
+            });
+            const pendentes = rows.length - enviados - invalidos - duplicados;
+
+            document.getElementById('status-sent').textContent     = enviados;
+            document.getElementById('status-invalids').textContent = invalidos;
+            document.getElementById('status-pending').textContent  = pendentes;
+
+            updateInvalidsTooltip();
+            updateContactsCount();
+        }
+
         // --- Controles ---
         async function startSending() {
             const statusEl = document.getElementById('control-status');
@@ -1535,6 +1620,7 @@
                 const response = await fetch('/start', { method: 'POST' });
                 const data = await response.json();
                 if (response.ok) {
+                    resetAllContactsStatus();
                     statusEl.textContent = 'Envio iniciado. Escaneie o QR Code no navegador.';
                     statusEl.className = 'mt-2 text-sm text-green-600';
                 } else {

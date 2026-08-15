@@ -116,6 +116,22 @@ def _set_excel_source(origem: str, path) -> None:
     state.excel_saved_at = _file_timestamp(path)
 
 
+def _count_contacts(df: pd.DataFrame) -> tuple[int, int, int, int]:
+    """
+    Retorna (total, pendentes, enviados, invalidos, duplicados) a partir do DataFrame.
+    Duplicados (Invalido=X com Motivo contendo 'duplicado') são contados separadamente
+    e NÃO entram na contagem de inválidos.
+    """
+    total = len(df)
+    enviados = int((df.get("Enviado", pd.Series(dtype=str)).str.strip().str.upper() == "X").sum())
+    invalidos_mask = df.get("Invalido", pd.Series(dtype=str)).str.strip().str.upper() == "X"
+    duplicados_mask = invalidos_mask & df.get("Motivo", pd.Series(dtype=str)).str.lower().str.contains("duplicado", na=False)
+    invalidos = int((invalidos_mask & ~duplicados_mask).sum())
+    duplicados = int(duplicados_mask.sum())
+    pendentes = total - enviados - invalidos - duplicados
+    return total, pendentes, enviados, invalidos, duplicados
+
+
 def get_excel_info() -> dict:
     """Procedência da planilha em uso, para a tela avisar o usuário."""
     return {
@@ -663,6 +679,11 @@ async def get_contacts():
                     first_nome = contacts[first_idx]["pessoa"] or f"linha {first_idx + 1}"
                     contact["duplicado"] = True
                     contact["motivo_duplicado"] = f"Número duplicado (mesmo que {first_nome}, linha {first_idx + 1})"
+                    # Se o sender gravou Invalido=X por duplicata, limpa visualmente:
+                    # o frontend trata duplicados como categoria própria, não como inválido
+                    if contact["invalido"] and "duplicado" in contact["motivo"].lower():
+                        contact["invalido"] = False
+                        contact["motivo"] = ""
                 else:
                     numeros_vistos[num_norm] = i
                     contact["duplicado"] = False
