@@ -60,6 +60,20 @@ class AttachmentError(RuntimeError):
     """
 
 
+class WhatsAppNotLoadedError(RuntimeError):
+    """
+    Levantada quando o WhatsApp Web não terminou de carregar (o painel de
+    conversas `#pane-side` não apareceu) depois de navegar para a conversa.
+
+    É falha de AMBIENTE (rede lenta, aba recarregando devagar), não do contato:
+    o número pode ser perfeitamente válido. Por isso o contato NÃO é marcado
+    como inválido — continua pendente para a próxima execução.
+
+    Levantada sempre ANTES de qualquer entrega (nenhum anexo enviado, nenhuma
+    tecla digitada), o que torna seguro retentar a navegação.
+    """
+
+
 class InvalidNumberError(RuntimeError):
     """
     Levantada quando o WhatsApp Web exibe o popup de 'número inválido' ao
@@ -111,6 +125,23 @@ class WhatsAppSender:
     conforme planilha Excel carregada.
     """
 
+    # --- Tempos da fase de navegação (abrir a conversa) ---------------------- #
+    # O tempo real observado no log entre navegar e a conversa ficar pronta é de
+    # 19s a 34s por contato (o WhatsApp Web recarrega o app inteiro a cada
+    # `driver.get`). Um orçamento de 30s ficava dentro dessa faixa, então
+    # qualquer variação de rede estourava o timeout e o contato era marcado como
+    # inválido sem culpa nenhuma. 60s dá folga real.
+    _PANE_LOAD_TIMEOUT = 60
+
+    # Espera pela conversa aberta DEPOIS que o app já carregou. Número
+    # inexistente/bloqueado não depende deste tempo: é detectado pelo popup.
+    _CHAT_OPEN_TIMEOUT = 20
+
+    # Tentativas da fase de navegação. Retentar aqui é seguro porque nada foi
+    # entregue ainda — nenhum anexo enviado, nenhuma tecla digitada. Depois do
+    # primeiro anexo ou keystroke NÃO existe retentativa em nenhum caminho.
+    _NAV_MAX_ATTEMPTS = 2
+
     def __init__(
         self,
         excel_path: str,
@@ -133,6 +164,15 @@ class WhatsAppSender:
         self._total_pending = 0
         self._total_contacts = 0
         self._total_invalids = 0
+        # Motivos dos inválidos DESTA sessão: {texto_do_motivo: quantidade}.
+        # É a fonte do detalhamento mostrado no tooltip "Inválidos" da sidebar.
+        # Zera junto com _total_invalids a cada novo envio; o histórico completo
+        # continua na planilha (colunas Invalido/Motivo) e no log.txt.
+        self._invalid_motivos: dict = {}
+        # Quantas mensagens este envio pretende mandar: min(total_msgs configurado,
+        # pendentes reais). É o denominador que o painel deve mostrar — sem isso o
+        # "Pendentes" exibia a planilha inteira mesmo com o usuário pedindo 5.
+        self._session_target = 0
         self._running = False
         self._stop_event = threading.Event()
 
@@ -176,7 +216,46 @@ class WhatsAppSender:
                 "total_pending": self._total_pending,
                 "total_contacts": self._total_contacts,
                 "total_invalids": self._total_invalids,
+                "invalid_motivos": dict(self._invalid_motivos),
+                "session_target": self._session_target,
             }
+
+    def _contar_invalido(self, motivo: str):
+        """
+        Contabiliza um contato invalidado NESTA sessão.
+
+        Centraliza o que antes estava repetido em sete pontos do laço de envio
+        e passa a registrar também o motivo — é o que alimenta o detalhamento do
+        tooltip "Inválidos".
+
+        O texto do motivo vai cru para o frontend, que já sabe agrupá-lo em
+        categorias (bloqueado, número inválido, falha no anexo...). Manter a
+        classificação só no frontend evita duas listas de categorias
+        divergindo com o tempo.
+
+        Não mexe em `_total_pending`: um contato inválido não consome vaga da
+        meta do envio — o próximo contato da planilha assume o lugar dele.
+        Quem ajusta os pendentes é `_sincronizar_pendentes()`.
+        """
+        chave = (motivo or "").strip() or "Sem detalhes"
+        with self._lock:
+            self._total_invalids += 1
+            self._invalid_motivos[chave] = self._invalid_motivos.get(chave, 0) + 1
+
+    def _sincronizar_pendentes(self, disponiveis_na_planilha: Optional[int] = None) -> int:
+        """
+        Recalcula quantas mensagens ainda faltam NESTA sessão e devolve o valor.
+
+        Pendentes = meta da sessão - já enviadas, limitado pelos contatos que
+        ainda restam na planilha (se acabarem os contatos, não há como cumprir a
+        meta). É o número que o painel mostra em "Pendentes".
+        """
+        with self._lock:
+            falta = max(0, self._session_target - self._messages_sent)
+            if disponiveis_na_planilha is not None:
+                falta = min(falta, max(0, disponiveis_na_planilha))
+            self._total_pending = falta
+            return falta
 
     def is_running(self) -> bool:
         """Verifica se o sender está rodando."""
@@ -377,62 +456,19 @@ class WhatsAppSender:
             df["Motivo"] = df["Motivo"].fillna("").astype(str).str.strip()
         return df
 
-    def _max_tentativas_contato(self) -> int:
-        """Quantas falhas um contato pode ter antes de ser abandonado."""
-        try:
-            return max(1, int(self.config.get("max_tentativas_contato", 3)))
-        except (TypeError, ValueError):
-            return 3
-
-    def _registrar_falha(self, df: pd.DataFrame, idx, pessoa: str, numero: str, motivo: str):
-        """
-        Contabiliza uma falha de envio do contato.
-
-        Enquanto estiver abaixo do limite, o contato continua pendente e é
-        retentado na próxima rodada. Ao atingir o limite ele é marcado como
-        inválido, para não ficar consumindo rodada após rodada indefinidamente.
-        """
-        if "Tentativas" not in df.columns:
-            df["Tentativas"] = 0
-        try:
-            falhas = int(df.at[idx, "Tentativas"] or 0) + 1
-        except (TypeError, ValueError):
-            falhas = 1
-        df.at[idx, "Tentativas"] = falhas
-        limite = self._max_tentativas_contato()
-
-        if falhas >= limite:
-            df.at[idx, "Invalido"] = "X"
-            df.at[idx, "Motivo"] = f"Falhou {falhas} vezes seguidas ({motivo}). Limite de tentativas atingido."
-            self._save_contacts(df)
-            with self._lock:
-                self._total_pending -= 1
-                self._total_invalids += 1
-            file_logger.error(
-                f"Contato abandonado após {falhas} falhas: {pessoa} ({numero}) — {motivo}"
-            )
-            self._log(
-                f"❌ {pessoa} — falhou {falhas}x ({motivo}). Desistindo deste contato "
-                f"para não travar as próximas rodadas."
-            )
-            self._notify_contact_update(
-                idx, numero, "invalido", "",
-                f"Falhou {falhas} vezes seguidas ({motivo}). Limite de tentativas atingido.",
-            )
-        else:
-            self._save_contacts(df)
-            self._log(
-                f"⚠️ {pessoa} — falha ao enviar ({motivo}). Tentativa {falhas}/{limite}, "
-                f"será tentado novamente na próxima rodada."
-            )
-
     def _save_contacts(self, df: pd.DataFrame):
         """Salva a planilha com progresso atualizado."""
         df.to_excel(self.excel_path, index=False)
 
     def _get_pending_contacts(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Retorna contatos pendentes (não enviados, não inválidos, dentro do limite de tentativas)."""
-        return get_pending_contacts(df, max_tentativas=self._max_tentativas_contato())
+        """
+        Retorna contatos pendentes (não enviados e não inválidos).
+
+        Não há mais limite de tentativas para filtrar: toda falha marca o contato
+        como inválido na hora, com o motivo no tooltip. Quem quiser tentar de novo
+        usa o botão de reenvio (↺), que limpa o status da linha.
+        """
+        return get_pending_contacts(df)
 
     def _clean_number(self, numero) -> str:
         return clean_number(numero)
@@ -807,84 +843,135 @@ class WhatsAppSender:
         variacao = random.choice([-2, -1, 0, 1, 2])
         return max(1, base + variacao)
 
-    def _generate_burst_plan(self, total_msgs: int, tempo_minutos: int) -> list:
+    # Constantes de ritmo (usadas pelo planejador de rajadas)
+    DELAY_INTRA_MIN = 15   # delay mínimo entre msgs dentro de uma rajada
+    DELAY_INTRA_MAX = 25   # delay máximo entre msgs dentro de uma rajada
+    BURST_MAX = 8          # tamanho máximo de uma rajada
+
+    @classmethod
+    def _particiona_rajadas(cls, total_msgs: int) -> list:
         """
-        Gera um plano de envio em rajadas (bursts) com distribuição irregular.
+        Divide `total_msgs` em rajadas de tamanhos irregulares.
 
-        Em vez de enviar 1 msg a cada X segundos (metrônomo), simula o
-        comportamento real de uma pessoa: manda umas 4-5 seguidas, para,
-        manda mais 2-3, etc.
+        Garante SEMPRE pelo menos duas rajadas quando há 2+ mensagens, para que
+        exista pelo menos uma pausa longa no meio do caminho. Antes, qualquer
+        total <= 8 virava uma única rajada com intervalo fixo entre as mensagens
+        — na prática um metrônomo, exatamente o que o modo rajada deveria evitar.
 
-        Retorna uma lista de dicts:
-        [
-            {"burst_size": 5, "intra_delay": 18, "pause_after": 300},
-            {"burst_size": 3, "intra_delay": 15, "pause_after": 180},
-            ...
-        ]
-
-        - burst_size: quantas msgs mandar seguidas nessa rajada
-        - intra_delay: delay entre msgs dentro da rajada (curto, 15-25s)
-        - pause_after: pausa após essa rajada antes da próxima (mais longa)
-          O último burst tem pause_after = 0 (não precisa esperar depois)
+        O tamanho máximo cresce com o total (~1/3 dele, limitado a BURST_MAX),
+        para que envios pequenos rendam várias rajadas curtas (5 msgs → algo como
+        2, 1, 2) e envios grandes não virem dezenas de rajadas de 1 msg.
         """
-        DELAY_INTRA_MIN = 15   # delay mínimo entre msgs dentro de um burst
-        DELAY_INTRA_MAX = 25   # delay máximo entre msgs dentro de um burst
-        BURST_MIN = 2          # tamanho mínimo de uma rajada
-        BURST_MAX = 8          # tamanho máximo de uma rajada
-
         if total_msgs <= 0:
             return []
+        if total_msgs == 1:
+            return [1]
 
-        # Caso trivial: poucas mensagens — um único burst
-        if total_msgs <= BURST_MAX:
-            intra_delay = random.uniform(DELAY_INTRA_MIN, DELAY_INTRA_MAX)
-            return [{"burst_size": total_msgs, "intra_delay": intra_delay, "pause_after": 0}]
+        burst_max = min(cls.BURST_MAX, max(2, round(total_msgs / 3)))
 
-        # Gera bursts com tamanhos aleatórios até somar total_msgs
-        bursts = []
+        bursts: list = []
         restante = total_msgs
         while restante > 0:
-            if restante <= BURST_MAX:
+            # Só fecha tudo numa rajada final se já existe pelo menos uma antes.
+            if bursts and restante <= burst_max:
                 bursts.append(restante)
                 restante = 0
             else:
-                size = random.randint(BURST_MIN, min(BURST_MAX, restante - 1))
+                # Deixa no mínimo 1 msg para a rajada seguinte
+                size = random.randint(1, max(1, min(burst_max, restante - 1)))
                 bursts.append(size)
                 restante -= size
+        return bursts
 
-        # Calcula o tempo total disponível e distribui as pausas
-        tempo_segundos = tempo_minutos * 60
+    def _generate_burst_plan(self, total_msgs: int, tempo_minutos: int) -> list:
+        """
+        Gera um plano de envio em rajadas (bursts) com distribuição irregular
+        que ocupa TODA a janela de tempo configurada pelo usuário.
 
-        # Tempo gasto dentro dos bursts (intra-delays)
-        intra_delays = []
-        tempo_intra_total = 0
-        for size in bursts:
-            d = random.uniform(DELAY_INTRA_MIN, DELAY_INTRA_MAX)
-            intra_delays.append(d)
-            # Dentro de cada burst há (size - 1) intervalos
-            tempo_intra_total += (size - 1) * d
+        Em vez de enviar 1 msg a cada X segundos (metrônomo), simula o
+        comportamento real de uma pessoa: manda 2 seguidas, para bastante,
+        manda 1, para, manda mais 2...
 
-        # Tempo restante para distribuir entre as pausas dos bursts
-        tempo_para_pausas = max(0, tempo_segundos - tempo_intra_total)
+        Retorna uma lista de dicts:
+        [
+            {"burst_size": 2, "intra_delay": 22, "pause_after": 560},
+            {"burst_size": 1, "intra_delay": 20, "pause_after": 580},
+            {"burst_size": 2, "intra_delay": 21, "pause_after": 0},
+        ]
 
-        # Distribui pausas com pesos aleatórios (distribuição Dirichlet-like)
-        num_pausas = len(bursts) - 1  # última rajada não tem pausa depois
-        if num_pausas > 0 and tempo_para_pausas > 0:
-            # Gera pesos aleatórios
-            pesos = [random.uniform(0.5, 2.0) for _ in range(num_pausas)]
-            soma_pesos = sum(pesos)
-            pausas = [(p / soma_pesos) * tempo_para_pausas for p in pesos]
-        else:
-            pausas = []
+        - burst_size: quantas msgs mandar seguidas nessa rajada
+        - intra_delay: delay entre msgs dentro da rajada (curto)
+        - pause_after: pausa após essa rajada antes da próxima (longa).
+          A última rajada tem pause_after = 0 — o envio termina junto com ela,
+          e é por isso que a soma dos intervalos precisa fechar a janela toda.
 
-        # Monta o plano final
+        Orçamento de tempo
+        ------------------
+        Independente de como as mensagens sejam agrupadas, o número de
+        intervalos é sempre `total_msgs - 1` (a soma de `size-1` por rajada mais
+        as pausas entre rajadas). O plano distribui a janela inteira entre esses
+        intervalos: os de dentro da rajada ficam curtos e o que sobra vai para
+        as pausas. Assim 5 msgs em 20 min terminam por volta dos 20 min, e não
+        em 5 (bug: o intervalo saía fixo em 15-25s) nem espaçadas de 5 em 5 min
+        como um metrônomo.
+
+        O tempo de envio em si (abrir conversa, digitar, anexar) não é
+        descontado da janela, então o total real fica ligeiramente ACIMA do
+        configurado. É o lado seguro do erro: nunca envia mais rápido do que o
+        usuário pediu. A tela já avisa que a estimativa é aproximada.
+        """
+        if total_msgs <= 0:
+            return []
+
+        tempo_segundos = max(0, tempo_minutos) * 60
+
+        # Uma mensagem só: nada a espaçar.
+        if total_msgs == 1:
+            return [{"burst_size": 1, "intra_delay": 0.0, "pause_after": 0.0}]
+
+        bursts = self._particiona_rajadas(total_msgs)
+        n_gaps = total_msgs - 1              # total de intervalos do plano
+        n_pausas = len(bursts) - 1           # intervalos longos (entre rajadas)
+        media_gap = tempo_segundos / n_gaps
+
+        # Intervalo curto (dentro da rajada): 15-25s, mas nunca maior que a média
+        # disponível — janela apertada não pode ter gap "curto" maior que o normal.
+        alvo_intra = min(self.DELAY_INTRA_MAX, max(self.DELAY_INTRA_MIN, media_gap * 0.5))
+        teto_intra = max(self.DELAY_INTRA_MIN, media_gap)
+        intra_delays = [
+            max(self.DELAY_INTRA_MIN, min(alvo_intra * random.uniform(0.8, 1.2), teto_intra))
+            for _ in bursts
+        ]
+
+        tempo_intra = sum((size - 1) * d for size, d in zip(bursts, intra_delays))
+        tempo_para_pausas = tempo_segundos - tempo_intra
+
+        # Sem folga para pausas de verdade (muitas msgs em pouco tempo): distribui
+        # a janela igualmente entre todos os intervalos, respeitando o mínimo de
+        # segurança. Perde-se o efeito rajada, mas é o que o tempo permite.
+        if n_pausas == 0 or tempo_para_pausas < n_pausas * alvo_intra:
+            gap = max(self.DELAY_INTRA_MIN, media_gap)
+            return [
+                {
+                    "burst_size": size,
+                    "intra_delay": gap,
+                    "pause_after": gap if i < len(bursts) - 1 else 0.0,
+                }
+                for i, size in enumerate(bursts)
+            ]
+
+        # Distribui o tempo restante entre as pausas com pesos aleatórios
+        # (Dirichlet-like): pausas desiguais, mas somando a janela toda.
+        pesos = [random.uniform(0.6, 1.6) for _ in range(n_pausas)]
+        soma_pesos = sum(pesos)
+        pausas = [(p / soma_pesos) * tempo_para_pausas for p in pesos]
+
         plan = []
         for i, size in enumerate(bursts):
-            pause = pausas[i] if i < len(pausas) else 0
             plan.append({
                 "burst_size": size,
                 "intra_delay": intra_delays[i],
-                "pause_after": pause,
+                "pause_after": pausas[i] if i < n_pausas else 0.0,
             })
 
         return plan
@@ -990,37 +1077,90 @@ class WhatsAppSender:
             url = f"https://web.whatsapp.com/send?phone={numero_limpo}&text={texto_encoded}"
 
         try:
-            # Scroll aleatório antes de navegar (simula olhar conversas)
-            if human:
-                self._random_scroll()
+            # ---------------------------------------------------------------- #
+            # FASE DE NAVEGAÇÃO — a única com retentativa.
+            #
+            # Nada foi entregue neste ponto: o anexo só é enviado depois (Passo 1)
+            # e a digitação/ENTER depois ainda (Passo 2). Repetir `driver.get`
+            # aqui não pode duplicar mensagem nem anexo. Depois da primeira
+            # entrega, nenhum caminho retenta.
+            # ---------------------------------------------------------------- #
+            for tentativa in range(1, self._NAV_MAX_ATTEMPTS + 1):
+                # Scroll aleatório antes de navegar (simula olhar conversas)
+                if human:
+                    self._random_scroll()
 
-            self._driver.get(url)
+                self._driver.get(url)
 
-            # Espera a página carregar (pane-side indica que o WhatsApp carregou)
-            # Usa espera interruptível em vez de WebDriverWait monolítico
-            pane_found = False
-            pane_deadline = time.monotonic() + 30
-            while time.monotonic() < pane_deadline:
-                if self._should_stop():
-                    self._dismiss_on_stop()
-                    return False
+                # Espera a página carregar (pane-side indica que o WhatsApp carregou)
+                # Usa espera interruptível em vez de WebDriverWait monolítico
+                pane_found = False
+                pane_deadline = time.monotonic() + self._PANE_LOAD_TIMEOUT
+                while time.monotonic() < pane_deadline:
+                    if self._should_stop():
+                        self._dismiss_on_stop()
+                        return False
+                    try:
+                        self._driver.find_element(By.CSS_SELECTOR, "#pane-side")
+                        pane_found = True
+                        break
+                    except Exception:
+                        pass
+                    if self._interruptible_sleep(0.5):
+                        self._dismiss_on_stop()
+                        return False
+
+                if not pane_found:
+                    # O app do WhatsApp Web não subiu: problema de ambiente, não
+                    # do número. Recarrega e tenta de novo; se insistir, sinaliza
+                    # com exceção própria para o contato seguir PENDENTE.
+                    if tentativa < self._NAV_MAX_ATTEMPTS:
+                        file_logger.warning(
+                            f"WhatsApp Web não carregou (#pane-side) em "
+                            f"{self._PANE_LOAD_TIMEOUT}s para {pessoa} ({numero_limpo}) — "
+                            f"tentativa {tentativa}/{self._NAV_MAX_ATTEMPTS}, recarregando."
+                        )
+                        self._log(
+                            f"🔄 {pessoa} — WhatsApp Web não carregou, recarregando "
+                            f"(tentativa {tentativa + 1}/{self._NAV_MAX_ATTEMPTS})..."
+                        )
+                        continue
+                    raise WhatsAppNotLoadedError(
+                        f"WhatsApp Web não carregou (#pane-side) em "
+                        f"{self._PANE_LOAD_TIMEOUT}s após {self._NAV_MAX_ATTEMPTS} tentativa(s)"
+                    )
+
+                # Espera o chat carregar OU detecta popup de número inválido/bloqueado.
+                # O WhatsApp Web mostra um popup imediatamente quando o número é
+                # inválido ou bloqueado — detectá-lo evita esperar o timeout inteiro
+                # e permite dar feedback preciso ao usuário.
                 try:
-                    self._driver.find_element(By.CSS_SELECTOR, "#pane-side")
-                    pane_found = True
-                    break
-                except Exception:
-                    pass
-                if self._interruptible_sleep(0.5):
-                    self._dismiss_on_stop()
-                    return False
-            if not pane_found:
-                raise TimeoutException("Timeout esperando WhatsApp carregar (pane-side)")
+                    self._wait_chat_or_invalid_popup(
+                        numero_limpo, pessoa, timeout=self._CHAT_OPEN_TIMEOUT
+                    )
+                except TimeoutException:
+                    # A conversa não abriu, mas o app está de pé. Pode ser lentidão
+                    # pontual — uma segunda tentativa custa pouco e não duplica
+                    # nada. Persistindo, aí sim o contato é marcado como inválido
+                    # (tratado no laço de envio).
+                    if self._should_stop():
+                        self._dismiss_on_stop()
+                        return False
+                    if tentativa < self._NAV_MAX_ATTEMPTS:
+                        file_logger.warning(
+                            f"Conversa de {pessoa} ({numero_limpo}) não abriu em "
+                            f"{self._CHAT_OPEN_TIMEOUT}s — tentativa "
+                            f"{tentativa}/{self._NAV_MAX_ATTEMPTS}, reabrindo."
+                        )
+                        self._log(
+                            f"🔄 {pessoa} — conversa não abriu, tentando novamente "
+                            f"({tentativa + 1}/{self._NAV_MAX_ATTEMPTS})..."
+                        )
+                        continue
+                    raise
 
-            # Espera o chat carregar OU detecta popup de número inválido/bloqueado.
-            # O WhatsApp Web mostra um popup imediatamente quando o número é
-            # inválido ou bloqueado — detectá-lo evita esperar o timeout inteiro
-            # de 20s e permite dar feedback preciso ao usuário.
-            self._wait_chat_or_invalid_popup(numero_limpo, pessoa, timeout=20)
+                # Conversa aberta: fim da fase com retentativa.
+                break
 
             # Pequena pausa antes de interagir
             if human:
@@ -1143,6 +1283,8 @@ class WhatsAppSender:
             raise  # Falha no anexo: contato será marcado inválido sem retentativa
         except InvalidNumberError:
             raise  # Número rejeitado pelo WhatsApp (popup detectado)
+        except WhatsAppNotLoadedError:
+            raise  # WhatsApp Web não carregou: contato permanece pendente
         except TimeoutException:
             raise  # Re-raise para marcar como inválido
         except Exception as e:
@@ -2028,17 +2170,9 @@ class WhatsAppSender:
             total_msgs = self.config.get("total_msgs", 10)
             tempo_minutos = self.config.get("tempo_minutos", 60)
 
-            # Gera plano de envio em bursts (rajadas irregulares)
-            burst_plan = self._generate_burst_plan(total_msgs, tempo_minutos)
-            total_bursts = len(burst_plan)
-
             # Inicia envio por bursts
             self._set_state("enviando")
             browser_died = False
-
-            # Carrega contatos pendentes
-            df = self._load_contacts()
-            pending = self._get_pending_contacts(df)
 
             # --- Detecção de duplicados ---
             # Se allow_duplicates está desativado, marca duplicados como inválidos.
@@ -2065,26 +2199,40 @@ class WhatsAppSender:
                 for _, row in invalidos_df.iterrows():
                     self._log(f"[SKIP] {row['Nome']} — número inválido, pulando.")
 
-            # Duplicados são uma categoria separada — excluir da contagem de inválidos
-            duplicados_motivo = invalidos_df["Motivo"].str.lower().str.contains("duplicado", na=False)
+            # Meta desta sessão: o usuário pediu `total_msgs` mensagens, então é
+            # esse o número que manda — limitado pelos pendentes que existem de
+            # fato. O painel mostra esta meta em "Pendentes"; antes mostrava a
+            # planilha inteira (pedia 5, aparecia 200).
+            session_target = min(int(total_msgs), len(pending))
+
+            # Plano de rajadas dimensionado pela meta REAL, não pelo número
+            # configurado. Planejar para 10 e ter só 5 pendentes fazia o ritmo
+            # ser calculado para 10 msgs e o envio acabar na metade da janela.
+            burst_plan = self._generate_burst_plan(session_target, tempo_minutos)
+            total_bursts = len(burst_plan)
 
             with self._lock:
-                self._total_pending = len(pending)
+                self._session_target = session_target
+                self._total_pending = session_target
                 # _total_invalids começa em 0: conta apenas os inválidos desta sessão.
                 # Inválidos de sessões anteriores já estão na planilha mas não são desta rodada.
                 self._total_invalids = 0
+                self._invalid_motivos = {}
 
-            if len(pending) == 0:
+            if session_target == 0:
                 self._log("✅ Todos os contatos já foram processados!")
             else:
+                resumo_rajadas = " + ".join(str(b["burst_size"]) for b in burst_plan)
                 self._log(
-                    f"📤 Iniciando envio: {len(pending)} pendentes, "
-                    f"{total_bursts} rajadas planejadas em {tempo_minutos}min"
+                    f"📤 Iniciando envio: {session_target} mensagem(ns) desta vez "
+                    f"({len(pending)} pendente(s) na planilha), "
+                    f"{total_bursts} rajada(s) [{resumo_rajadas}] em {tempo_minutos}min"
                 )
 
                 # Iterador dos contatos pendentes
                 pending_iter = pending.iterrows()
                 total_enviados_sessao = 0
+                contatos_esgotados = False
 
                 for burst_idx, burst in enumerate(burst_plan):
                     if self._should_stop() or browser_died:
@@ -2104,12 +2252,17 @@ class WhatsAppSender:
 
                     self._log(
                         f"📨 Rajada {burst_idx + 1}/{total_bursts} "
-                        f"({burst_size} msgs, ~{intra_delay:.0f}s entre)"
+                        f"({burst_size} msg(s), ~{intra_delay:.0f}s entre)"
                     )
 
+                    # O laço conta mensagens REALMENTE enviadas, não iterações:
+                    # contato inválido não gasta vaga da rajada. Antes era
+                    # `for msg_in_burst in range(burst_size)` com `burst_size += 1`
+                    # nas falhas — o que não estende um range já criado. Resultado:
+                    # rajada com inválidos enviava menos que o planejado e o envio
+                    # terminava bem antes do fim da janela de tempo.
                     enviados_burst = 0
-
-                    for msg_in_burst in range(burst_size):
+                    while enviados_burst < burst_size:
                         if self._should_stop() or browser_died:
                             break
 
@@ -2117,8 +2270,9 @@ class WhatsAppSender:
                         try:
                             idx, row = next(pending_iter)
                         except StopIteration:
-                            # Não há mais contatos pendentes
+                            # Acabaram os contatos da planilha antes de cumprir a meta
                             self._log("✅ Todos os contatos foram processados!")
+                            contatos_esgotados = True
                             break
 
                         # Verifica horário comercial antes de cada mensagem
@@ -2152,16 +2306,13 @@ class WhatsAppSender:
                             df.at[idx, "Motivo"] = tooltip_motivo
                             self._save_contacts(df)
 
-                            with self._lock:
-                                self._total_pending -= 1
-                                self._total_invalids += 1
+                            self._contar_invalido(tooltip_motivo)
 
                             file_logger.warning(f"Contato inválido ({motivo}): {pessoa} ({numero})")
                             self._log(f"❌ {pessoa} ({numero}) — {motivo}, marcado como inválido.")
                             self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
-                            # Contato inválido não conta como msg do burst — tenta o próximo
-                            # mas precisa compensar no burst_size
-                            burst_size += 1
+                            # Inválido não gasta vaga da rajada: vai direto para o
+                            # próximo contato, sem esperar o delay entre mensagens.
                             continue
 
                         self._log(
@@ -2180,7 +2331,7 @@ class WhatsAppSender:
 
                                 with self._lock:
                                     self._messages_sent += 1
-                                    self._total_pending -= 1
+                                self._sincronizar_pendentes()
 
                                 enviados_burst += 1
                                 total_enviados_sessao += 1
@@ -2200,12 +2351,8 @@ class WhatsAppSender:
                                     df.at[idx, "Invalido"] = "X"
                                     df.at[idx, "Motivo"] = tooltip_motivo
                                     self._save_contacts(df)
-                                    with self._lock:
-                                        self._total_pending -= 1
-                                        self._total_invalids += 1
+                                    self._contar_invalido(tooltip_motivo)
                                     self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
-                                    # Compensa no burst para tentar o próximo contato
-                                    burst_size += 1
 
                         except BrowserClosedError as e:
                             file_logger.error(
@@ -2225,9 +2372,7 @@ class WhatsAppSender:
                             df.at[idx, "Invalido"] = "X"
                             df.at[idx, "Motivo"] = tooltip_motivo
                             self._save_contacts(df)
-                            with self._lock:
-                                self._total_pending -= 1
-                                self._total_invalids += 1
+                            self._contar_invalido(tooltip_motivo)
                             file_logger.error(
                                 f"Anexo falhou para {pessoa} ({numero}): {e} — "
                                 f"contato marcado como inválido (texto NÃO enviado)"
@@ -2237,8 +2382,6 @@ class WhatsAppSender:
                                 f"Mensagem NÃO enviada, contato marcado como inválido."
                             )
                             self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
-                            # Compensa no burst para tentar o próximo contato
-                            burst_size += 1
 
                         except InvalidNumberError as e:
                             # O WhatsApp Web indicou que o número é inválido ou
@@ -2267,9 +2410,7 @@ class WhatsAppSender:
                             df.at[idx, "Motivo"] = tooltip_motivo
                             self._save_contacts(df)
 
-                            with self._lock:
-                                self._total_pending -= 1
-                                self._total_invalids += 1
+                            self._contar_invalido(tooltip_motivo)
 
                             file_logger.warning(
                                 f"Número rejeitado: {pessoa} ({numero}) — {e}"
@@ -2278,24 +2419,51 @@ class WhatsAppSender:
                             self._notify_contact_update(
                                 idx, numero, "invalido", "", tooltip_motivo,
                             )
-                            # Compensa no burst para tentar o próximo contato
-                            burst_size += 1
+
+                        except WhatsAppNotLoadedError as e:
+                            # O WhatsApp Web não carregou (rede/aba lenta). Nada foi
+                            # entregue: nem anexo, nem texto. O contato NÃO é culpado,
+                            # então continua PENDENTE — não grava Invalido na planilha
+                            # e não conta como inválido no painel. Volta na próxima
+                            # execução sem intervenção manual.
+                            file_logger.warning(
+                                f"WhatsApp Web não carregou para {pessoa} ({numero}): {e} — "
+                                f"contato permanece pendente (nada foi enviado)."
+                            )
+                            self._log(
+                                f"⏭️ {pessoa} ({numero}) — WhatsApp Web não carregou "
+                                f"(internet/navegador lentos). Nada foi enviado; o "
+                                f"contato continua pendente para a próxima execução."
+                            )
 
                         except TimeoutException:
-                            df.at[idx, "Invalido"] = "X"
-                            df.at[idx, "Motivo"] = "Número não encontrado no WhatsApp (timeout ao abrir conversa)."
-                            self._save_contacts(df)
-
-                            with self._lock:
-                                self._total_pending -= 1
-                                self._total_invalids += 1
-
-                            file_logger.warning(f"Número inválido (timeout): {pessoa} ({numero})")
-                            self._log(f"❌ {pessoa} ({numero}) — número inválido ou não encontrado no WhatsApp.")
-                            self._notify_contact_update(
-                                idx, numero, "invalido", "",
-                                "Número não encontrado no WhatsApp (timeout ao abrir conversa).",
+                            # A conversa não abriu mesmo com o WhatsApp Web carregado
+                            # e depois das tentativas da fase de navegação. Sem mais
+                            # retentativas: marca como inválido e explica no motivo o
+                            # que pode ter acontecido, para o usuário investigar pelo
+                            # tooltip do contato. Ficar retentando escondia o
+                            # problema e consumia a janela de envio.
+                            tooltip_motivo = (
+                                "Timeout: a conversa não abriu no WhatsApp após "
+                                f"{self._NAV_MAX_ATTEMPTS} tentativa(s). "
+                                "Pode ser número sem WhatsApp, número inexistente, ou "
+                                "WhatsApp Web/internet lentos no momento do envio. "
+                                "Confira o número e use o botão de reenvio (↺) para tentar de novo."
                             )
+                            df.at[idx, "Invalido"] = "X"
+                            df.at[idx, "Motivo"] = tooltip_motivo
+                            self._save_contacts(df)
+                            self._contar_invalido(tooltip_motivo)
+                            file_logger.warning(
+                                f"Timeout ao abrir chat de {pessoa} ({numero}) — "
+                                f"marcado como inválido (sem retentativas)."
+                            )
+                            self._log(
+                                f"❌ {pessoa} ({numero}) — timeout ao abrir a conversa, "
+                                f"marcado como inválido. Passe o mouse no status do "
+                                f"contato para ver o motivo."
+                            )
+                            self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
 
                         except Exception as e:
                             if self._is_session_dead(e):
@@ -2318,19 +2486,16 @@ class WhatsAppSender:
                                 df.at[idx, "Invalido"] = "X"
                                 df.at[idx, "Motivo"] = tooltip_motivo
                                 self._save_contacts(df)
-                                with self._lock:
-                                    self._total_pending -= 1
-                                    self._total_invalids += 1
+                                self._contar_invalido(tooltip_motivo)
                                 self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
-                                # Compensa no burst para tentar o próximo contato
-                                burst_size += 1
 
                         # Delay intra-burst (entre msgs dentro da rajada)
-                        # Pulado na última msg do burst e quando vai parar
+                        # Pulado depois da última msg da rajada (a espera longa da
+                        # pausa entre rajadas assume daí) e quando vai parar.
                         if (
                             not self._should_stop()
                             and not browser_died
-                            and msg_in_burst < burst_size - 1
+                            and enviados_burst < burst_size
                         ):
                             # Variação gaussiana no intra_delay para ser mais natural
                             if self._human_behavior_enabled():
@@ -2343,19 +2508,32 @@ class WhatsAppSender:
                             self._interruptible_sleep(delay)
 
                     # Fim do burst — log e pausa entre bursts
-                    self._log(f"📊 Rajada {burst_idx + 1} finalizada: {enviados_burst} msgs enviadas")
+                    self._log(
+                        f"📊 Rajada {burst_idx + 1} finalizada: {enviados_burst} msg(s) enviada(s)"
+                    )
 
-                    if browser_died:
+                    if browser_died or self._should_stop():
                         break
 
-                    # Verifica se ainda há pendentes
+                    # Recalcula o que falta: meta da sessão x contatos que sobraram
                     df = self._load_contacts()
                     remaining = self._get_pending_contacts(df)
-                    with self._lock:
-                        self._total_pending = len(remaining)
+                    falta = self._sincronizar_pendentes(len(remaining))
 
                     if len(remaining) == 0:
                         self._log("✅ Todos os contatos foram processados!")
+                        break
+
+                    if contatos_esgotados:
+                        # A planilha acabou antes da meta — não faz sentido esperar
+                        # as pausas restantes do plano.
+                        break
+
+                    if falta == 0:
+                        self._log(
+                            f"✅ Meta desta sessão concluída: {total_enviados_sessao} "
+                            f"mensagem(ns) enviada(s)."
+                        )
                         break
 
                     # Pausa entre bursts (a última rajada não tem pausa)
@@ -2365,13 +2543,25 @@ class WhatsAppSender:
                         and not self._should_stop()
                     ):
                         pause_min = pause_after / 60
-                        self._log(f"⏸️ Pausa de ~{pause_min:.1f} min antes da próxima rajada...")
+                        self._log(
+                            f"⏸️ Pausa de ~{pause_min:.1f} min antes da próxima rajada "
+                            f"({falta} msg(s) restante(s))..."
+                        )
+
+                        # Estado "pausado" deixa claro na tela que o silêncio é
+                        # proposital (pausa da rajada) e não travamento. Antes o
+                        # painel seguia dizendo "Enviando" durante pausas longas.
+                        self._set_state("pausado")
 
                         # Espera em intervalos curtos para poder parar
-                        elapsed = 0
+                        elapsed = 0.0
                         while elapsed < pause_after and not self._should_stop():
-                            self._interruptible_sleep(min(2, pause_after - elapsed))
-                            elapsed += 2
+                            fatia = min(2.0, pause_after - elapsed)
+                            self._interruptible_sleep(fatia)
+                            elapsed += fatia
+
+                        if not self._should_stop():
+                            self._set_state("enviando")
 
             # Finalização
             if browser_died:

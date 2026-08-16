@@ -560,6 +560,13 @@ class FakeDriverSessao:
     def find_element(self, by, selector):
         return FakeField("")
 
+    def find_elements(self, by, selector):
+        # Idem FakeDriverEnvio: sem o campo do rodapé, a espera pela conversa
+        # aberta rodava até o timeout para cada contato.
+        if "contenteditable" in selector:
+            return [FakeField("")]
+        return []
+
     def execute(self, command, params=None):
         """Usado pelo ActionChains (Shift+Enter das quebras de linha)."""
         self.acoes.append(command)
@@ -584,10 +591,17 @@ class TestCotaDaRodada(unittest.TestCase):
         self._ws = whatsapp_sender
         self._orig_sleep = whatsapp_sender.time.sleep
         whatsapp_sender.time.sleep = lambda s: None
+        # As esperas do sender NÃO passam por time.sleep: ele usa
+        # _interruptible_sleep -> threading.Event.wait(). Sem neutralizar isso
+        # aqui, a suíte esperava as pausas entre rajadas de verdade (minutos ou
+        # horas) e travava indefinidamente no meio da execução.
+        self._orig_isleep = whatsapp_sender.WhatsAppSender._interruptible_sleep
+        whatsapp_sender.WhatsAppSender._interruptible_sleep = lambda self, s: False
         self.addCleanup(self._restore)
 
     def _restore(self):
         self._ws.time.sleep = self._orig_sleep
+        self._ws.WhatsAppSender._interruptible_sleep = self._orig_isleep
 
     def _rodar(self, resultados, msgs_por_rodada, total_rodadas=1):
         """
@@ -618,12 +632,12 @@ class TestCotaDaRodada(unittest.TestCase):
         sender = self._ws.WhatsAppSender(
             excel_path="fake.xlsx",
             config={
-                "msgs_por_rodada": msgs_por_rodada,
-                "total_rodadas": total_rodadas,
-                "intervalo_rodadas_min": 0,
+                # A configuração por rodadas (msgs_por_rodada/total_rodadas) foi
+                # substituída por "quantas mensagens em quanto tempo". A cota
+                # equivalente é o total de mensagens do envio.
+                "total_msgs": msgs_por_rodada * total_rodadas,
+                "tempo_minutos": 1,
                 "human_behavior": False,  # sem variação, resultado determinístico
-                "delay_min": 0,
-                "delay_max": 0,
             },
             log_callback=lambda m: None,
         )
@@ -666,14 +680,18 @@ class TestCotaDaRodada(unittest.TestCase):
         self.assertEqual((df["Invalido"] == "X").sum(), 3)
 
     def test_falha_de_envio_nao_consome_cota(self):
-        """Falha de envio (não é número inválido) também não gasta vaga."""
+        """
+        Falha de envio não gasta vaga da cota — e não fica pendente: o contato
+        é marcado como inválido na hora, com o motivo para o usuário investigar.
+        """
         tentados, df = self._rodar(
             ["ok", "falha", "ok", "ok"], msgs_por_rodada=3
         )
         self.assertEqual((df["Enviado"] == "X").sum(), 3)
-        # A falha continua pendente para a próxima rodada
-        self.assertEqual((df["Enviado"] != "X").sum(), 1)
-        self.assertEqual((df["Invalido"] == "X").sum(), 0)
+        # Sem retentativa: a falha virou inválido, não voltou para a fila
+        self.assertEqual((df["Invalido"] == "X").sum(), 1)
+        self.assertTrue(str(df.at[1, "Motivo"]).strip(),
+                        "contato que falhou precisa ter motivo preenchido")
 
     def test_sem_invalidos_envia_exatamente_a_cota(self):
         """Sem problemas, a rodada envia exatamente msgs_por_rodada."""
@@ -687,15 +705,18 @@ class TestCotaDaRodada(unittest.TestCase):
         self.assertEqual(len(tentados), 2)
         self.assertEqual((df["Enviado"] == "X").sum(), 2)
 
-    def test_teto_de_tentativas_encerra_rodada(self):
+    def test_planilha_toda_ruim_termina_sem_travar(self):
         """
-        Planilha só com números ruins não deve gerar rodada interminável:
-        o teto é max(batch*3, batch+10).
+        Planilha só com números ruins não pode gerar envio interminável.
+        Sem retentativas, cada contato é tentado UMA vez, marcado como inválido,
+        e o envio termina quando a planilha acaba.
         """
         tentados, df = self._rodar(["timeout"] * 60, msgs_por_rodada=2)
-        # teto = max(2*3, 2+10) = 12
-        self.assertLessEqual(len(tentados), 12)
         self.assertEqual((df["Enviado"] == "X").sum(), 0)
+        self.assertEqual((df["Invalido"] == "X").sum(), 60)
+        # Nenhum contato foi tentado duas vezes
+        self.assertEqual(len(tentados), len(set(tentados)))
+        self.assertEqual(len(tentados), 60)
 
     def test_duas_rodadas_total_correto(self):
         """2 rodadas de 2 mensagens = 4 no total."""
@@ -716,63 +737,43 @@ class TestCotaDaRodada(unittest.TestCase):
         self.assertEqual((df["Invalido"] == "X").sum(), 2)
 
 
-    def test_contato_que_sempre_falha_e_abandonado(self):
+    def test_contato_que_falha_e_invalidado_na_primeira_vez(self):
         """
-        Um contato que falha sempre não pode ser retentado para sempre: após
-        max_tentativas_contato falhas ele é marcado como inválido.
+        Não existe retentativa: quem falha é marcado como inválido na primeira
+        falha, com motivo preenchido, e não é tentado de novo no mesmo envio.
         """
         tentados, df = self._rodar(
             ["falha", "ok", "ok", "ok", "ok"],
             msgs_por_rodada=1,
             total_rodadas=6,
         )
-        # O contato problemático foi tentado no máximo 3 vezes (limite padrão)
-        falho = "1199999" + "0000"
-        self.assertEqual(tentados.count(falho), 3)
+        falho = "11999990000"
+        self.assertEqual(tentados.count(falho), 1, "contato falho não pode ser retentado")
         self.assertEqual(df.at[0, "Invalido"], "X")
-        self.assertEqual(int(df.at[0, "Tentativas"]), 3)
+        self.assertTrue(str(df.at[0, "Motivo"]).strip(),
+                        "o motivo é o que o usuário vai investigar no tooltip")
 
-    def test_limite_de_tentativas_configuravel(self):
-        """max_tentativas_contato=1 desiste do contato na primeira falha."""
-        import pandas as pd
+    def test_timeout_marca_invalido_com_motivo_explicativo(self):
+        """
+        Timeout ao abrir a conversa marca inválido na hora e o motivo precisa
+        explicar as causas possíveis, já que o usuário vai investigar por ele.
+        """
+        tentados, df = self._rodar(["timeout", "ok"], msgs_por_rodada=1)
+        self.assertEqual(tentados.count("11999990000"), 1)
+        self.assertEqual(df.at[0, "Invalido"], "X")
+        motivo = str(df.at[0, "Motivo"]).lower()
+        self.assertIn("timeout", motivo)
+        # Precisa citar as duas causas plausíveis, senão o usuário não sabe
+        # se o problema é o número ou a conexão dele
+        self.assertIn("whatsapp", motivo)
+        self.assertIn("lent", motivo)
 
-        estado = {"df": pd.DataFrame([{
-            "Nome": "Falho",
-            "Número": "11999990000",
-            "Mensagem": "oi",
-            "Arquivo": "",
-            "Enviado": "",
-            "DataEnvio": "",
-            "Invalido": "",
-        }])}
-
-        sender = self._ws.WhatsAppSender(
-            excel_path="fake.xlsx",
-            config={
-                "msgs_por_rodada": 1,
-                "total_rodadas": 5,
-                "intervalo_rodadas_min": 0,
-                "human_behavior": False,
-                "delay_min": 0,
-                "delay_max": 0,
-                "max_tentativas_contato": 1,
-            },
-            log_callback=lambda m: None,
-        )
-        tentados = []
-        sender._init_driver = lambda: FakeDriverSessao()
-        sender._load_contacts = lambda: estado["df"].copy()
-        sender._save_contacts = lambda df: estado.update({"df": df})
-        sender._wait_for_business_hours = lambda: None
-        sender._send_message = lambda *a, **k: (tentados.append(a[1]), False)[1]
-
-        sender.start()
-
-        self.assertEqual(len(tentados), 1)
-        self.assertEqual(estado["df"].at[0, "Invalido"], "X")
-
-    def test_pendentes_ignora_quem_estourou_o_limite(self):
-        """Contato com Tentativas >= limite não volta para a fila de pendentes."""
+    def test_pendentes_nao_dependem_mais_de_tentativas(self):
+        """
+        A coluna Tentativas não filtra mais nada: sem retentativas, o que define
+        pendente é só não estar enviado nem inválido. Planilhas antigas com
+        Tentativas alto voltam a ser elegíveis.
+        """
         import pandas as pd
 
         sender = self._ws.WhatsAppSender(
@@ -781,10 +782,11 @@ class TestCotaDaRodada(unittest.TestCase):
         df = pd.DataFrame([
             {"Enviado": "", "Invalido": "", "Tentativas": 0},
             {"Enviado": "", "Invalido": "", "Tentativas": 3},
-            {"Enviado": "", "Invalido": "", "Tentativas": 2},
+            {"Enviado": "", "Invalido": "X", "Tentativas": 0},
+            {"Enviado": "X", "Invalido": "", "Tentativas": 0},
         ])
         pendentes = sender._get_pending_contacts(df)
-        self.assertEqual(list(pendentes.index), [0, 2])
+        self.assertEqual(list(pendentes.index), [0, 1])
 
 
 class FakeFileInput:

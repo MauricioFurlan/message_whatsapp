@@ -79,7 +79,6 @@ class AppState:
         "hora_fim": "18:00",
         "skip_weekends": True,
         "human_behavior": True,
-        "max_tentativas_contato": 3,
         "allow_duplicates": False,
     })
     excel_path: Optional[str] = None
@@ -241,6 +240,8 @@ def get_status_dict() -> dict:
             "total_pending": 0,
             "total_contacts": 0,
             "total_invalids": 0,
+            "invalid_motivos": {},
+            "session_target": 0,
         }
 
     return {
@@ -250,6 +251,11 @@ def get_status_dict() -> dict:
         "total_pending": sender_status["total_pending"],
         "total_contacts": sender_status["total_contacts"],
         "total_invalids": sender_status.get("total_invalids", 0),
+        # Detalhamento dos inválidos DESTA sessão ({motivo: quantidade}).
+        # O frontend agrupa esses motivos em categorias para o tooltip.
+        "invalid_motivos": sender_status.get("invalid_motivos", {}),
+        # Quantas mensagens este envio pretende mandar (o "5" que o usuário pediu).
+        "session_target": sender_status.get("session_target", 0),
         "config": state.config,
         "excel_loaded": state.excel_path is not None,
         "excel_info": get_excel_info(),
@@ -295,6 +301,41 @@ async def license_deactivate():
 
 # --- Atualização ---
 
+def _parse_version(v: str) -> tuple:
+    """
+    Converte "1.10.2" em (1, 10, 2) para comparação numérica.
+
+    Comparar versões como texto está errado: "1.10.0" > "1.9.0" é False porque
+    "1" vem antes de "9" na ordem alfabética. Isso faria o aviso de atualização
+    parar de funcionar a partir da 1.10.
+
+    Tolerante a formatos comuns: "1.4" -> (1, 4, 0), "1.4.0-beta" -> (1, 4, 0),
+    espaços e prefixo "v" já removidos pelo chamador. Segmentos não numéricos
+    são ignorados. Retorna () se nada puder ser lido, o que faz o chamador
+    tratar como "sem atualização" em vez de comparar lixo.
+    """
+    numeros = []
+    for parte in str(v).strip().split("."):
+        # Corta sufixos como "-beta", "rc1": mantém só os dígitos iniciais
+        digitos = ""
+        for ch in parte:
+            if ch.isdigit():
+                digitos += ch
+            else:
+                break
+        if not digitos:
+            break
+        numeros.append(int(digitos))
+
+    if not numeros:
+        return ()
+
+    # Normaliza para 3 posições: (1, 4) e (1, 4, 0) devem ser equivalentes
+    while len(numeros) < 3:
+        numeros.append(0)
+    return tuple(numeros[:3])
+
+
 def _fetch_latest_release():
     """Busca última release do GitHub (roda em thread para não bloquear o event loop)."""
     resp = http_requests.get(
@@ -321,7 +362,14 @@ async def check_update():
             if asset["name"].endswith(".zip"):
                 download_url = asset["browser_download_url"]
                 break
-        update_available = latest_tag > APP_VERSION if latest_tag else False
+        update_available = False
+        if latest_tag:
+            v_latest = _parse_version(latest_tag)
+            v_atual = _parse_version(APP_VERSION)
+            # Só compara se as duas versões foram lidas com sucesso; formato
+            # inesperado no tag do GitHub não deve gerar aviso falso.
+            if v_latest and v_atual:
+                update_available = v_latest > v_atual
         return {
             "update_available": update_available,
             "current_version": APP_VERSION,
@@ -472,7 +520,6 @@ async def set_config(config: ConfigModel):
         "hora_fim": config.hora_fim,
         "skip_weekends": config.skip_weekends,
         "human_behavior": config.human_behavior,
-        "max_tentativas_contato": 3,
         "allow_duplicates": config.allow_duplicates,
     }
 
@@ -806,18 +853,29 @@ async def upload_media(file: UploadFile = File(...)):
             detail="Arquivo deve ser .jpg, .jpeg, .png, .pdf, .mp3, .ogg ou .opus"
         )
 
+    # Usa SOMENTE o nome final do arquivo. Antes o nome vindo do cliente era
+    # concatenado direto no caminho, então algo como "../../qualquer.png"
+    # gravava fora de uploads/media (a checagem de extensão não impedia isso).
+    nome_seguro = Path(file.filename).name
+    if not nome_seguro or nome_seguro in (".", ".."):
+        raise HTTPException(status_code=400, detail="Nome de arquivo inválido.")
+
     media_dir = Path("uploads/media")
     media_dir.mkdir(parents=True, exist_ok=True)
-    file_path = media_dir / file.filename
+    file_path = media_dir / nome_seguro
+
+    # Confirma que o destino ficou dentro de uploads/media
+    if media_dir.resolve() not in file_path.resolve().parents:
+        raise HTTPException(status_code=400, detail="Nome de arquivo inválido.")
 
     with open(file_path, "wb") as f:
         content = await file.read()
         f.write(content)
 
-    add_log(f"Mídia carregada: {file.filename}")
+    add_log(f"Mídia carregada: {nome_seguro}")
     return {
         "status": "ok",
-        "filename": file.filename,
+        "filename": nome_seguro,
         "path": str(file_path.resolve()),
     }
 
@@ -972,7 +1030,11 @@ if __name__ == "__main__":
 
     async def _main():
         config = Config()
-        config.bind = ["0.0.0.0:8000"]
+        # Escuta SÓ no localhost. Com 0.0.0.0 qualquer máquina da mesma rede
+        # (ou de uma rede Wi-Fi compartilhada) abria a interface sem nenhuma
+        # autenticação: dava para ler a lista de contatos com nomes e telefones,
+        # subir arquivos e disparar envios em nome do usuário.
+        config.bind = ["127.0.0.1:8000"]
         config.graceful_timeout = 3  # Espera no máximo 3s para fechar conexões
         await serve(app, config, shutdown_trigger=_shutdown_event.wait)
 

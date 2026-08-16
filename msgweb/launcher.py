@@ -48,7 +48,10 @@ def main():
     from hypercorn.asyncio import serve
 
     config = Config()
-    config.bind = ["0.0.0.0:8000"]
+    # Escuta APENAS em localhost. Com 0.0.0.0 qualquer máquina da mesma rede
+    # acessaria a interface sem autenticação (lista de contatos, download da
+    # planilha, log e disparo de envios). O navegador local não precisa disso.
+    config.bind = ["127.0.0.1:8000"]
     config.loglevel = "WARNING"
 
     def force_exit(sig, frame):

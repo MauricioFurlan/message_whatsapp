@@ -104,17 +104,19 @@ problema('timeout explica conta inexistente e também conexão instável',
     'log-nowhats', ['não tem conta no WhatsApp', 'internet lenta', 'reenviar']);
 
 // --- Falhas de envio -------------------------------------------------------
-problema('abandono mostra quantas falhas e o motivo',
-    '❌ Ana — falhou 3x (erro no envio). Desistindo deste contato para não travar as próximas rodadas.',
-    'log-giveup', ['3 vezes seguidas', 'erro no envio', 'limite de tentativas']);
+// Não existe mais retentativa: toda falha marca o contato como inválido na hora,
+// com o motivo no tooltip para o usuário investigar.
+problema('falha no anexo diz que o texto não foi enviado',
+    '❌ Ana (11999998888) — falha no anexo: arquivo não encontrado. Mensagem NÃO enviada, contato marcado como inválido.',
+    'log-giveup', ['anexo falhou', 'NÃO foi enviada', 'reenviar']);
 
-problema('retentativa deixa claro que o contato ainda está pendente',
-    '⚠️ Ana — falha ao enviar (erro no envio). Tentativa 1/3, será tentado novamente na próxima rodada.',
-    'log-retry', ['tentativa 1 de 3', 'continua pendente', 'Ainda não é um contato inválido']);
+problema('timeout ao abrir a conversa explica as causas possíveis',
+    '❌ Ana (11999998888) — timeout ao abrir a conversa, marcado como inválido. Passe o mouse no status do contato para ver o motivo.',
+    'log-nowhats', ['não abriu no WhatsApp', 'sem conta no WhatsApp', 'reenviar']);
 
 problema('erro inesperado aponta o arquivo de log',
     '⚠️ Ana (11999998888) — erro inesperado: Message: element not interactable',
-    'log-tech', ['arquivo de log', 'continua pendente']);
+    'log-tech', ['arquivo de log', 'marcado como inválido']);
 
 // --- Linhas puladas (cinza) -----------------------------------------------
 problema('[SKIP] de inválido diz que a marcação veio de antes',
@@ -130,7 +132,7 @@ semProblema('linha de rodada', '📤 Rodada 1/3 iniciada');
 semProblema('mensagem vazia (string vazia)', '');
 
 // --- Cores são todas distintas e existem no CSS ---------------------------
-const cores = ['log-sheet', 'log-nowhats', 'log-giveup', 'log-retry', 'log-tech', 'log-skipped'];
+const cores = ['log-sheet', 'log-nowhats', 'log-giveup', 'log-tech', 'log-skipped'];
 const definidas = cores.filter(c => new RegExp(`\\.${c}\\s*\\{[^}]*color:`).test(css));
 checar('toda cor de problema tem regra no CSS do index.html',
     definidas.length === cores.length,

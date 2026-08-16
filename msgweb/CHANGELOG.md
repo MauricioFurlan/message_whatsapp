@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-08-15 (correções de painel e ritmo)
+
+### Correção: tooltip de "Inválidos" cortado e sem reset
+
+O balão de detalhamento ficava dentro da sidebar, que tem `overflow-hidden` / `overflow-y-auto`, e tinha largura fixa de 224px: o texto era recortado nas laterais e no topo. Agora o balão vive fora da sidebar (filho direto do `<body>`, `position: fixed`) e é posicionado por JS, preso dentro da janela — nenhum contêiner pode cortá-lo. A largura acompanha o conteúdo (`w-max`, até 22rem) e os rótulos longos não quebram mais.
+
+Além disso, o detalhamento e o número do card agora vêm da **mesma fonte**. Antes o número grande era do envio atual (backend) e o detalhamento era contado da planilha inteira, então eles se contradiziam: card "0", tooltip listando inválidos de envios antigos. Agora:
+
+- **Detalhamento**: motivos deste envio, vindos do backend (`invalid_motivos` no `/status`). Zera a cada novo envio e sobrevive a recarregar a página no meio do envio.
+- **Histórico**: bloco separado no fim do balão com o que está gravado na planilha (inválidos e duplicados), sem reset.
+
+Nada é perdido: os badges das linhas, as colunas `Invalido`/`Motivo` da planilha e o `log.txt` continuam guardando o histórico completo.
+
+### Correção: "Pendentes" mostrava a planilha inteira em vez do que foi pedido
+
+Escolher 5 mensagens e iniciar mostrava no painel os pendentes de toda a planilha (ex.: 200). O `total_msgs` só era usado para calcular o ritmo, nunca para limitar o contador.
+
+Agora o envio tem uma **meta de sessão** = `min(mensagens pedidas, pendentes reais)`, publicada como `session_target` no `/status`. "Pendentes" passa a ser o que falta para cumprir essa meta (pediu 5 → começa em 5 e desce até 0), e a barra de progresso usa a meta como total.
+
+### Correção: rajadas não ocupavam o tempo configurado
+
+5 mensagens em 20 minutos terminavam muito antes do previsto. Três causas:
+
+1. **Qualquer total de até 8 mensagens virava uma única rajada** com intervalo fixo entre as mensagens — ou seja, um metrônomo, exatamente o que o modo rajada deveria evitar.
+2. **O plano era calculado antes de saber os pendentes**, usando o número configurado. Planejar para 10 e ter só 5 pendentes fazia o ritmo ser dimensionado para 10 e o envio acabar na metade da janela.
+3. **Contato inválido consumia vaga da rajada.** O laço era `for msg_in_burst in range(burst_size)` com `burst_size += 1` nas falhas — mas incrementar a variável não estende um `range` já criado. Rajada com inválidos enviava menos mensagens do que o plano previa.
+
+Agora o planejador sempre gera **rajadas irregulares** (5 msgs em 20 min → algo como 2 + 1 + 2, com pausas de vários minutos entre elas), o plano é gerado **depois** da deduplicação usando a meta real, e o laço conta mensagens **efetivamente enviadas** — inválido não gasta vaga, o próximo contato assume o lugar.
+
+O tempo total do plano fecha a janela configurada: a soma dos intervalos internos das rajadas mais as pausas entre elas é igual ao tempo escolhido. O tempo de envio em si (abrir conversa, digitar, anexar) não é descontado, então o total real fica ligeiramente **acima** do configurado — nunca abaixo. O piso de 15s entre mensagens continua valendo; quando o tempo pedido é curto demais para tantas mensagens, o piso prevalece (a tela já avisa "Ritmo muito rápido").
+
+### Correção: painel dizia "Enviando" durante as pausas entre rajadas
+
+O estado `pausado` era usado apenas para a espera de horário comercial. Durante uma pausa longa de rajada o painel seguia dizendo "Enviando", parecendo travamento. Agora a pausa entre rajadas marca `pausado` e o painel mostra "Aguardando próxima rajada", com quantas mensagens ainda faltam.
+
+### Correção: categorização de motivos no detalhamento
+
+- `Falha no anexo: arquivo não encontrado` era classificado como "Não encontrado no WhatsApp", porque a checagem de "não encontrado" vinha antes da de "anexo".
+- `Número rejeitado pelo WhatsApp (inexistente ou inválido)` caía em "Outros".
+- Contato invalidado sem motivo registrado caía em "Outros" em vez de "Sem detalhes".
+
+### Correção: aviso de ritmo na tela contava intervalos errado
+
+A estimativa dividia o tempo por `totalMsgs` em vez de `totalMsgs - 1` (5 mensagens têm 4 esperas entre elas), então o aviso "Ritmo muito rápido" aparecia em momento diferente do limite real aplicado pelo backend. Os dois cálculos agora batem.
+
+### Nota: tooltip do cabeçalho da coluna Status
+
+A entrada abaixo descreve um `?` no cabeçalho "Status" da tabela. Esse elemento não existe no HTML — só sobrou o JS que tentava preenchê-lo (`status-th-tooltip-content` / `status-th-tooltip-total`), agora removido. O detalhamento segue disponível no card "Inválidos" da sidebar.
+
 ## 2026-08-15
 
 ### Novo: Tooltip de inválidos no cabeçalho da coluna Status

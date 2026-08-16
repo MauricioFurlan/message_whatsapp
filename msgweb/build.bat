@@ -109,8 +109,8 @@ echo Copiando arquivos adicionais...
 :: Copia static/ para dist
 xcopy "static" "dist\WhatsAppAutomacao\static\" /E /I /Y >nul
 
-:: Copia uploads/ para dist (planilha modelo)
-xcopy "uploads" "dist\WhatsAppAutomacao\uploads\" /E /I /Y >nul
+:: Cria uploads/ no dist com planilha modelo (sempre limpa, um contato de teste)
+python gerar_planilha_modelo.py "dist\WhatsAppAutomacao\uploads\contatos.xlsx"
 
 :: Copia LEIA-ME
 copy "LEIA-ME_CLIENTE.txt" "dist\WhatsAppAutomacao\LEIA-ME.txt" >nul 2>&1

@@ -83,6 +83,12 @@ class FakeDriverEnvio:
         return self.input
 
     def find_elements(self, by, selector):
+        # O campo do rodapé precisa "existir" aqui: é por ele que o sender
+        # confirma que a conversa abriu (_wait_chat_or_invalid_popup). Devolver
+        # lista vazia deixava essa espera em loop até o timeout, queimando CPU e
+        # travando a suíte.
+        if "contenteditable" in selector:
+            return [self.input]
         return []
 
     def execute_script(self, *args, **kwargs):
@@ -97,10 +103,18 @@ class BaseSenderTest(unittest.TestCase):
         self.clock = FakeTime()
         self._time_original = whatsapp_sender.time
         whatsapp_sender.time = self.clock
+        # Trocar o `time` do módulo não cobre as esperas do sender: ele usa
+        # _interruptible_sleep -> threading.Event.wait(), que é um Event real e
+        # ignora o relógio falso. Sem neutralizar aqui, os testes aguardavam de
+        # verdade os intervalos entre mensagens e as pausas entre rajadas
+        # (minutos ou horas), e a suíte travava.
+        self._isleep_original = WhatsAppSender._interruptible_sleep
+        WhatsAppSender._interruptible_sleep = lambda self, segundos: False
         self.addCleanup(self._restaurar_time)
 
     def _restaurar_time(self):
         whatsapp_sender.time = self._time_original
+        WhatsAppSender._interruptible_sleep = self._isleep_original
 
     def novo_sender(self, config=None, global_message=""):
         return WhatsAppSender(
@@ -192,12 +206,11 @@ class TestMensagemGlobalNoLoop(BaseSenderTest):
         textos finais, na ordem de envio.
         """
         cfg = {
-            "msgs_por_rodada": len(contatos),
-            "total_rodadas": 1,
-            "intervalo_rodadas_min": 0,
+            # Config atual: "quantas mensagens em quanto tempo". As chaves
+            # antigas (msgs_por_rodada/total_rodadas) não existem mais.
+            "total_msgs": len(contatos),
+            "tempo_minutos": 1,
             "human_behavior": False,
-            "delay_min": 0,
-            "delay_max": 0,
         }
         cfg.update(config or {})
 
