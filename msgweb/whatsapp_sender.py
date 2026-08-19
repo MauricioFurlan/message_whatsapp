@@ -242,6 +242,7 @@ class WhatsAppSender:
         with self._lock:
             self._total_invalids += 1
             self._invalid_motivos[chave] = self._invalid_motivos.get(chave, 0) + 1
+        stats_log.registrar_rejeitado(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     def _sincronizar_pendentes(self, disponiveis_na_planilha: Optional[int] = None) -> int:
         """

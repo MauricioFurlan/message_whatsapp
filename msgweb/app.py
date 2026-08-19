@@ -651,20 +651,29 @@ async def get_status():
 
 @app.get("/stats")
 async def get_stats():
-    """Retorna o total de mensagens enviadas hoje/semana/mês (histórico persistente)."""
+    """Retorna o total de mensagens enviadas/rejeitadas por período (histórico persistente)."""
     return stats_log.obter_estatisticas()
+
+
+def _fmt_stats_bloco(titulo: str, periodo: dict) -> str:
+    return (
+        f"{titulo}\n"
+        f"  Hoje:                    {periodo['hoje']}\n"
+        f"  Semana:                  {periodo['semana']}\n"
+        f"  Mês:                     {periodo['mes']}\n"
+        f"  Total (todo o período):  {periodo['total']}\n"
+    )
 
 
 @app.get("/stats/download")
 async def download_stats():
-    """Baixa um .txt com o total de mensagens enviadas hoje/semana/mês."""
+    """Baixa um .txt com o total de mensagens enviadas e rejeitadas por período."""
     stats = stats_log.obter_estatisticas()
     conteudo = (
         "Histórico de envios — WhatsApp Automação\n"
         f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n\n"
-        f"Hoje:   {stats['hoje']}\n"
-        f"Semana: {stats['semana']}\n"
-        f"Mês:    {stats['mes']}\n"
+        f"{_fmt_stats_bloco('Mensagens enviadas', stats['enviados'])}\n"
+        f"{_fmt_stats_bloco('Mensagens rejeitadas', stats['rejeitados'])}"
     )
     return Response(
         content=conteudo,
