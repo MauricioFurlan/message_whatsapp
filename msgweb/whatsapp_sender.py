@@ -179,6 +179,10 @@ class WhatsAppSender:
         # o painel mostrar uma contagem regressiva precisa em vez de um
         # "aguardando" genérico.
         self._pause_until: Optional[float] = None
+        # Tamanho (planejado) da próxima leva — só setado durante "pausado",
+        # para o painel deixar claro que só ESSA quantidade sai na próxima
+        # leva, não o total de restantes.
+        self._next_leva_size: Optional[int] = None
         self._running = False
         self._stop_event = threading.Event()
 
@@ -225,6 +229,7 @@ class WhatsAppSender:
                 "invalid_motivos": dict(self._invalid_motivos),
                 "session_target": self._session_target,
                 "pause_until": self._pause_until,
+                "next_leva_size": self._next_leva_size,
             }
 
     def _contar_invalido(self, motivo: str):
@@ -2562,6 +2567,7 @@ class WhatsAppSender:
                         # painel seguia dizendo "Enviando" durante pausas longas.
                         self._set_state("pausado")
                         self._pause_until = time.time() + pause_after
+                        self._next_leva_size = burst_plan[burst_idx + 1]["burst_size"]
 
                         # Espera em intervalos curtos para poder parar
                         elapsed = 0.0
@@ -2571,6 +2577,7 @@ class WhatsAppSender:
                             elapsed += fatia
 
                         self._pause_until = None
+                        self._next_leva_size = None
                         if not self._should_stop():
                             self._set_state("enviando")
 

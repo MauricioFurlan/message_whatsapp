@@ -6,6 +6,10 @@
 // regressiva local (formatPauseDetail/startPauseCountdown), sem precisar de
 // mais tráfego com o servidor a cada segundo.
 //
+// Também expõe next_leva_size (tamanho planejado da próxima leva): sem isso,
+// "18 restantes" sozinho dava a entender que a próxima leva mandaria as 18
+// de uma vez, quando na verdade é só uma fração (relato do usuário).
+//
 // Uso:  node tests/test_pause_countdown.js
 const fs = require('fs');
 const path = require('path');
@@ -85,10 +89,27 @@ const jaPassou = Date.now() / 1000 - 10;
 checar('pause_until no passado não fica negativo (trava em 0s)',
     formatPauseDetail(jaPassou, 1).includes('0s'), formatPauseDetail(jaPassou, 1));
 
+// --- nextLevaSize: deixa claro que só uma parte do "restante" sai agora ----
+// Bug relatado: "18 restantes" sozinho dava a entender que a próxima leva
+// mandaria as 18 de uma vez.
+const textoComProxima = formatPauseDetail(daqui2min5s, 18, 6);
+checar('com nextLevaSize, mostra quantas saem na próxima leva e o total restante',
+    textoComProxima.includes('envia 6 de 18 restantes'), textoComProxima);
+checar('sem nextLevaSize (ex: /status antigo), cai no texto anterior sem "envia"',
+    !formatPauseDetail(daqui2min5s, 18).includes('envia'), formatPauseDetail(daqui2min5s, 18));
+checar('nextLevaSize também aparece no texto genérico sem pause_until',
+    formatPauseDetail(null, 18, 6) === 'Aguardando próxima leva · envia 6 de 18 restantes',
+    formatPauseDetail(null, 18, 6));
+
 // --- startPauseCountdown escreve no elemento imediatamente ------------------
 startPauseCountdown(Date.now() / 1000 + 60, 4);
 checar('startPauseCountdown atualiza o texto do #progress-detail na hora',
     progressDetail.textContent.includes('4 restantes'), progressDetail.textContent);
+stopPauseCountdown();
+
+startPauseCountdown(Date.now() / 1000 + 60, 18, 6);
+checar('startPauseCountdown propaga nextLevaSize para o texto',
+    progressDetail.textContent.includes('envia 6 de 18 restantes'), progressDetail.textContent);
 stopPauseCountdown();
 
 console.log(falhas === 0 ? '\nOK: todos os cenários passaram.' : `\nFALHA: ${falhas} cenário(s).`);

@@ -244,6 +244,7 @@ def get_status_dict() -> dict:
             "invalid_motivos": {},
             "session_target": 0,
             "pause_until": None,
+            "next_leva_size": None,
         }
 
     return {
@@ -261,6 +262,9 @@ def get_status_dict() -> dict:
         # Timestamp (epoch) de quando a leva atual retoma — só setado durante
         # "pausado", usado pelo painel para a contagem regressiva precisa.
         "pause_until": sender_status.get("pause_until"),
+        # Tamanho planejado da próxima leva — evita o usuário achar que todo
+        # o "restante" sai de uma vez na próxima leva.
+        "next_leva_size": sender_status.get("next_leva_size"),
         "config": state.config,
         "excel_loaded": state.excel_path is not None,
         "excel_info": get_excel_info(),

@@ -599,10 +599,15 @@
         // precisar de mais tráfego com o servidor.
         let pauseCountdownInterval = null;
 
-        function formatPauseDetail(pauseUntilEpoch, pending) {
+        function formatPauseDetail(pauseUntilEpoch, pending, nextLevaSize) {
             const restantesTxt = `${pending} restante${pending !== 1 ? 's' : ''}`;
+            // "restantes" é o total até o fim da meta — sem isto, dava a
+            // entender que a próxima leva mandaria tudo de uma vez.
+            const proximaTxt = nextLevaSize
+                ? `envia ${nextLevaSize} de ${restantesTxt}`
+                : restantesTxt;
             if (!pauseUntilEpoch) {
-                return `Aguardando próxima leva · ${restantesTxt}`;
+                return `Aguardando próxima leva · ${proximaTxt}`;
             }
             const remainingSec = Math.max(0, Math.round(pauseUntilEpoch * 1000 - Date.now()) / 1000);
             const min = Math.floor(remainingSec / 60);
@@ -610,13 +615,13 @@
             const contagem = min > 0 ? `${min}min ${String(sec).padStart(2, '0')}s` : `${sec}s`;
             const horaTxt = new Date(pauseUntilEpoch * 1000)
                 .toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-            return `Próxima leva em ${contagem} (às ${horaTxt}) · ${restantesTxt}`;
+            return `Próxima leva em ${contagem} (às ${horaTxt}) · ${proximaTxt}`;
         }
 
-        function startPauseCountdown(pauseUntilEpoch, pending) {
+        function startPauseCountdown(pauseUntilEpoch, pending, nextLevaSize) {
             if (pauseCountdownInterval) clearInterval(pauseCountdownInterval);
             const detail = document.getElementById('progress-detail');
-            const tick = () => { detail.textContent = formatPauseDetail(pauseUntilEpoch, pending); };
+            const tick = () => { detail.textContent = formatPauseDetail(pauseUntilEpoch, pending, nextLevaSize); };
             tick();
             pauseCountdownInterval = setInterval(tick, 1000);
         }
@@ -681,7 +686,7 @@
                     label.textContent = 'Pausado';
                     counter.textContent = `${sent}/${sessionTotal}`;
                     bar.classList.add('progress-paused');
-                    startPauseCountdown(status.pause_until, pending);
+                    startPauseCountdown(status.pause_until, pending, status.next_leva_size);
                     document.title = `⏸ Pausado ${sent}/${sessionTotal} - WhatsApp Automação`;
                     break;
                 case 'finalizado':
