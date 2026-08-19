@@ -243,6 +243,7 @@ def get_status_dict() -> dict:
             "total_invalids": 0,
             "invalid_motivos": {},
             "session_target": 0,
+            "pause_until": None,
         }
 
     return {
@@ -257,6 +258,9 @@ def get_status_dict() -> dict:
         "invalid_motivos": sender_status.get("invalid_motivos", {}),
         # Quantas mensagens este envio pretende mandar (o "5" que o usuário pediu).
         "session_target": sender_status.get("session_target", 0),
+        # Timestamp (epoch) de quando a leva atual retoma — só setado durante
+        # "pausado", usado pelo painel para a contagem regressiva precisa.
+        "pause_until": sender_status.get("pause_until"),
         "config": state.config,
         "excel_loaded": state.excel_path is not None,
         "excel_info": get_excel_info(),

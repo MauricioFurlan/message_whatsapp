@@ -590,12 +590,52 @@
 
         // --- Dashboard ---
 
+        // --- Contagem regressiva da pausa entre levas ---
+        //
+        // O heartbeat de status só chega a cada 5s (ou quando algo muda), o
+        // que deixaria a contagem "pulando" de 5 em 5s. Em vez disso, guarda
+        // o instante exato em que a leva retoma (pause_until, epoch) e usa um
+        // timer local de 1s só para re-renderizar o texto — preciso sem
+        // precisar de mais tráfego com o servidor.
+        let pauseCountdownInterval = null;
+
+        function formatPauseDetail(pauseUntilEpoch, pending) {
+            const restantesTxt = `${pending} restante${pending !== 1 ? 's' : ''}`;
+            if (!pauseUntilEpoch) {
+                return `Aguardando próxima leva · ${restantesTxt}`;
+            }
+            const remainingSec = Math.max(0, Math.round(pauseUntilEpoch * 1000 - Date.now()) / 1000);
+            const min = Math.floor(remainingSec / 60);
+            const sec = Math.floor(remainingSec % 60);
+            const contagem = min > 0 ? `${min}min ${String(sec).padStart(2, '0')}s` : `${sec}s`;
+            const horaTxt = new Date(pauseUntilEpoch * 1000)
+                .toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+            return `Próxima leva em ${contagem} (às ${horaTxt}) · ${restantesTxt}`;
+        }
+
+        function startPauseCountdown(pauseUntilEpoch, pending) {
+            if (pauseCountdownInterval) clearInterval(pauseCountdownInterval);
+            const detail = document.getElementById('progress-detail');
+            const tick = () => { detail.textContent = formatPauseDetail(pauseUntilEpoch, pending); };
+            tick();
+            pauseCountdownInterval = setInterval(tick, 1000);
+        }
+
+        function stopPauseCountdown() {
+            if (pauseCountdownInterval) {
+                clearInterval(pauseCountdownInterval);
+                pauseCountdownInterval = null;
+            }
+        }
+
         function updateProgressBar(status) {
             const container = document.getElementById('progress-container');
             const bar = document.getElementById('progress-bar');
             const label = document.getElementById('progress-label');
             const counter = document.getElementById('progress-counter');
             const detail = document.getElementById('progress-detail');
+
+            if (status.state !== 'pausado') stopPauseCountdown();
 
             const activeStates = ['iniciando', 'waiting_qr', 'enviando', 'pausado', 'finalizado', 'parado'];
             if (!activeStates.includes(status.state)) {
@@ -641,7 +681,7 @@
                     label.textContent = 'Pausado';
                     counter.textContent = `${sent}/${sessionTotal}`;
                     bar.classList.add('progress-paused');
-                    detail.textContent = `Aguardando próxima rajada · ${pending} restante${pending !== 1 ? 's' : ''}`;
+                    startPauseCountdown(status.pause_until, pending);
                     document.title = `⏸ Pausado ${sent}/${sessionTotal} - WhatsApp Automação`;
                     break;
                 case 'finalizado':

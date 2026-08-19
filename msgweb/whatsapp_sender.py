@@ -174,6 +174,11 @@ class WhatsAppSender:
         # pendentes reais). É o denominador que o painel deve mostrar — sem isso o
         # "Pendentes" exibia a planilha inteira mesmo com o usuário pedindo 5.
         self._session_target = 0
+        # Timestamp (epoch, igual time.time()) de quando a leva atual vai
+        # retomar. Só tem valor durante o estado "pausado" — é o que permite
+        # o painel mostrar uma contagem regressiva precisa em vez de um
+        # "aguardando" genérico.
+        self._pause_until: Optional[float] = None
         self._running = False
         self._stop_event = threading.Event()
 
@@ -219,6 +224,7 @@ class WhatsAppSender:
                 "total_invalids": self._total_invalids,
                 "invalid_motivos": dict(self._invalid_motivos),
                 "session_target": self._session_target,
+                "pause_until": self._pause_until,
             }
 
     def _contar_invalido(self, motivo: str):
@@ -2547,14 +2553,15 @@ class WhatsAppSender:
                     ):
                         pause_min = pause_after / 60
                         self._log(
-                            f"⏸️ Pausa de ~{pause_min:.1f} min antes da próxima rajada "
+                            f"⏸️ Pausa de ~{pause_min:.1f} min antes da próxima leva "
                             f"({falta} msg(s) restante(s))..."
                         )
 
                         # Estado "pausado" deixa claro na tela que o silêncio é
-                        # proposital (pausa da rajada) e não travamento. Antes o
+                        # proposital (pausa da leva) e não travamento. Antes o
                         # painel seguia dizendo "Enviando" durante pausas longas.
                         self._set_state("pausado")
+                        self._pause_until = time.time() + pause_after
 
                         # Espera em intervalos curtos para poder parar
                         elapsed = 0.0
@@ -2563,6 +2570,7 @@ class WhatsAppSender:
                             self._interruptible_sleep(fatia)
                             elapsed += fatia
 
+                        self._pause_until = None
                         if not self._should_stop():
                             self._set_state("enviando")
 
