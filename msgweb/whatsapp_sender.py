@@ -33,6 +33,7 @@ from selenium.common.exceptions import (
 )
 
 import win_dialog
+import stats_log
 from contact_logic import clean_number, validate_contact, get_pending_contacts, apply_deduplication
 
 # Logger de arquivo para diagnóstico (compartilhado com app.py)
@@ -2328,6 +2329,7 @@ class WhatsAppSender:
                                 data_envio = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                 df.at[idx, "DataEnvio"] = data_envio
                                 self._save_contacts(df)
+                                stats_log.registrar_envio(data_envio)
 
                                 with self._lock:
                                     self._messages_sent += 1

@@ -17,7 +17,7 @@ from typing import Optional
 
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -26,6 +26,7 @@ import requests as http_requests
 from whatsapp_sender import WhatsAppSender
 from license import validar_licenca, ativar_licenca, desativar_licenca, get_cached_key
 from version import APP_VERSION
+import stats_log
 GITHUB_REPO = "MauricioFurlan/message_whatsapp"
 
 # --- File Logger Setup ---
@@ -646,6 +647,32 @@ async def stop_sending():
 async def get_status():
     """Retorna o status atual do sistema."""
     return get_status_dict()
+
+
+@app.get("/stats")
+async def get_stats():
+    """Retorna o total de mensagens enviadas hoje/semana/mês (histórico persistente)."""
+    return stats_log.obter_estatisticas()
+
+
+@app.get("/stats/download")
+async def download_stats():
+    """Baixa um .txt com o total de mensagens enviadas hoje/semana/mês."""
+    stats = stats_log.obter_estatisticas()
+    conteudo = (
+        "Histórico de envios — WhatsApp Automação\n"
+        f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n\n"
+        f"Hoje:   {stats['hoje']}\n"
+        f"Semana: {stats['semana']}\n"
+        f"Mês:    {stats['mes']}\n"
+    )
+    return Response(
+        content=conteudo,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="historico_envios_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt"'
+        },
+    )
 
 
 @app.get("/contacts")
