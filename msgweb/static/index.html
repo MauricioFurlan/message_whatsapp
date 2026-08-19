@@ -26,6 +26,10 @@
         .log-tech     { color: #38bdf8; }  /* azul: erro técnico inesperado     */
         .log-skipped  { color: #a1a1aa; }  /* cinza: já inválido de antes       */
         .log-blocked  { color: #e11d48; }  /* rosa-escuro: contato bloqueado     */
+        /* Bloco da pré-visualização do plano de rajadas: várias linhas do log
+           mescladas num único quadro amarelo, sem repetir o horário em cada
+           linha (ver addLogEntry). */
+        .log-plano    { color: #facc15; white-space: pre-wrap; }
         @keyframes pulse-dot {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.4; }
@@ -779,6 +783,11 @@
         function restoreLogsFromServer(logs) {
             const logArea = document.getElementById('log-area');
             logArea.innerHTML = '';
+            // O bloco em andamento (se houver) referenciava um <div> que acabou
+            // de ser removido do DOM — zera para não escrever num nó órfão.
+            burstBlockEl = null;
+            burstBlockExpected = 0;
+            burstBlockSeen = 0;
             logs.forEach(entry => addLogEntry(entry));
         }
 
@@ -888,11 +897,53 @@
             return info ? info.motivo : null;
         }
 
+        // Estado do bloco mesclado da pré-visualização do plano de rajadas
+        // (levas): as linhas "📊 No total...", "🗓️ Como o envio vai
+        // acontecer:" e cada "• leva N de M: ..." chegam como entradas de
+        // log separadas (uma por chamada de self._log() no backend, cada
+        // uma com seu próprio [HH:MM:SS]) — aqui elas são mescladas num
+        // único quadro amarelo, sem repetir o horário em cada linha.
+        let burstBlockEl = null;
+        let burstBlockExpected = 0;
+        let burstBlockSeen = 0;
+        const TS_PREFIX_RE = /^\[\d{2}:\d{2}:\d{2}\]\s*/;
+
         function addLogEntry(message) {
             const logArea = document.getElementById('log-area');
             if (logArea.querySelector('.text-gray-500')) {
                 logArea.innerHTML = '';
             }
+
+            const bare = message.replace(TS_PREFIX_RE, '');
+            const totalLevasMatch = bare.match(/No total:.*distribuídas em (\d+) leva\(s\)/);
+            if (totalLevasMatch) {
+                burstBlockExpected = parseInt(totalLevasMatch[1], 10);
+                burstBlockSeen = 0;
+                burstBlockEl = document.createElement('div');
+                burstBlockEl.className = 'log-plano mb-0.5';
+                burstBlockEl.textContent = bare;
+                logArea.appendChild(burstBlockEl);
+                logArea.scrollTop = logArea.scrollHeight;
+                while (logArea.children.length > 200) {
+                    logArea.removeChild(logArea.firstChild);
+                }
+                return;
+            }
+            if (burstBlockEl && bare.includes('Como o envio vai acontecer')) {
+                burstBlockEl.textContent += '\n' + bare;
+                logArea.scrollTop = logArea.scrollHeight;
+                return;
+            }
+            if (burstBlockEl && /^\s*•\s*leva \d+ de \d+:/.test(bare)) {
+                burstBlockEl.textContent += '\n' + bare;
+                burstBlockSeen++;
+                if (burstBlockSeen >= burstBlockExpected) {
+                    burstBlockEl = null;
+                }
+                logArea.scrollTop = logArea.scrollHeight;
+                return;
+            }
+
             const entry = document.createElement('div');
             const problema = logProblemInfo(message);
             if (problema) {
