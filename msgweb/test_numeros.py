@@ -597,11 +597,21 @@ class TestCotaDaRodada(unittest.TestCase):
         # horas) e travava indefinidamente no meio da execução.
         self._orig_isleep = whatsapp_sender.WhatsAppSender._interruptible_sleep
         whatsapp_sender.WhatsAppSender._interruptible_sleep = lambda self, s: False
+        # sender.start() aqui roda o laço de envio de verdade (só o Selenium é
+        # mockado) — sem neutralizar isso, cada envio/rejeição de teste grava
+        # de verdade em uploads/envios_stats.jsonl, poluindo o histórico real
+        # do usuário com dados de teste.
+        self._orig_registrar_envio = whatsapp_sender.stats_log.registrar_envio
+        self._orig_registrar_rejeitado = whatsapp_sender.stats_log.registrar_rejeitado
+        whatsapp_sender.stats_log.registrar_envio = lambda *a, **k: None
+        whatsapp_sender.stats_log.registrar_rejeitado = lambda *a, **k: None
         self.addCleanup(self._restore)
 
     def _restore(self):
         self._ws.time.sleep = self._orig_sleep
         self._ws.WhatsAppSender._interruptible_sleep = self._orig_isleep
+        self._ws.stats_log.registrar_envio = self._orig_registrar_envio
+        self._ws.stats_log.registrar_rejeitado = self._orig_registrar_rejeitado
 
     def _rodar(self, resultados, msgs_por_rodada, total_rodadas=1):
         """

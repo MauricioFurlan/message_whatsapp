@@ -110,11 +110,21 @@ class BaseSenderTest(unittest.TestCase):
         # (minutos ou horas), e a suíte travava.
         self._isleep_original = WhatsAppSender._interruptible_sleep
         WhatsAppSender._interruptible_sleep = lambda self, segundos: False
+        # sender.start() aqui roda o laço de envio de verdade (só o Selenium é
+        # mockado) — sem neutralizar isso, cada envio/rejeição de teste grava
+        # de verdade em uploads/envios_stats.jsonl, poluindo o histórico real
+        # do usuário com dados de teste.
+        self._registrar_envio_original = whatsapp_sender.stats_log.registrar_envio
+        self._registrar_rejeitado_original = whatsapp_sender.stats_log.registrar_rejeitado
+        whatsapp_sender.stats_log.registrar_envio = lambda *a, **k: None
+        whatsapp_sender.stats_log.registrar_rejeitado = lambda *a, **k: None
         self.addCleanup(self._restaurar_time)
 
     def _restaurar_time(self):
         whatsapp_sender.time = self._time_original
         WhatsAppSender._interruptible_sleep = self._isleep_original
+        whatsapp_sender.stats_log.registrar_envio = self._registrar_envio_original
+        whatsapp_sender.stats_log.registrar_rejeitado = self._registrar_rejeitado_original
 
     def novo_sender(self, config=None, global_message=""):
         return WhatsAppSender(
