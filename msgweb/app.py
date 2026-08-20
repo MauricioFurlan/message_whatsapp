@@ -245,6 +245,7 @@ def get_status_dict() -> dict:
             "session_target": 0,
             "pause_until": None,
             "next_leva_size": None,
+            "elapsed_seconds": None,
         }
 
     return {
@@ -265,6 +266,9 @@ def get_status_dict() -> dict:
         # Tamanho planejado da próxima leva — evita o usuário achar que todo
         # o "restante" sai de uma vez na próxima leva.
         "next_leva_size": sender_status.get("next_leva_size"),
+        # Duração real do envio (do primeiro ao último contato), apurada só
+        # ao concluir com sucesso — o painel mostra em "Finalizado".
+        "elapsed_seconds": sender_status.get("elapsed_seconds"),
         "config": state.config,
         "excel_loaded": state.excel_path is not None,
         "excel_info": get_excel_info(),

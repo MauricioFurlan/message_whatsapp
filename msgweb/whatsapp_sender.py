@@ -183,6 +183,12 @@ class WhatsAppSender:
         # para o painel deixar claro que só ESSA quantidade sai na próxima
         # leva, não o total de restantes.
         self._next_leva_size: Optional[int] = None
+        # Instante (time.time()) em que o envio de fato começou a mandar
+        # mensagens (depois do login/QR) e duração total apurada ao concluir
+        # com sucesso — é o que permite o painel mostrar quanto tempo o envio
+        # realmente levou, do primeiro ao último contato.
+        self._envio_iniciado_em: Optional[float] = None
+        self._elapsed_seconds: Optional[float] = None
         self._running = False
         self._stop_event = threading.Event()
 
@@ -230,6 +236,7 @@ class WhatsAppSender:
                 "session_target": self._session_target,
                 "pause_until": self._pause_until,
                 "next_leva_size": self._next_leva_size,
+                "elapsed_seconds": self._elapsed_seconds,
             }
 
     def _contar_invalido(self, motivo: str):
@@ -988,6 +995,22 @@ class WhatsAppSender:
             })
 
         return plan
+
+    @staticmethod
+    def _fmt_duracao(segundos: float) -> str:
+        """
+        Formata uma duração total (pode passar de 1h, ex: espera de horário
+        comercial no meio do envio) de forma legível: "1h 15min", "42min 3s"
+        ou só "8s" para durações bem curtas.
+        """
+        total = max(0, round(segundos))
+        horas, resto = divmod(total, 3600)
+        minutos, segs = divmod(resto, 60)
+        if horas > 0:
+            return f"{horas}h {minutos}min"
+        if minutos > 0:
+            return f"{minutos}min {segs}s" if segs else f"{minutos}min"
+        return f"{segs}s"
 
     @staticmethod
     def _preview_texto(texto: str, limite: int = 300) -> str:
@@ -2235,6 +2258,7 @@ class WhatsAppSender:
             if session_target == 0:
                 self._log("✅ Todos os contatos já foram processados!")
             else:
+                self._envio_iniciado_em = time.time()
                 resumo_rajadas = " + ".join(str(b["burst_size"]) for b in burst_plan)
                 self._log(
                     f"📤 Iniciando envio: {session_target} mensagem(ns) desta vez "
@@ -2594,10 +2618,18 @@ class WhatsAppSender:
                 self._set_state("parado")
                 self._log("🛑 Envio interrompido pelo usuário.")
             else:
+                if self._envio_iniciado_em is not None:
+                    self._elapsed_seconds = time.time() - self._envio_iniciado_em
                 self._set_state("finalizado")
                 status = self.get_status()
+                duracao_txt = (
+                    f" em {self._fmt_duracao(self._elapsed_seconds)}"
+                    if self._elapsed_seconds is not None
+                    else ""
+                )
                 self._log(
                     f"🎉 Envio finalizado! Total enviado: {status['messages_sent']} mensagens"
+                    f"{duracao_txt}"
                 )
 
         except Exception as e:
