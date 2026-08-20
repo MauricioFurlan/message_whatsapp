@@ -151,4 +151,40 @@ echo.
 echo   O cliente executa: WhatsAppAutomacao.exe
 echo ============================================
 echo.
+
+:: Publica a release no GitHub (opcional) - monta o comando gh sozinho a
+:: partir de %VERSION%, sem precisar editar o numero na mao a cada release.
+set "GH_CMD=gh release create v%VERSION% "dist\WhatsAppAutomacao-v%VERSION%.zip" --title "v%VERSION%" --notes-file CHANGELOG.md"
+
+where gh >nul 2>&1
+if errorlevel 1 (
+    echo GitHub CLI ^(gh^) nao encontrado no PATH - pulei a publicacao automatica.
+    echo Para publicar depois, rode:
+    echo   %GH_CMD%
+    echo.
+    pause
+    exit /b 0
+)
+
+set /p "PUBLICAR=Publicar release v%VERSION% no GitHub agora? (s/N): "
+if /i "%PUBLICAR%"=="s" (
+    echo.
+    echo Publicando release v%VERSION%...
+    %GH_CMD%
+    if errorlevel 1 (
+        echo.
+        echo ERRO ao criar a release no GitHub. Verifique a mensagem acima e rode
+        echo manualmente se precisar:
+        echo   %GH_CMD%
+    ) else (
+        echo.
+        echo Release v%VERSION% publicada no GitHub.
+    )
+) else (
+    echo.
+    echo Release nao publicada agora. Para publicar depois, rode:
+    echo   %GH_CMD%
+)
+
+echo.
 pause
