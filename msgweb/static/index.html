@@ -578,9 +578,13 @@
                 const data = JSON.parse(event.data);
                 updateContactRowStatus(data.row_index, data.numero, data.status, data.data_envio, data.motivo || '');
                 updateInvalidsTooltip();
-                // Mensagem enviada agora conta em hoje/semana/mês sem precisar
-                // buscar o histórico completo de novo no servidor.
-                if (data.status === 'enviado') bumpStats();
+                // Rebusca o total real do servidor a cada envio, em vez de somar
+                // "+1" no que já estava na tela. O incremento local dessincronizava
+                // do valor de verdade (ex.: se a conexão SSE reconectasse ou a
+                // primeira leitura ainda não tivesse chegado, o "+1" partia de um
+                // texto não numérico e travava em "1 hoje" mesmo com dezenas de
+                // envios já registrados no servidor).
+                if (data.status === 'enviado') loadStats();
             });
 
             eventSource.onerror = () => {
@@ -759,12 +763,6 @@
             } catch (e) {
                 // Silencioso — não atrapalha o uso normal
             }
-        }
-
-        function bumpStats() {
-            const el = document.getElementById('stats-summary');
-            const atual = parseInt(el.textContent, 10);
-            el.textContent = `${Number.isNaN(atual) ? 1 : atual + 1} hoje`;
         }
 
         function downloadStats() {
