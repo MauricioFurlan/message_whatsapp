@@ -1024,23 +1024,50 @@ class WhatsAppSender:
             tempo += n_anexos * self.TEMPO_ESTIMADO_POR_ANEXO
         return tempo
 
-    def _estimar_duracao_real(self, pending, session_target: int, tempo_segundos: float) -> tuple:
+    def _estimar_tempo_envio_total(self, pending, session_target: int) -> float:
         """
-        Estima a duração real total do envio somando dois pedaços:
-          - tempo_segundos: o que o usuário configurou (pausas/ritmo entre envios).
-          - tempo de envio: quanto os envios em si (digitação + anexos) devem
-            levar, olhando os primeiros `session_target` contatos pendentes
-            (uma amostra, não uma garantia — se algum vier a ser inválido,
-            outro contato entra no lugar dele e o real pode variar).
-
-        Retorna (tempo_de_envio_estimado_seg, tempo_total_estimado_seg).
+        Soma o tempo estimado de envio (digitação + anexos, ver
+        _estimar_tempo_envio_individual) dos primeiros `session_target`
+        contatos pendentes — uma amostra, não uma garantia: se algum vier a
+        ser inválido, outro contato entra no lugar dele e o real pode variar.
         """
         amostra = pending.head(session_target)
-        tempo_de_envio = sum(
+        return sum(
             self._estimar_tempo_envio_individual(row.get("Mensagem", ""), row.get("Arquivo", ""))
             for _, row in amostra.iterrows()
         )
-        return tempo_de_envio, tempo_segundos + tempo_de_envio
+
+    def _calcular_orcamento_de_pausas(self, pending, session_target: int, tempo_minutos: float) -> dict:
+        """
+        Divide o tempo configurado pelo usuário entre o que o envio em si deve
+        consumir de verdade (digitação + anexos) e o que sobra para
+        pausas/ritmo entre as mensagens — o tempo configurado é o total
+        desejado para a sessão, não só o orçamento de pausas.
+
+        Usado tanto para dimensionar o plano de rajadas (_generate_burst_plan
+        recebe o tempo de pausas já descontado) quanto para avisar quando a
+        configuração não deixa espaço real para pausa nenhuma.
+
+        Retorna um dict com:
+          - tempo_de_envio_seg: estimativa do tempo de envio da amostra.
+          - tempo_pausas_seg: o que sobra pra pausas (nunca negativo).
+          - media_gap_disponivel: tempo_pausas_seg dividido pelos intervalos
+            entre mensagens (session_target - 1).
+          - inviavel: True se media_gap_disponivel ficar abaixo do piso de
+            segurança do plano de rajadas (DELAY_INTRA_MIN) — sinal de que o
+            ritmo sairia praticamente mecânico, sem pausa real nenhuma.
+        """
+        tempo_configurado_seg = tempo_minutos * 60
+        tempo_de_envio_seg = self._estimar_tempo_envio_total(pending, session_target)
+        tempo_pausas_seg = max(0.0, tempo_configurado_seg - tempo_de_envio_seg)
+        media_gap_disponivel = tempo_pausas_seg / max(1, session_target - 1)
+        inviavel = session_target > 1 and media_gap_disponivel < self.DELAY_INTRA_MIN
+        return {
+            "tempo_de_envio_seg": tempo_de_envio_seg,
+            "tempo_pausas_seg": tempo_pausas_seg,
+            "media_gap_disponivel": media_gap_disponivel,
+            "inviavel": inviavel,
+        }
 
     @staticmethod
     def _fmt_duracao(segundos: float) -> str:
@@ -2287,12 +2314,6 @@ class WhatsAppSender:
             # planilha inteira (pedia 5, aparecia 200).
             session_target = min(int(total_msgs), len(pending))
 
-            # Plano de rajadas dimensionado pela meta REAL, não pelo número
-            # configurado. Planejar para 10 e ter só 5 pendentes fazia o ritmo
-            # ser calculado para 10 msgs e o envio acabar na metade da janela.
-            burst_plan = self._generate_burst_plan(session_target, tempo_minutos)
-            total_bursts = len(burst_plan)
-
             with self._lock:
                 self._session_target = session_target
                 self._total_pending = session_target
@@ -2305,27 +2326,54 @@ class WhatsAppSender:
                 self._log("✅ Todos os contatos já foram processados!")
             else:
                 self._envio_iniciado_em = time.time()
+
+                # O tempo configurado é o total que o usuário quer para a
+                # sessão inteira, não só o orçamento de pausas: desconta
+                # primeiro quanto o envio em si (digitar, subir anexo) deve
+                # consumir de verdade, e usa o que sobra para calcular o
+                # ritmo/pausas entre mensagens. Antes o tempo configurado virava
+                # só o piso das pausas e o real sempre passava do configurado
+                # (relato: "configurei 15min e o log mostrou quase 28min").
+                orcamento = self._calcular_orcamento_de_pausas(pending, session_target, tempo_minutos)
+                tempo_de_envio_est = orcamento["tempo_de_envio_seg"]
+                tempo_pausas_seg = orcamento["tempo_pausas_seg"]
+
+                # Se quase não sobra espaço pra pausa real entre as mensagens,
+                # avisa em vez de deixar o ritmo cair pro piso de segurança
+                # (DELAY_INTRA_MIN, já usado por _generate_burst_plan) sem
+                # nenhuma explicação. Não sugere um valor "seguro" — não
+                # existe: o WhatsApp pode limitar a conta a qualquer momento,
+                # mesmo com espaçamento generoso.
+                if orcamento["inviavel"]:
+                    self._log(
+                        f"⚠️ Nessas condições — {session_target} mensagem(ns), com um tempo de "
+                        f"envio estimado (anexos/digitação) de ~{self._fmt_duracao(tempo_de_envio_est)} "
+                        f"— não sobra espaço real para pausas dentro dos {tempo_minutos}min "
+                        f"configurados; o ritmo sairia praticamente mecânico. Não existe um tempo "
+                        f'"seguro" garantido (o WhatsApp pode limitar a conta a qualquer momento), '
+                        f"mas aumentar o tempo configurado ou reduzir a quantidade de "
+                        f"mensagens/anexos ajuda a manter um espaçamento mais humano."
+                    )
+                elif tempo_de_envio_est >= 30:
+                    self._log(
+                        f"⏱️ Dos {tempo_minutos}min configurados, ~{self._fmt_duracao(tempo_de_envio_est)} "
+                        f"é tempo estimado de envio (anexos/digitação) e ~{self._fmt_duracao(tempo_pausas_seg)} "
+                        f"sobra para pausas reais entre as mensagens."
+                    )
+
+                # Plano de rajadas dimensionado pela meta REAL e pelo tempo de
+                # pausas que sobrou depois do desconto acima (não o configurado
+                # bruto). Planejar para 10 e ter só 5 pendentes também fazia o
+                # ritmo ser calculado errado — por isso usa session_target.
+                burst_plan = self._generate_burst_plan(session_target, tempo_pausas_seg / 60)
+                total_bursts = len(burst_plan)
+
                 resumo_rajadas = " + ".join(str(b["burst_size"]) for b in burst_plan)
                 self._log(
                     f"📤 Iniciando envio: {session_target} mensagem(ns) desta vez "
                     f"({len(pending)} pendente(s) na planilha), "
                     f"{total_bursts} rajada(s) [{resumo_rajadas}] em {tempo_minutos}min"
                 )
-
-                # Estimativa mais realista, considerando anexos e tamanho das
-                # mensagens (que não entram no orçamento de pausas/ritmo acima)
-                # — evita o usuário achar que em 15min configurados o envio
-                # necessariamente termina em 15min (relato: "a conta não bateu").
-                tempo_de_envio_est, tempo_total_est = self._estimar_duracao_real(
-                    pending, session_target, tempo_minutos * 60
-                )
-                if tempo_de_envio_est >= 30:
-                    self._log(
-                        f"⏱️ Estimativa de duração real: ~{self._fmt_duracao(tempo_total_est)} "
-                        f"({tempo_minutos}min configurados + ~{self._fmt_duracao(tempo_de_envio_est)} "
-                        f"de tempo de envio dos anexos/mensagens). É uma estimativa aproximada "
-                        f"e pode variar."
-                    )
 
                 # Iterador dos contatos pendentes
                 pending_iter = pending.iterrows()
