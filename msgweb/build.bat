@@ -112,6 +112,15 @@ xcopy "static" "dist\WhatsAppAutomacao\static\" /E /I /Y >nul
 :: Cria uploads/ no dist com planilha modelo (sempre limpa, um contato de teste)
 python gerar_planilha_modelo.py "dist\WhatsAppAutomacao\uploads\contatos.xlsx"
 
+:: Valida que a planilha modelo saiu limpa (1 contato de teste, sem dado real)
+python validar_planilha_modelo.py "dist\WhatsAppAutomacao\uploads\contatos.xlsx"
+if %errorlevel% neq 0 (
+    echo.
+    echo ERRO: planilha modelo do build reprovada na validacao. Build interrompido.
+    pause
+    exit /b 1
+)
+
 :: Copia LEIA-ME
 copy "LEIA-ME_CLIENTE.txt" "dist\WhatsAppAutomacao\LEIA-ME.txt" >nul 2>&1
 

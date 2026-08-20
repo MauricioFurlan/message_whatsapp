@@ -26,6 +26,8 @@ import os
 import shutil
 import tempfile
 import unittest
+import unittest.mock
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
@@ -237,6 +239,48 @@ class TestConfiguracaoDeEnvio(BaseAppTest):
         status = appmod.get_status_dict()
         self.assertTrue(status["config"]["human_behavior"])
         self.assertEqual(status["config"]["total_rodadas"], 9)
+
+
+class TestJanelaDeHorarioCruzandoMeiaNoite(unittest.TestCase):
+    """
+    Relato de cliente (20/08/2026): configurou início 08:00 / fim 00:30 e toda
+    mensagem foi recusada como "fora do horário". A comparação antiga
+    (`inicio <= agora < fim`) parte do princípio de que fim > início em
+    minutos do dia; quando a janela cruza a meia-noite (fim < início), essa
+    condição é falsa para qualquer horário do dia inteiro.
+    """
+
+    def _sender(self, hora_inicio, hora_fim, skip_weekends=False):
+        return WhatsAppSender(
+            excel_path="x.xlsx",
+            config={"hora_inicio": hora_inicio, "hora_fim": hora_fim,
+                    "skip_weekends": skip_weekends},
+            log_callback=lambda m: None,
+        )
+
+    def _com_hora(self, sender, hora, minuto):
+        # 2026-08-19 é uma quarta-feira; skip_weekends=False de qualquer forma
+        fake_now = datetime(2026, 8, 19, hora, minuto)
+        with unittest.mock.patch("whatsapp_sender.datetime") as m:
+            m.now.return_value = fake_now
+            return sender._is_business_hours()
+
+    def test_dentro_da_janela_antes_da_meia_noite(self):
+        sender = self._sender("08:00", "00:30")
+        self.assertTrue(self._com_hora(sender, 23, 0))
+
+    def test_dentro_da_janela_depois_da_meia_noite(self):
+        sender = self._sender("08:00", "00:30")
+        self.assertTrue(self._com_hora(sender, 0, 15))
+
+    def test_fora_da_janela_no_meio_da_madrugada(self):
+        sender = self._sender("08:00", "00:30")
+        self.assertFalse(self._com_hora(sender, 2, 0))
+
+    def test_janela_normal_sem_cruzar_meia_noite_continua_ok(self):
+        sender = self._sender("09:00", "17:00")
+        self.assertTrue(self._com_hora(sender, 12, 0))
+        self.assertFalse(self._com_hora(sender, 18, 0))
 
 
 # --------------------------------------------------------------------------- #

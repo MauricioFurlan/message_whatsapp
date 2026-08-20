@@ -419,6 +419,9 @@ class WhatsAppSender:
         agora_min = now.hour * 60 + now.minute
         inicio_min = hora_inicio_h * 60 + hora_inicio_m
         fim_min = hora_fim_h * 60 + hora_fim_m
+        if fim_min <= inicio_min:
+            # Janela cruza a meia-noite (ex.: início 08:00, fim 00:30)
+            return agora_min >= inicio_min or agora_min < fim_min
         return inicio_min <= agora_min < fim_min
 
     def _get_business_hours_reason(self) -> str:
@@ -1068,6 +1071,51 @@ class WhatsAppSender:
             "media_gap_disponivel": media_gap_disponivel,
             "inviavel": inviavel,
         }
+
+    @staticmethod
+    def _fmt_pausa_amigavel(segundos: float) -> str:
+        """Converte uma pausa em segundos numa frase simples, em português."""
+        if segundos < 45:
+            return f"{max(1, round(segundos))} segundos"
+        minutos = segundos / 60
+        if minutos < 1.5:
+            return "1 minuto"
+        return f"{round(minutos)} minutos"
+
+    @staticmethod
+    def _describe_leva(burst: dict) -> str:
+        """
+        Frase amigável descrevendo uma leva (sem falar em "burst"/"intra_delay"),
+        reaproveitada tanto na pré-visualização quanto no log de cada execução.
+        """
+        tamanho = burst["burst_size"]
+        pausa = burst["pause_after"]
+        desc = "envia 1 mensagem" if tamanho == 1 else f"envia {tamanho} mensagens seguidas"
+        if pausa > 0:
+            desc += f", depois espera {WhatsAppSender._fmt_pausa_amigavel(pausa)} antes de continuar"
+        else:
+            desc += " — é a última leva, o envio termina por aqui"
+        return desc
+
+    def _log_burst_plan_friendly(self, burst_plan: list, total_msgs: int, tempo_minutos: int):
+        """
+        Mostra pro usuário, em linguagem simples, como o envio vai se
+        comportar ao longo do tempo — sem falar em "burst", "intra_delay"
+        etc. Só isso já ajuda quem não mexe com programação a entender por
+        que o envio "parece parado" às vezes (é a pausa entre as levas).
+        """
+        total = len(burst_plan)
+        if total == 0:
+            return
+        plural_msg = "mensagem" if total_msgs == 1 else "mensagens"
+        plural_min = "minuto" if tempo_minutos == 1 else "minutos"
+        self._log(
+            f"📊 No total: {total_msgs} {plural_msg}, distribuídas em {total} leva(s) "
+            f"ao longo de até {tempo_minutos} {plural_min}."
+        )
+        self._log("🗓️ Como o envio vai acontecer:")
+        for i, burst in enumerate(burst_plan):
+            self._log(f"   • leva {i + 1} de {total}: {self._describe_leva(burst)}")
 
     @staticmethod
     def _fmt_duracao(segundos: float) -> str:
@@ -2372,8 +2420,10 @@ class WhatsAppSender:
                 self._log(
                     f"📤 Iniciando envio: {session_target} mensagem(ns) desta vez "
                     f"({len(pending)} pendente(s) na planilha), "
-                    f"{total_bursts} rajada(s) [{resumo_rajadas}] em {tempo_minutos}min"
+                    f"{total_bursts} leva(s) [{resumo_rajadas}] em {tempo_minutos}min"
                 )
+
+                self._log_burst_plan_friendly(burst_plan, session_target, tempo_minutos)
 
                 # Iterador dos contatos pendentes
                 pending_iter = pending.iterrows()
@@ -2397,8 +2447,8 @@ class WhatsAppSender:
                         self._current_round = burst_idx + 1
 
                     self._log(
-                        f"📨 Rajada {burst_idx + 1}/{total_bursts} "
-                        f"({burst_size} msg(s), ~{intra_delay:.0f}s entre)"
+                        f"▶️ Executando leva {burst_idx + 1} de {total_bursts}: "
+                        f"{self._describe_leva(burst)}"
                     )
 
                     # O laço conta mensagens REALMENTE enviadas, não iterações:

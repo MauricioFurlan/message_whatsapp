@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-08-19 (reenvio duplicado após queda da conexão SSE)
+
+### Correção: mensagem reenviada para contatos já atendidos, após queda temporária da conexão em tempo real
+
+Cliente reportou reenvio de mensagens para pessoas que já tinham recebido cerca de 1h antes. O `log.txt` mostrou a causa: a contagem de "enviados" salva pelo editor de contatos (`Contatos atualizados via editor: ... 25 enviados`) estava 13 mensagens atrasada em relação ao que o motor de envio já tinha realmente mandado (38), batendo exatamente com o total ao final da rodada anterior à última rodada completa.
+
+A tabela de contatos no navegador só é sincronizada por eventos incrementais (`contact_update` via SSE) — não existe um "estado completo" enviado a cada atualização, como acontece com `status`. Quando a conexão SSE cai (rede instável, aba em segundo plano, notebook hibernou) e reconecta, os eventos perdidos durante a queda nunca são reenviados: a tabela local fica travada no estado de antes da queda, mesmo com o dashboard (`status`) voltando a mostrar os números certos. Se o usuário salvar os contatos nesse estado, `POST /contacts` sobrescreve a planilha inteira com base no que estava na tela — revertendo o `Enviado` de quem foi processado durante a janela sem conexão. Na rodada seguinte esses contatos voltam a aparecer como pendentes e recebem a mensagem de novo.
+
+Agora `connectSSE()` recarrega a tabela de contatos do servidor (`loadContacts()`) sempre que a conexão SSE é reestabelecida após uma queda — exceto se houver edições não salvas na tela, para não descartar o que o usuário estava digitando.
+
+### Build: validação automática da planilha modelo
+
+`build.bat` agora roda `validar_planilha_modelo.py` logo depois de gerar `uploads/contatos.xlsx` via `gerar_planilha_modelo.py`, e interrompe o build se a checagem falhar. Confirma que a planilha do executável distribuído sempre sai com exatamente 1 linha de teste (Mauricio / 19994229146), o placeholder `{nome}` presente na mensagem, e nenhuma coluna de controle preenchida — reforça em código o que já era uma regra manual, para não vazar dado real de cliente num build futuro.
+
+## 2026-08-16 (segurança e aviso de atualização)
+
+### Correção: servidor exposto na rede local (segurança)
+
+O `launcher.py` — ponto de entrada do `.exe` distribuído — escutava em `0.0.0.0:8000`. Qualquer máquina na mesma rede Wi-Fi podia acessar a interface sem nenhuma autenticação: ver a lista de contatos com nomes e telefones, baixar a planilha, ler o log e disparar envios.
+
+Agora escuta apenas em `127.0.0.1:8000`. O `app.py` já fazia isso no bloco `__main__` (usado durante desenvolvimento), mas o launcher tinha ficado com o bind antigo.
+
+### Correção: aviso de atualização parava de funcionar na versão 1.10+
+
+A comparação de versão era textual (`latest_tag > APP_VERSION`). Em ordem alfabética, `"1.10.0" > "1.9.0"` é falso — ou seja, a partir da 1.10 o usuário nunca seria notificado de que existe uma versão nova.
+
+Agora usa `_parse_version()` que converte `"1.10.2"` em `(1, 10, 2)` para comparação numérica. Tolerante a formatos como `"1.4"`, sufixos como `-beta`, e tags ilegíveis (nesse caso não oferece atualização, em vez de comparar lixo). Adicionado `tests/test_versao.py` com 12 testes cobrindo o caso da regressão.
+
+### Build: planilha modelo gerada automaticamente
+
+O `build.bat` não copia mais a pasta `uploads/` local (que pode conter planilhas com dados reais). Em vez disso, chama `gerar_planilha_modelo.py` que sempre gera uma planilha limpa com um único contato de teste pendente. Evita vazar dados pessoais no distribuível.
+
 ## 2026-08-15 (correções de painel e ritmo)
 
 ### Correção: tooltip de "Inválidos" cortado e sem reset
