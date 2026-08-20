@@ -46,6 +46,7 @@ file_logger.addHandler(_handler)
 # Marca início de sessão com informações de diagnóstico
 file_logger.info("=" * 70)
 file_logger.info("NOVA SESSÃO INICIADA")
+file_logger.info(f"Versão: {APP_VERSION}")
 file_logger.info(f"Horário: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 file_logger.info(f"Python: {sys.version}")
 file_logger.info(f"SO: {platform.system()} {platform.release()} ({platform.machine()})")
