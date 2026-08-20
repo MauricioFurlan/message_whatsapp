@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from stats_log import contar_eventos, registrar_envio, registrar_rejeitado, obter_estatisticas
+from stats_log import contar_eventos, registrar_envio, registrar_rejeitado, obter_estatisticas, _agrupar_por_mes
 
 
 class TestContarEventos(unittest.TestCase):
@@ -81,6 +81,54 @@ class TestContarEventos(unittest.TestCase):
         self.assertEqual(counts, {"enviados": vazio, "rejeitados": vazio})
 
 
+class TestAgruparPorMes(unittest.TestCase):
+    def test_agrupa_por_mes_civil_separando_enviados_e_rejeitados(self):
+        eventos = [
+            ("2026-08-05 08:00:00", "enviado"),
+            ("2026-08-31 08:00:00", "enviado"),
+            ("2026-08-19 08:00:00", "rejeitado"),
+            ("2026-09-01 08:00:00", "enviado"),
+        ]
+        por_mes = _agrupar_por_mes(eventos)
+        self.assertEqual(por_mes, [
+            {"mes": "2026-09", "mes_extenso": "Setembro/2026", "enviados": 1, "rejeitados": 0},
+            {"mes": "2026-08", "mes_extenso": "Agosto/2026", "enviados": 2, "rejeitados": 1},
+        ])
+
+    def test_ordem_do_mais_recente_para_o_mais_antigo_mesmo_cruzando_ano(self):
+        eventos = [
+            ("2025-12-15 08:00:00", "enviado"),
+            ("2026-01-05 08:00:00", "enviado"),
+            ("2026-08-19 08:00:00", "enviado"),
+        ]
+        meses = [m["mes"] for m in _agrupar_por_mes(eventos)]
+        self.assertEqual(meses, ["2026-08", "2026-01", "2025-12"])
+
+    def test_lista_vazia_nao_gera_meses(self):
+        self.assertEqual(_agrupar_por_mes([]), [])
+
+    def test_timestamps_invalidos_sao_ignorados(self):
+        eventos = [("não é data", "enviado"), ("2026-08-19 08:00:00", "enviado")]
+        por_mes = _agrupar_por_mes(eventos)
+        self.assertEqual(len(por_mes), 1)
+        self.assertEqual(por_mes[0]["enviados"], 1)
+
+    def test_obter_estatisticas_expoe_por_mes_do_historico_completo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "envios_stats.jsonl"
+            registrar_envio("2026-07-10 09:00:00", path=path)
+            registrar_envio("2026-08-19 09:00:00", path=path)
+
+            stats = obter_estatisticas(agora=datetime(2026, 8, 19, 15, 0, 0), path=path)
+            # Mês corrente (filtro "mes") só enxerga agosto...
+            self.assertEqual(stats["enviados"]["mes"], 1)
+            # ...mas o detalhamento por_mes preserva julho, que já saiu do "mes" corrente.
+            self.assertEqual(
+                [m["mes"] for m in stats["por_mes"]],
+                ["2026-08", "2026-07"],
+            )
+
+
 class TestPersistencia(unittest.TestCase):
     def test_registrar_e_ler_de_volta_por_tipo(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -108,7 +156,7 @@ class TestPersistencia(unittest.TestCase):
             path = Path(tmp) / "nao_existe.jsonl"
             counts = obter_estatisticas(agora=datetime(2026, 8, 19, 15, 0, 0), path=path)
             vazio = {"hoje": 0, "semana": 0, "mes": 0, "total": 0}
-            self.assertEqual(counts, {"enviados": vazio, "rejeitados": vazio})
+            self.assertEqual(counts, {"enviados": vazio, "rejeitados": vazio, "por_mes": []})
 
     def test_linha_corrompida_e_ignorada_sem_quebrar_leitura(self):
         with tempfile.TemporaryDirectory() as tmp:

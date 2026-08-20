@@ -100,7 +100,53 @@ def contar_eventos(eventos: Iterable[tuple[str, str]], agora: datetime) -> dict:
     }
 
 
+_MESES_PT = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+]
+
+
+def _agrupar_por_mes(eventos: Iterable[tuple[str, str]]) -> list[dict]:
+    """
+    Agrupa TODO o histórico do log por mês civil (não só o mês corrente —
+    esse é o "mes" de _contar_periodo). É o que permite responder "quantas
+    mandei em agosto?" depois que setembro já começou: os dados de agosto
+    nunca são apagados do log, só saem da contagem "Mês" corrente.
+
+    Retorna do mês mais recente para o mais antigo, um item por mês que
+    teve pelo menos um evento (enviado ou rejeitado).
+    """
+    contagem: dict[tuple[int, int], dict[str, int]] = {}
+    for ts, tipo in eventos:
+        try:
+            d = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").date()
+        except ValueError:
+            continue
+        chave = (d.year, d.month)
+        bucket = contagem.setdefault(chave, {"enviados": 0, "rejeitados": 0})
+        if tipo == TIPO_ENVIADO:
+            bucket["enviados"] += 1
+        elif tipo == TIPO_REJEITADO:
+            bucket["rejeitados"] += 1
+
+    resultado = []
+    for ano, mes in sorted(contagem.keys(), reverse=True):
+        resultado.append({
+            "mes": f"{ano:04d}-{mes:02d}",
+            "mes_extenso": f"{_MESES_PT[mes - 1]}/{ano}",
+            **contagem[(ano, mes)],
+        })
+    return resultado
+
+
 def obter_estatisticas(agora: datetime = None, path: Path = STATS_LOG_PATH) -> dict:
-    """Lê o log persistente e retorna as contagens de enviados/rejeitados por período."""
+    """
+    Lê o log persistente e retorna as contagens de enviados/rejeitados por
+    período (hoje/semana/mês corrente/total) e o detalhamento mês a mês de
+    todo o histórico em "por_mes".
+    """
     agora = agora or datetime.now()
-    return contar_eventos(_ler_eventos(path), agora)
+    eventos = _ler_eventos(path)
+    resultado = contar_eventos(eventos, agora)
+    resultado["por_mes"] = _agrupar_por_mes(eventos)
+    return resultado

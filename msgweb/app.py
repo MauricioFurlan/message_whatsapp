@@ -722,6 +722,16 @@ def _fmt_stats_bloco(titulo: str, periodo: dict) -> str:
     )
 
 
+def _fmt_stats_por_mes(por_mes: list) -> str:
+    if not por_mes:
+        return ""
+    linhas = "\n".join(
+        f"  {m['mes_extenso']:<16} enviadas {m['enviados']:>5}   rejeitadas {m['rejeitados']:>5}"
+        for m in por_mes
+    )
+    return f"Histórico por mês (todo o período, mais recente primeiro)\n{linhas}\n"
+
+
 @app.get("/stats/download")
 async def download_stats():
     """Baixa um .txt com o total de mensagens enviadas e rejeitadas por período."""
@@ -730,7 +740,8 @@ async def download_stats():
         "Histórico de envios — WhatsApp Automação\n"
         f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n\n"
         f"{_fmt_stats_bloco('Mensagens enviadas', stats['enviados'])}\n"
-        f"{_fmt_stats_bloco('Mensagens rejeitadas', stats['rejeitados'])}"
+        f"{_fmt_stats_bloco('Mensagens rejeitadas', stats['rejeitados'])}\n"
+        f"{_fmt_stats_por_mes(stats['por_mes'])}"
     )
     return Response(
         content=conteudo,
