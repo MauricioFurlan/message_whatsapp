@@ -868,6 +868,12 @@ class WhatsAppSender:
     DELAY_INTRA_MAX = 25   # delay máximo entre msgs dentro de uma rajada
     BURST_MAX = 8          # tamanho máximo de uma rajada
 
+    # Estimativa (não afeta o ritmo real, só a mensagem mostrada ao usuário)
+    # de segundos extras que cada anexo costuma acrescentar ao envio de uma
+    # mensagem: escolher o input de arquivo, digitar o caminho no diálogo do
+    # Windows e esperar o upload/preview no WhatsApp Web.
+    TEMPO_ESTIMADO_POR_ANEXO = 18
+
     @classmethod
     def _particiona_rajadas(cls, total_msgs: int) -> list:
         """
@@ -995,6 +1001,46 @@ class WhatsAppSender:
             })
 
         return plan
+
+    def _estimar_tempo_envio_individual(self, mensagem, arquivo) -> float:
+        """
+        Estima quanto tempo UM envio deve levar de verdade: abrir a conversa,
+        digitar (se comportamento humano estiver ligado) e subir anexo(s).
+
+        Não entra no cálculo de pausas/ritmo do plano de rajadas
+        (_generate_burst_plan) — aquele orçamento continua controlando só o
+        espaçamento ENTRE envios, de propósito (ver docstring de
+        _generate_burst_plan). Esta estimativa é só para avisar o usuário,
+        antes de começar, que o tempo real tende a passar do configurado
+        quando há anexos ou mensagens longas.
+        """
+        if self._human_behavior_enabled():
+            tempo = self._type_budget(len(str(mensagem or "")))
+        else:
+            tempo = 5.0  # sem digitação humanizada: texto pré-preenchido na URL
+        arquivo = str(arquivo or "").strip()
+        if arquivo:
+            n_anexos = len([f for f in arquivo.split(",") if f.strip()])
+            tempo += n_anexos * self.TEMPO_ESTIMADO_POR_ANEXO
+        return tempo
+
+    def _estimar_duracao_real(self, pending, session_target: int, tempo_segundos: float) -> tuple:
+        """
+        Estima a duração real total do envio somando dois pedaços:
+          - tempo_segundos: o que o usuário configurou (pausas/ritmo entre envios).
+          - tempo de envio: quanto os envios em si (digitação + anexos) devem
+            levar, olhando os primeiros `session_target` contatos pendentes
+            (uma amostra, não uma garantia — se algum vier a ser inválido,
+            outro contato entra no lugar dele e o real pode variar).
+
+        Retorna (tempo_de_envio_estimado_seg, tempo_total_estimado_seg).
+        """
+        amostra = pending.head(session_target)
+        tempo_de_envio = sum(
+            self._estimar_tempo_envio_individual(row.get("Mensagem", ""), row.get("Arquivo", ""))
+            for _, row in amostra.iterrows()
+        )
+        return tempo_de_envio, tempo_segundos + tempo_de_envio
 
     @staticmethod
     def _fmt_duracao(segundos: float) -> str:
@@ -2266,6 +2312,21 @@ class WhatsAppSender:
                     f"{total_bursts} rajada(s) [{resumo_rajadas}] em {tempo_minutos}min"
                 )
 
+                # Estimativa mais realista, considerando anexos e tamanho das
+                # mensagens (que não entram no orçamento de pausas/ritmo acima)
+                # — evita o usuário achar que em 15min configurados o envio
+                # necessariamente termina em 15min (relato: "a conta não bateu").
+                tempo_de_envio_est, tempo_total_est = self._estimar_duracao_real(
+                    pending, session_target, tempo_minutos * 60
+                )
+                if tempo_de_envio_est >= 30:
+                    self._log(
+                        f"⏱️ Estimativa de duração real: ~{self._fmt_duracao(tempo_total_est)} "
+                        f"({tempo_minutos}min configurados + ~{self._fmt_duracao(tempo_de_envio_est)} "
+                        f"de tempo de envio dos anexos/mensagens). É uma estimativa aproximada "
+                        f"e pode variar."
+                    )
+
                 # Iterador dos contatos pendentes
                 pending_iter = pending.iterrows()
                 total_enviados_sessao = 0
@@ -2356,6 +2417,10 @@ class WhatsAppSender:
                             f"Enviando para {pessoa} ({numero})"
                             f"{' [mensagem global]' if usou_global else ''}..."
                         )
+
+                        # Referência para saber, depois do try/except, se ESTA tentativa
+                        # foi um envio real (comparado com enviados_burst logo abaixo).
+                        enviados_antes_da_tentativa = enviados_burst
 
                         try:
                             success = self._send_message(pessoa, numero, mensagem, arquivo)
@@ -2529,10 +2594,17 @@ class WhatsAppSender:
 
                         # Delay intra-burst (entre msgs dentro da rajada)
                         # Pulado depois da última msg da rajada (a espera longa da
-                        # pausa entre rajadas assume daí) e quando vai parar.
+                        # pausa entre rajadas assume daí), quando vai parar, e quando
+                        # esta tentativa NÃO foi um envio real (falha no anexo, número
+                        # rejeitado, timeout, erro inesperado...) — antes o código
+                        # esperava esse delay mesmo sem nada ter sido enviado, porque só
+                        # comparava `enviados_burst < burst_size`, que também é
+                        # verdadeiro logo após uma falha (relato: "conta não bateu no
+                        # tempo do envio").
                         if (
                             not self._should_stop()
                             and not browser_died
+                            and enviados_burst > enviados_antes_da_tentativa
                             and enviados_burst < burst_size
                         ):
                             # Variação gaussiana no intra_delay para ser mais natural
