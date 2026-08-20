@@ -24,6 +24,7 @@ from pydantic import BaseModel
 import requests as http_requests
 
 from whatsapp_sender import WhatsAppSender
+from contact_logic import get_pending_contacts
 from license import validar_licenca, ativar_licenca, desativar_licenca, get_cached_key
 from version import APP_VERSION
 import stats_log
@@ -568,6 +569,50 @@ async def set_global_message(payload: GlobalMessageModel):
     else:
         add_log("Mensagem global salva (vazia)")
     return {"status": "ok"}
+
+
+@app.get("/estimate")
+async def estimate_time(total_msgs: int = 0, tempo_minutos: int = 0):
+    """
+    Prévia do tempo real de envio para o painel, ANTES de clicar em "Iniciar
+    Envio". Reaproveita a mesma conta que o sender faz de verdade em
+    start() (_calcular_orcamento_de_pausas) — inclui o tempo real de
+    digitação/anexos, não só o piso de 15s entre mensagens — para que o
+    aviso na tela bata com o que o log mostraria depois de iniciado.
+
+    Só lê a planilha (via _load_contacts, que não grava nada); não abre
+    navegador, não deduplica/marca nada e não altera o arquivo.
+    """
+    if not state.excel_path or not os.path.exists(state.excel_path):
+        return {"status": "sem_planilha"}
+    if total_msgs <= 0 or tempo_minutos <= 0:
+        return {"status": "ok", "session_target": 0, "inviavel": False}
+
+    sender = WhatsAppSender(excel_path=state.excel_path, config=state.config)
+    df = sender._load_contacts()
+    pending = get_pending_contacts(df)
+    session_target = min(total_msgs, len(pending))
+
+    if session_target <= 1:
+        return {"status": "ok", "session_target": session_target, "pendentes": len(pending), "inviavel": False}
+
+    orcamento = sender._calcular_orcamento_de_pausas(pending, session_target, tempo_minutos)
+    # Espelha o que _generate_burst_plan faz na prática: quando não sobra
+    # orçamento pra pausa real, o ritmo cai pro piso de segurança em vez de
+    # zerar — então o tempo real nunca fica abaixo disso.
+    piso_pausas_seg = (session_target - 1) * WhatsAppSender.DELAY_INTRA_MIN
+    tempo_total_estimado_seg = orcamento["tempo_de_envio_seg"] + max(orcamento["tempo_pausas_seg"], piso_pausas_seg)
+
+    return {
+        "status": "ok",
+        "session_target": session_target,
+        "pendentes": len(pending),
+        "inviavel": orcamento["inviavel"],
+        "tempo_configurado_seg": tempo_minutos * 60,
+        "tempo_de_envio_seg": round(orcamento["tempo_de_envio_seg"]),
+        "tempo_total_estimado_seg": round(tempo_total_estimado_seg),
+        "tempo_total_estimado_fmt": WhatsAppSender._fmt_duracao(tempo_total_estimado_seg),
+    }
 
 
 @app.post("/start")

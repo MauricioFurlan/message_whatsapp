@@ -26,6 +26,7 @@
         .log-tech     { color: #38bdf8; }  /* azul: erro técnico inesperado     */
         .log-skipped  { color: #a1a1aa; }  /* cinza: já inválido de antes       */
         .log-blocked  { color: #e11d48; }  /* rosa-escuro: contato bloqueado     */
+        .log-leva     { color: #22d3ee; font-weight: 600; }  /* ciano: início de cada leva de envio */
         /* Bloco da pré-visualização do plano de rajadas: várias linhas do log
            mescladas num único quadro amarelo, sem repetir o horário em cada
            linha (ver addLogEntry). */
@@ -538,11 +539,26 @@
 
         // --- SSE Connection ---
         let logsRestored = false;  // garante que restaura logs apenas uma vez por conexão
+        let sseConnectedBefore = false;  // diferencia a conexão inicial de uma reconexão
 
         function connectSSE() {
             if (eventSource) eventSource.close();
             logsRestored = false;
             eventSource = new EventSource('/events');
+
+            eventSource.onopen = () => {
+                // Enquanto a conexão SSE cai (rede instável, laptop hibernou etc.), os
+                // eventos 'contact_update' perdidos nunca são reenviados — ao contrário do
+                // 'status', que resincroniza sozinho a cada nova conexão. Sem isto, a
+                // tabela local ficava travada no estado de antes da queda e, se o usuário
+                // salvasse os contatos depois, o POST /contacts sobrescrevia a planilha
+                // com "Enviado" desatualizado, fazendo reenviar gente que já tinha recebido
+                // mensagem (bug relatado: reenvio para contatos de ~1h atrás).
+                if (sseConnectedBefore && !unsavedChanges) {
+                    loadContacts();
+                }
+                sseConnectedBefore = true;
+            };
 
             eventSource.addEventListener('status', (event) => {
                 const status = JSON.parse(event.data);
@@ -1022,6 +1038,8 @@
                 // Cor por tipo de problema + tooltip com o motivo completo
                 entry.className = `${problema.cor} mb-0.5 log-help`;
                 entry.title = problema.motivo;
+            } else if (message.includes('Executando leva')) {
+                entry.className = 'log-leva mb-0.5';
             } else if (message.includes('atualizados via editor') || message.includes('Configuração') || message.includes('Planilha')) {
                 entry.className = 'text-purple-400 mb-0.5';
             } else if (message.includes('[SKIP]')) {
@@ -2065,6 +2083,9 @@
 
 
         // --- Cálculo de estimativa ---
+        let _estimateDebounceTimer = null;
+        let _estimateRequestSeq = 0; // descarta respostas antigas que cheguem fora de ordem
+
         function updateEstimativa() {
             const totalMsgs = parseInt(document.getElementById('cfg-total-msgs-input').value) || 0;
             const tempoMin = parseInt(document.getElementById('cfg-tempo').value) || 60;
@@ -2088,10 +2109,12 @@
             const intervalos = Math.max(1, totalMsgs - 1);
             const delayMedio = tempoSegundos / intervalos;
 
-            // Verifica se o ritmo fica apertado (delay mínimo = 15s, igual ao backend).
-            // Não existe um valor "seguro" garantido — o WhatsApp pode limitar a conta
-            // a qualquer momento, mesmo com espaçamento generoso — então o aviso só
-            // recomenda aumentar o tempo, sem prometer segurança nenhuma.
+            // Checagem rápida e só local (sem esperar o servidor): olha só o piso de
+            // 15s entre mensagens, ignorando quanto tempo a digitação humanizada e os
+            // anexos vão consumir de verdade. Serve de feedback imediato enquanto a
+            // estimativa completa (abaixo) não volta do servidor — é ela quem decide
+            // o aviso final, porque é a única que sabe o tamanho real das mensagens/
+            // anexos desta planilha.
             const DELAY_MINIMO = 15;
             if (totalMsgs > 1 && delayMedio < DELAY_MINIMO) {
                 const msgsMaximas = Math.floor(tempoSegundos / DELAY_MINIMO) + 1;
@@ -2116,6 +2139,33 @@
 
             // Header resumido (visível com details fechado)
             if (headerEl) headerEl.textContent = `${totalMsgs} msgs · ${tempoTexto}`;
+
+            // Estimativa real (debounced): considera o tempo de digitação humanizada
+            // e de anexos das mensagens pendentes desta planilha — é o cálculo que o
+            // sender já faz de verdade em start() (_calcular_orcamento_de_pausas).
+            // Sem isso, dava pra configurar "37 msgs em 10min" sem nenhum aviso na
+            // tela (o piso de 15s "cabia"), e o tempo real só aparecia — muito acima
+            // do configurado — no log, depois que o envio já tinha começado.
+            clearTimeout(_estimateDebounceTimer);
+            const seq = ++_estimateRequestSeq;
+            _estimateDebounceTimer = setTimeout(async () => {
+                try {
+                    const resp = await fetch(`/estimate?total_msgs=${totalMsgs}&tempo_minutos=${tempoMin}`);
+                    if (seq !== _estimateRequestSeq) return; // input mudou de novo nesse meio tempo
+                    const data = await resp.json();
+                    if (data.status !== 'ok') return;
+
+                    if (data.inviavel) {
+                        avisoEl.textContent = `⚠️ Os ${tempoTexto} configurados não vão ser suficientes: contando digitação/anexos, o envio de ${data.session_target} mensagem(ns) deve levar aproximadamente ${data.tempo_total_estimado_fmt}. Não existe um tempo "seguro" garantido, mas aumentar o tempo configurado ou reduzir mensagens/anexos ajuda a manter um espaçamento mais humano.`;
+                        avisoEl.classList.remove('hidden');
+                    } else {
+                        avisoEl.classList.add('hidden');
+                    }
+                } catch (err) {
+                    // Sem planilha carregada ainda, ou erro de rede: mantém só a
+                    // checagem local acima, sem quebrar a tela.
+                }
+            }, 400);
         }
 
 
