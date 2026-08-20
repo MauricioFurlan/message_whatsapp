@@ -2088,11 +2088,14 @@
             const intervalos = Math.max(1, totalMsgs - 1);
             const delayMedio = tempoSegundos / intervalos;
 
-            // Verifica se o ritmo é seguro (delay mínimo = 15s, igual ao backend)
+            // Verifica se o ritmo fica apertado (delay mínimo = 15s, igual ao backend).
+            // Não existe um valor "seguro" garantido — o WhatsApp pode limitar a conta
+            // a qualquer momento, mesmo com espaçamento generoso — então o aviso só
+            // recomenda aumentar o tempo, sem prometer segurança nenhuma.
             const DELAY_MINIMO = 15;
             if (totalMsgs > 1 && delayMedio < DELAY_MINIMO) {
                 const msgsMaximas = Math.floor(tempoSegundos / DELAY_MINIMO) + 1;
-                avisoEl.textContent = `⚠️ Ritmo muito rápido! Máximo seguro: ${msgsMaximas} msgs nesse tempo.`;
+                avisoEl.textContent = `⚠️ Ritmo apertado para o número de mensagens nesse tempo (espaçamento mínimo cobre até ${msgsMaximas}). Considere aumentar o tempo.`;
                 avisoEl.classList.remove('hidden');
             } else {
                 avisoEl.classList.add('hidden');
