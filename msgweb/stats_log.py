@@ -13,17 +13,52 @@ NÃO inclui duplicados, que são uma categoria à parte) acrescenta uma linha
 JSON em STATS_LOG_PATH. O arquivo cresce indefinidamente ao longo do uso
 normal, o que é aceitável para o volume esperado de uso local de um único
 usuário.
+
+Fica na home do usuário (mesmo padrão de license.py / LICENSE_CACHE_FILE),
+não dentro da pasta do app: o cliente baixa um .exe/zip novo a cada
+atualização, numa pasta diferente da anterior (relato de 21/08/2026 — "todo
+lançamento de versão nova perde o histórico"). Se o arquivo morasse dentro
+da pasta do app (como uploads/ mora), cada atualização começaria um
+histórico do zero.
 """
 
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
-STATS_LOG_PATH = Path("uploads/envios_stats.jsonl")
+STATS_LOG_PATH = Path(os.path.expanduser("~")) / ".whatsapp_automacao_stats.jsonl"
+
+# Caminho antigo (dentro da pasta do app, versão <= 1.4.4) — migrado
+# automaticamente uma única vez por _migrar_local_legado(), para quem já
+# tinha histórico acumulado não perder nada na primeira execução com o
+# caminho novo.
+STATS_LOG_PATH_LEGADO = Path("uploads/envios_stats.jsonl")
 
 TIPO_ENVIADO = "enviado"
 TIPO_REJEITADO = "rejeitado"
+
+
+def _migrar_local_legado(path: Path = STATS_LOG_PATH, legado: Path = STATS_LOG_PATH_LEGADO) -> None:
+    """
+    Copia o histórico do caminho antigo (dentro da pasta do app) pro novo
+    (na home do usuário), uma única vez: só age se o caminho novo ainda não
+    existe e o antigo existe. Rodar de novo depois da primeira vez é sempre
+    um no-op — não sobrescreve nada que o usuário já acumulou no caminho
+    novo. Falha silenciosa (ex.: sem permissão de leitura) não deve impedir
+    o app de iniciar; o pior caso é só recomeçar o histórico do zero.
+    """
+    if path.exists() or not legado.exists():
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(legado.read_bytes())
+    except OSError:
+        pass
+
+
+_migrar_local_legado()
 
 
 def _registrar(timestamp: str, tipo: str, path: Path) -> None:

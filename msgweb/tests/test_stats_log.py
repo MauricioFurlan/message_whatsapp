@@ -21,7 +21,10 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from stats_log import contar_eventos, registrar_envio, registrar_rejeitado, obter_estatisticas, _agrupar_por_mes
+from stats_log import (
+    contar_eventos, registrar_envio, registrar_rejeitado, obter_estatisticas,
+    _agrupar_por_mes, _migrar_local_legado,
+)
 
 
 class TestContarEventos(unittest.TestCase):
@@ -127,6 +130,48 @@ class TestAgruparPorMes(unittest.TestCase):
                 [m["mes"] for m in stats["por_mes"]],
                 ["2026-08", "2026-07"],
             )
+
+
+class TestMigrarLocalLegado(unittest.TestCase):
+    """
+    Relato de cliente (21/08/2026): toda vez que baixa uma versão nova do
+    .exe, o histórico "zera", porque o arquivo antigo (uploads/, dentro da
+    pasta do app) fica pra trás na pasta da versão anterior. Fix: caminho
+    novo mora na home do usuário (mesmo padrão de license.py), e essa
+    função migra automaticamente na primeira execução com o caminho novo.
+    """
+
+    def test_copia_do_legado_quando_novo_nao_existe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            novo = Path(tmp) / "novo.jsonl"
+            legado = Path(tmp) / "legado.jsonl"
+            legado.write_text('{"ts": "2026-08-19 09:00:00", "tipo": "enviado"}\n', encoding="utf-8")
+
+            _migrar_local_legado(path=novo, legado=legado)
+
+            self.assertTrue(novo.exists())
+            self.assertEqual(novo.read_text(encoding="utf-8"), legado.read_text(encoding="utf-8"))
+
+    def test_nao_sobrescreve_se_novo_ja_existe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            novo = Path(tmp) / "novo.jsonl"
+            legado = Path(tmp) / "legado.jsonl"
+            novo.write_text('{"ts": "2026-08-20 10:00:00", "tipo": "enviado"}\n', encoding="utf-8")
+            legado.write_text('{"ts": "2026-08-19 09:00:00", "tipo": "enviado"}\n', encoding="utf-8")
+
+            _migrar_local_legado(path=novo, legado=legado)
+
+            # Conteudo do novo preservado, nao foi pisado pelo legado.
+            self.assertEqual(novo.read_text(encoding="utf-8"), '{"ts": "2026-08-20 10:00:00", "tipo": "enviado"}\n')
+
+    def test_nao_falha_se_legado_nao_existe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            novo = Path(tmp) / "novo.jsonl"
+            legado = Path(tmp) / "nao_existe.jsonl"
+
+            _migrar_local_legado(path=novo, legado=legado)
+
+            self.assertFalse(novo.exists())
 
 
 class TestPersistencia(unittest.TestCase):
