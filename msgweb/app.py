@@ -8,6 +8,7 @@ import logging
 import os
 import platform
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
@@ -25,6 +26,7 @@ import requests as http_requests
 
 from whatsapp_sender import WhatsAppSender
 from contact_logic import get_pending_contacts
+import license as license_mod
 from license import validar_licenca, ativar_licenca, desativar_licenca, get_cached_key
 from version import APP_VERSION
 import stats_log
@@ -51,6 +53,20 @@ file_logger.info(f"Horário: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 file_logger.info(f"Python: {sys.version}")
 file_logger.info(f"SO: {platform.system()} {platform.release()} ({platform.machine()})")
 file_logger.info(f"Diretório: {os.getcwd()}")
+
+# Linha-base da licença. O cliente relata que "às vezes" o app pede a chave
+# de novo; sem registrar o estado no início de CADA sessão não dá para
+# comparar uma abertura boa com uma ruim depois que o problema acontece.
+try:
+    _lic_file = license_mod.LICENSE_CACHE_FILE
+    _lic_existe = _lic_file.exists()
+    _lic_mid = license_mod.get_machine_id()
+    file_logger.info(
+        f"Licença: arquivo={_lic_file} (existe={_lic_existe}), "
+        f"machine_id={_lic_mid[:12]}... (fonte={license_mod._MACHINE_ID_SOURCE})"
+    )
+except Exception as _e:
+    file_logger.error(f"Licença: falha ao ler estado inicial: {_e!r}")
 file_logger.info("=" * 70)
 
 app = FastAPI(title="WhatsApp Automação Web")
@@ -134,6 +150,136 @@ def _count_contacts(df: pd.DataFrame) -> tuple[int, int, int, int]:
     return total, pendentes, enviados, invalidos, duplicados
 
 
+CONFIG_FILE = Path("uploads/config.json")
+
+# Marcador de "tem envio rodando agora". Gravado ao iniciar e apagado quando a
+# thread de envio termina — de qualquer jeito, inclusive por parada manual.
+# Se o arquivo ainda existir no próximo arranque, o processo morreu no meio
+# (máquina desligada, janela fechada, travamento) e os contatos que sobraram
+# ficaram pendentes sem ninguém avisar. Foi o caso de 31/08/2026: o log termina
+# em "Aguardando 21s..." às 16:56, sem linha de encerramento, e no dia seguinte
+# o app reabriu calado com 40 pendentes e a configuração antiga.
+ENVIO_FLAG_FILE = Path("uploads/envio_em_andamento.json")
+
+
+def _marcar_envio_em_andamento(pendentes: int) -> None:
+    """Registra em disco que um envio começou (ver ENVIO_FLAG_FILE)."""
+    try:
+        ENVIO_FLAG_FILE.parent.mkdir(exist_ok=True)
+        ENVIO_FLAG_FILE.write_text(
+            json.dumps(
+                {
+                    "iniciado_em": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                    "pendentes_no_inicio": int(pendentes),
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    except OSError as e:
+        file_logger.warning(f"Não foi possível marcar o envio em andamento: {e!r}")
+
+
+def _limpar_envio_em_andamento() -> None:
+    """Apaga o marcador — o envio chegou ao fim por um caminho previsto."""
+    try:
+        ENVIO_FLAG_FILE.unlink(missing_ok=True)
+    except OSError as e:
+        file_logger.warning(f"Não foi possível limpar o marcador de envio: {e!r}")
+
+
+def _avisar_execucao_interrompida() -> None:
+    """
+    Conta ao usuário, no arranque, que a execução anterior não terminou.
+
+    Retomar de onde parou já funciona — os contatos continuam pendentes na
+    planilha. O que faltava era dizer isso: o app reabria restaurando a
+    configuração antiga (ex.: "118 msgs em 240min") e aplicando-a ao punhado
+    que sobrou, sem nenhuma pista de que aquele número já não fazia sentido.
+    """
+    if not ENVIO_FLAG_FILE.exists():
+        return
+    try:
+        dados = json.loads(ENVIO_FLAG_FILE.read_text(encoding="utf-8"))
+        quando = dados.get("iniciado_em", "")
+        pendentes = dados.get("pendentes_no_inicio")
+    except (json.JSONDecodeError, OSError, AttributeError):
+        quando, pendentes = "", None
+
+    detalhe = f" (iniciada em {quando})" if quando else ""
+    extra = (
+        f" Ela tinha {pendentes} contato(s) pendentes quando começou."
+        if isinstance(pendentes, int) and pendentes > 0
+        else ""
+    )
+    add_log(
+        f"⚠️ A execução anterior{detalhe} não foi finalizada — o programa foi "
+        f"fechado no meio do envio.{extra} Os contatos que faltavam continuam "
+        f"pendentes e serão retomados. Confira a quantidade e o tempo de envio "
+        f"antes de iniciar: a configuração restaurada é a da execução anterior."
+    )
+    _limpar_envio_em_andamento()
+
+
+def _salvar_config_em_disco() -> None:
+    """
+    Grava a configuração de envio para ela sobreviver ao reinício do servidor.
+
+    Sem isso o backend voltava ao padrão a cada reinício enquanto o navegador
+    continuava com a configuração real no localStorage, e as duas ficavam
+    divergentes até o usuário mexer em algum campo. Isso era visível na tela:
+    `GET /contacts` decide marcar duplicados a partir de `allow_duplicates`, e
+    logo após reiniciar ele usava o padrão (desligado), mostrando "Duplicado"
+    em contatos que já constavam como enviados.
+    """
+    try:
+        CONFIG_FILE.parent.mkdir(exist_ok=True)
+        CONFIG_FILE.write_text(json.dumps(state.config, ensure_ascii=False), encoding="utf-8")
+    except OSError as e:
+        file_logger.warning(f"Não foi possível salvar a configuração em disco: {e!r}")
+
+
+def _restaurar_config_do_disco() -> None:
+    """Recarrega a configuração gravada, ignorando chaves desconhecidas."""
+    if not CONFIG_FILE.exists():
+        return
+    try:
+        salvo = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        file_logger.warning(f"Configuração salva ilegível ({e!r}) — usando os padrões.")
+        return
+    if not isinstance(salvo, dict):
+        return
+    conhecidas = set(state.config)
+    aplicadas = {k: v for k, v in salvo.items() if k in conhecidas}
+    state.config.update(aplicadas)
+    add_log(
+        f"Configuração restaurada da sessão anterior: {state.config.get('total_msgs')} msgs "
+        f"em {state.config.get('tempo_minutos')}min, horário "
+        f"{state.config.get('hora_inicio')}h-{state.config.get('hora_fim')}h, "
+        f"duplicados {'permitidos' if state.config.get('allow_duplicates') else 'bloqueados'}."
+    )
+
+
+def _recusar_se_enviando(detalhe: str) -> None:
+    """
+    Bloqueia alterações enquanto o envio está em andamento.
+
+    A trava mora no backend porque desabilitar campo na tela não é garantia:
+    a página pode ser recarregada no meio do envio (e a restauração do
+    localStorage chega a repostar a mensagem global sozinha), e qualquer
+    requisição fora da tela chegaria igual. O sender lê `config` e
+    `global_message` a cada contato, então uma alteração aceita no meio do
+    caminho mudaria o texto ou o ritmo de um envio já em curso, sem o usuário
+    perceber.
+
+    `is_running()` cobre também o estado "pausado" — pausa entre rajadas e
+    espera por horário comercial são envio em andamento, não envio parado.
+    """
+    if state.sender and state.sender.is_running():
+        raise HTTPException(status_code=400, detail=detalhe)
+
+
 def get_excel_info() -> dict:
     """Procedência da planilha em uso, para a tela avisar o usuário."""
     return {
@@ -147,6 +293,14 @@ def get_excel_info() -> dict:
 async def startup_event():
     """Captura o event loop principal do asyncio e restaura estado."""
     state._loop = asyncio.get_event_loop()
+    # A configuração precisa ser restaurada ANTES de a tela pedir os contatos:
+    # `GET /contacts` usa allow_duplicates para decidir o que marcar como
+    # duplicado, e responder com o padrão erraria o status de contatos já
+    # enviados até o navegador reenviar a configuração dele.
+    _restaurar_config_do_disco()
+    # Depois da configuração (para o aviso poder citá-la) e antes de qualquer
+    # coisa que o usuário vá fazer na tela.
+    _avisar_execucao_interrompida()
     # Se o path já foi definido via CLI (--planilha), respeita essa escolha
     if state.excel_path and state.excel_source == "cli":
         p = Path(state.excel_path)
@@ -248,6 +402,7 @@ def get_status_dict() -> dict:
             "pause_until": None,
             "next_leva_size": None,
             "elapsed_seconds": None,
+            "alerta_lentidao": None,
         }
 
     return {
@@ -271,6 +426,11 @@ def get_status_dict() -> dict:
         # Duração real do envio (do primeiro ao último contato), apurada só
         # ao concluir com sucesso — o painel mostra em "Finalizado".
         "elapsed_seconds": sender_status.get("elapsed_seconds"),
+        # Aviso de rede ruim/WhatsApp Web lento durante o envio (ou None).
+        # Vai junto do status, e não como evento próprio, para sobreviver a um
+        # F5 ou a uma reconexão do SSE: o campo `seq` muda a cada novo aviso e
+        # é o que faz o painel abrir o popup só uma vez por aviso.
+        "alerta_lentidao": sender_status.get("alerta_lentidao"),
         "config": state.config,
         "excel_loaded": state.excel_path is not None,
         "excel_info": get_excel_info(),
@@ -296,7 +456,37 @@ class LicenseActivateModel(BaseModel):
 @app.get("/license/status")
 async def license_status():
     """Verifica o status da licença atual."""
-    result = validar_licenca()
+    inicio = time.monotonic()
+    try:
+        result = validar_licenca()
+    except Exception as e:
+        # Mantém o comportamento de antes (500 -> a tela abre o formulário),
+        # mas deixa registrado que foi erro, e não licença realmente inválida.
+        file_logger.exception(
+            f"[licenca] /license/status falhou depois de "
+            f"{time.monotonic() - inicio:.1f}s: {type(e).__name__}: {e}"
+        )
+        raise
+    duracao = time.monotonic() - inicio
+    if result.get("valida"):
+        file_logger.info(
+            f"[licenca] /license/status: válida "
+            f"({result.get('dias_restantes')} dia(s), offline={result.get('offline', False)}) "
+            f"em {duracao:.1f}s"
+        )
+    else:
+        file_logger.warning(
+            f"[licenca] /license/status: INVÁLIDA em {duracao:.1f}s "
+            f"— a tela vai pedir a chave. Erro: {result.get('erro')}"
+        )
+    # A validação usa requests bloqueante dentro de uma rota async: enquanto
+    # ela roda, o event loop não atende /contacts, /status nem /events. Se
+    # isso demorar, a tabela de contatos pode não carregar junto.
+    if duracao > 3:
+        file_logger.warning(
+            f"[licenca] a verificação de licença travou o servidor por "
+            f"{duracao:.1f}s — outras chamadas da tela ficaram na fila."
+        )
     return result
 
 
@@ -527,6 +717,10 @@ async def upload_file(file: UploadFile = File(...)):
 @app.post("/config")
 async def set_config(config: ConfigModel):
     """Atualiza configuração de envio. Recebe parâmetros simplificados do usuário."""
+    _recusar_se_enviando(
+        "Não é possível alterar as configurações durante o envio. "
+        "Pare o envio para mudar quantidade, tempo ou horário."
+    )
     state.config = {
         # Parâmetros do usuário (para restaurar na tela e para o sender)
         "total_msgs": config.total_msgs,
@@ -537,6 +731,8 @@ async def set_config(config: ConfigModel):
         "human_behavior": config.human_behavior,
         "allow_duplicates": config.allow_duplicates,
     }
+
+    _salvar_config_em_disco()
 
     add_log(
         f"Configuração atualizada: {config.total_msgs} msgs em {config.tempo_minutos}min, "
@@ -561,6 +757,10 @@ async def get_global_message():
 @app.post("/global-message")
 async def set_global_message(payload: GlobalMessageModel):
     """Salva a mensagem global."""
+    _recusar_se_enviando(
+        "Não é possível alterar a mensagem global durante o envio. "
+        "Pare o envio para mudar o texto."
+    )
     state.global_message = payload.mensagem
     state.global_message_active = payload.ativa
     if payload.ativa and payload.mensagem.strip():
@@ -653,6 +853,7 @@ async def start_sending():
     )
 
     # Log contagem da planilha
+    pendentes = 0
     try:
         df = pd.read_excel(state.excel_path)
         total = len(df)
@@ -682,8 +883,21 @@ async def start_sending():
     # Seta estado como "iniciando" imediatamente para que o frontend saiba que está rodando
     state.sender._set_state("iniciando")
 
+    _marcar_envio_em_andamento(pendentes)
+
+    def _rodar_envio():
+        """
+        Roda o envio e apaga o marcador ao final, por qualquer caminho
+        previsto: conclusão, parada manual ou erro. Se o marcador sobreviver,
+        é porque o processo morreu — que é exatamente o que se quer detectar.
+        """
+        try:
+            state.sender.start()
+        finally:
+            _limpar_envio_em_andamento()
+
     # Inicia em thread separada
-    state.sender_thread = Thread(target=state.sender.start, daemon=True)
+    state.sender_thread = Thread(target=_rodar_envio, daemon=True)
     state.sender_thread.start()
 
     add_log("Envio iniciado. Abrindo navegador...")
@@ -827,6 +1041,16 @@ async def get_contacts():
                     contact["duplicado"] = False
                     continue
                 if num_norm in numeros_vistos:
+                    # "Enviado" é fato registrado na planilha; "duplicado" é uma
+                    # classificação derivada, que só diz algo sobre quem ainda
+                    # está na fila. Marcar uma linha já enviada como duplicada
+                    # mostrava "Duplicado" no lugar de "Enviado" e fazia o
+                    # usuário clicar no botão de reenvio para "consertar" — o
+                    # que zera o Enviado da linha e reenvia a mensagem.
+                    # A linha continua servindo de âncora para as seguintes.
+                    if contact["enviado"]:
+                        contact["duplicado"] = False
+                        continue
                     first_idx = numeros_vistos[num_norm]
                     first_nome = contacts[first_idx]["pessoa"] or f"linha {first_idx + 1}"
                     contact["duplicado"] = True
@@ -867,11 +1091,7 @@ class ContactsPayload(BaseModel):
 @app.post("/contacts")
 async def save_contacts(payload: ContactsPayload):
     """Salva os contatos editados na planilha."""
-    if state.sender and state.sender.is_running():
-        raise HTTPException(
-            status_code=400,
-            detail="Não é possível editar contatos durante o envio."
-        )
+    _recusar_se_enviando("Não é possível editar contatos durante o envio.")
 
     # Filtra linhas totalmente vazias (sem nome e sem número)
     valid_contacts = [

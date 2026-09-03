@@ -31,6 +31,19 @@
            mescladas num único quadro amarelo, sem repetir o horário em cada
            linha (ver addLogEntry). */
         .log-plano    { color: #facc15; white-space: pre-wrap; }
+        /* Mensagem que exige uma ação do usuário para o envio andar (ex.:
+           fechar a janela do Chrome que está segurando o perfil). Precisa
+           saltar aos olhos no meio do log, então leva fundo e borda em vez
+           de só uma cor de texto. */
+        .log-acao {
+            color: #fff7ed;
+            background: #b45309;
+            border-left: 3px solid #fbbf24;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 3px;
+            white-space: pre-wrap;
+        }
         @keyframes pulse-dot {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.4; }
@@ -184,6 +197,45 @@
     </div>
 
     <!-- Main area: two columns -->
+
+    <!-- Aviso de conexão instável / WhatsApp Web lento durante o envio.
+         Não bloqueia o envio: é informativo. Aparece quando muitas conversas
+         deixam de abrir, porque cada uma dessas falhas custa minutos e faz o
+         envio estourar o tempo configurado sem explicação visível na tela. -->
+    <div id="lentidao-overlay" class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md mx-4">
+            <div class="flex items-start gap-3">
+                <div class="w-10 h-10 shrink-0 bg-amber-100 rounded-full flex items-center justify-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h2 id="lentidao-titulo" class="text-lg font-bold text-gray-900">Conexão instável</h2>
+                    <p id="lentidao-msg" class="text-sm text-gray-600 mt-1"></p>
+                </div>
+            </div>
+
+            <div class="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <p class="text-xs text-amber-800 font-medium mb-1">O que fazer:</p>
+                <ul class="text-xs text-amber-800 space-y-0.5 list-disc list-inside">
+                    <li>O envio <strong>continua normalmente</strong> — não precisa parar.</li>
+                    <li>Confira a internet e feche abas/programas pesados.</li>
+                    <li id="lentidao-dica-reenvio">Esses contatos ficam marcados como
+                        inválidos, mas podem estar certos: use o botão de reenvio (↺)
+                        na linha depois que a conexão melhorar.</li>
+                    <li>Se continuar assim, considere parar e reprogramar o envio
+                        com mais tempo.</li>
+                </ul>
+            </div>
+
+            <button onclick="fecharAvisoLentidao()"
+                class="mt-4 w-full bg-gray-800 hover:bg-gray-900 text-white font-medium py-2 rounded-lg text-sm">
+                Entendi, continuar
+            </button>
+        </div>
+    </div>
+
     <div class="flex-1 flex overflow-hidden">
 
         <!-- LEFT: Contatos table -->
@@ -420,12 +472,15 @@
                             </div>
 
                             <div class="mt-2 flex items-center justify-between">
-                                <button onclick="saveConfig()"
-                                    class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white text-xs font-medium rounded-md transition-colors">
+                                <button onclick="saveConfig()" id="btn-save-config"
+                                    class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white text-xs font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                                     Salvar Config
                                 </button>
                                 <span id="cfg-total-msgs" class="text-xs text-gray-400 font-medium"></span>
                             </div>
+                            <p id="settings-locked-hint" class="hidden mt-1 text-xs text-amber-600">
+                                🔒 Bloqueado durante o envio. Pare o envio para alterar.
+                            </p>
                             <p id="config-status" class="mt-1 text-xs text-gray-400"></p>
                         </div>
                     </details>
@@ -591,6 +646,50 @@
                 console.warn('SSE desconectado. Reconectando em 3s...');
                 setTimeout(connectSSE, 3000);
             };
+        }
+
+        // --- Lock/Unlock Settings (configuração + mensagem global) ---
+        //
+        // O sender relê `config` e `global_message` a cada contato, então uma
+        // alteração aceita no meio do envio mudaria o ritmo ou o texto de um
+        // disparo já em andamento. A trava de verdade é do backend (POST
+        // /config e /global-message recusam com o envio rodando); isto aqui é
+        // a parte visível, para o usuário não digitar algo que será recusado.
+        let settingsLocked = false;
+
+        // Liberação pontual: startSending() precisa gravar config e mensagem
+        // global ANTES de chamar /start, e nesse instante o `starting` já pode
+        // ter travado a tela pelo heartbeat do /status.
+        let salvandoParaIniciar = false;
+
+        function lockSettingsEditing(locked) {
+            settingsLocked = locked;
+
+            const campos = [
+                'cfg-total-msgs-input', 'cfg-tempo', 'cfg-hora-inicio', 'cfg-hora-fim',
+                'cfg-skip-weekends', 'cfg-human-behavior', 'cfg-allow-duplicates',
+                'btn-save-config', 'global-msg-toggle',
+            ];
+            campos.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = locked;
+            });
+
+            // Textarea e botão da mensagem global dependem TAMBÉM do toggle:
+            // com o toggle desligado eles já ficam desabilitados, e destravar
+            // não pode reabilitá-los por engano.
+            aplicarEstadoMensagemGlobal();
+
+            const hint = document.getElementById('settings-locked-hint');
+            if (hint) hint.classList.toggle('hidden', !locked);
+        }
+
+        function aplicarEstadoMensagemGlobal() {
+            const active = isGlobalMessageActive();
+            const textarea = document.getElementById('global-message');
+            const btn = document.getElementById('btn-save-global-msg');
+            if (textarea) textarea.disabled = !active || settingsLocked;
+            if (btn) btn.disabled = !active || settingsLocked;
         }
 
         // --- Lock/Unlock Contacts Editing ---
@@ -769,6 +868,65 @@
             window.location.href = '/stats/download';
         }
 
+        // --- Aviso de conexão instável / WhatsApp Web lento ---
+        //
+        // O backend manda o aviso dentro do `status` (campo `alerta_lentidao`),
+        // não como evento próprio, justamente para ele sobreviver a um F5 ou a
+        // uma queda do SSE. Mas o status chega a cada 5s: sem guardar o que já
+        // foi mostrado, o popup reabriria sozinho a cada heartbeat, inclusive
+        // depois de o usuário fechá-lo. O `seq` (nº de falhas quando o aviso
+        // saiu) é o que distingue "aviso novo" de "o mesmo de novo".
+        let ultimoAlertaLentidaoVisto = null;
+
+        function mostrarAvisoLentidao(alerta) {
+            if (!alerta) return;
+            if (ultimoAlertaLentidaoVisto === alerta.seq) return;
+            ultimoAlertaLentidaoVisto = alerta.seq;
+
+            const overlay = document.getElementById('lentidao-overlay');
+            const titulo = document.getElementById('lentidao-titulo');
+            const msg = document.getElementById('lentidao-msg');
+            if (!overlay) return;
+
+            // Duas falhas diferentes, dois textos diferentes. "app" é o
+            // WhatsApp Web nem chegar a abrir — os contatos seguem PENDENTES e
+            // não há nada para reenviar depois; "chat" é a conversa não abrir,
+            // e aí o contato vira inválido e volta pelo botão de reenvio.
+            const falhaDoApp = alerta.tipo === 'app';
+
+            titulo.textContent = alerta.sem_conexao
+                ? 'Sem conexão com a internet'
+                : (falhaDoApp
+                    ? 'O WhatsApp Web não está carregando'
+                    : 'Conexão instável ou WhatsApp Web lento');
+
+            const atraso =
+                `Cada uma dessas tentativas leva alguns minutos até desistir, então o ` +
+                `envio já acumulou cerca de ` +
+                `<strong>${escapeHtml(alerta.atraso_estimado_fmt)}</strong> além do ` +
+                `tempo configurado.`;
+
+            msg.innerHTML = falhaDoApp
+                ? `Em <strong>${alerta.falhas} de ${alerta.tentativas}</strong> contatos ` +
+                  `(${alerta.percentual}%) a tela do WhatsApp nem chegou a abrir. ` +
+                  `Nada foi enviado para eles e <strong>eles continuam pendentes</strong>. ` +
+                  atraso
+                : `<strong>${alerta.falhas} de ${alerta.tentativas}</strong> conversas não ` +
+                  `abriram (${alerta.percentual}%). ` + atraso;
+
+            // A dica de reenvio (↺) só faz sentido para o caso "chat": no caso
+            // "app" o contato nem foi marcado, não há o que reenviar.
+            const dicaReenvio = document.getElementById('lentidao-dica-reenvio');
+            if (dicaReenvio) dicaReenvio.hidden = falhaDoApp;
+
+            overlay.classList.remove('hidden');
+        }
+
+        function fecharAvisoLentidao() {
+            document.getElementById('lentidao-overlay').classList.add('hidden');
+        }
+
+
         function updateDashboard(status) {
             currentState = status.state;
 
@@ -790,6 +948,9 @@
             // Detalhamento dos inválidos deste envio vem pronto do backend
             // (zera a cada novo envio, sobrevive a recarregar a página).
             sessionInvalidMotivos = status.invalid_motivos || {};
+
+            // Aviso de rede ruim / WhatsApp Web lento (popup).
+            mostrarAvisoLentidao(status.alerta_lentidao);
 
             document.getElementById('status-invalids').textContent = status.total_invalids || 0;
             updateInvalidsTooltip();
@@ -817,6 +978,9 @@
 
             // Desabilita edição de contatos durante o envio (ou enquanto está iniciando)
             lockContactsEditing(locked);
+            // Mesma regra para configuração e mensagem global: o envio em curso
+            // usa os valores que estavam valendo quando começou.
+            lockSettingsEditing(locked);
 
             if (status.config) {
                 // Só preenche os inputs na primeira carga para não atrapalhar edição
@@ -1036,6 +1200,11 @@
                 // Cor por tipo de problema + tooltip com o motivo completo
                 entry.className = `${problema.cor} mb-0.5 log-help`;
                 entry.title = problema.motivo;
+            } else if (message.includes('🚫')) {
+                // Ação necessária do usuário: sem ela o envio não anda. Não pode
+                // passar despercebida no meio do log (antes caía no `else` e
+                // saía verde, igual a uma mensagem de sucesso).
+                entry.className = 'log-acao mb-1';
             } else if (message.includes('Executando leva')) {
                 entry.className = 'log-leva mb-0.5';
             } else if (message.includes('atualizados via editor') || message.includes('Configuração') || message.includes('Planilha')) {
@@ -1754,24 +1923,100 @@
             });
         }
 
-        async function loadContacts() {
+        // True quando o último GET /contacts falhou ou veio vazio: a tela não
+        // representa mais a planilha, então salvar está proibido (ver
+        // setContactsLoadError).
+        let contactsLoadFailed = false;
+
+        // Falha ao carregar contatos: avisa na tela e trava o "Salvar Alterações".
+        //
+        // POR QUE TRAVAR O SALVAR: a tabela da tela é a fonte do POST /contacts,
+        // que reescreve a planilha inteira. Se o GET falhou, a tela está vazia ou
+        // desatualizada; salvar nesse estado apagaria as marcas de "Enviado" e
+        // devolveria à fila gente que já recebeu a mensagem — reenvio duplicado.
+        // O GET em si é leitura pura e nunca grava nada, então repeti-lo é seguro.
+        function setContactsLoadError(msg) {
+            contactsLoadFailed = !!msg;
+            const statusEl = document.getElementById('upload-status');
+            const btnSalvar = document.getElementById('btn-save-contacts');
+            if (msg) {
+                if (statusEl) {
+                    statusEl.innerHTML = '';
+                    statusEl.className = 'px-4 pb-2 text-sm text-red-600';
+                    statusEl.appendChild(document.createTextNode(msg + ' '));
+                    const btn = document.createElement('button');
+                    btn.textContent = 'Tentar de novo';
+                    btn.className = 'underline font-medium';
+                    btn.onclick = () => loadContacts();
+                    statusEl.appendChild(btn);
+                }
+                if (btnSalvar) {
+                    btnSalvar.disabled = true;
+                    btnSalvar.title = 'Salvar bloqueado: a planilha não foi carregada. '
+                        + 'Salvar agora sobrescreveria a planilha com a tela incompleta.';
+                }
+            } else {
+                if (statusEl && statusEl.className.indexOf('text-red-600') !== -1) {
+                    statusEl.textContent = '';
+                    statusEl.className = 'px-4 pb-2 text-sm text-gray-400';
+                }
+                if (btnSalvar) {
+                    btnSalvar.disabled = false;
+                    btnSalvar.title = 'Ctrl+S';
+                }
+            }
+        }
+
+        async function loadContacts(tentativa = 1) {
+            const MAX_TENTATIVAS = 3;
             try {
                 const response = await fetch('/contacts');
-                if (!response.ok) return;
+                if (!response.ok) throw new Error('HTTP ' + response.status);
                 const data = await response.json();
+                const contatos = (data && data.contacts) || [];
 
+                // Uma resposta vazia NUNCA substitui uma tabela já preenchida.
+                // Planilha ilegível ou truncada volta como lista vazia, e trocar a
+                // tela por ela perderia os status de envio já carregados.
+                const jaTemLinhas = document.querySelectorAll('#contacts-tbody tr').length > 0;
+                if (contatos.length === 0 && jaTemLinhas) {
+                    setContactsLoadError('O servidor devolveu uma planilha vazia. '
+                        + 'A tabela da tela foi mantida e o salvar está bloqueado.');
+                    return false;
+                }
+
+                // Os dados chegaram inteiros. A partir daqui é só desenho de
+                // tela: se algum helper de UI falhar, a tabela já está correta e
+                // o salvar NÃO deve ser travado por isso — travar aqui seria
+                // impedir o usuário de trabalhar por causa de um tooltip.
                 const tbody = document.getElementById('contacts-tbody');
                 tbody.innerHTML = '';
-                data.contacts.forEach(renderContactRow);
-                // A tabela acabou de vir da planilha: nenhuma ordenação aplicada.
-                sortState = { coluna: null, desc: false };
-                updateSortIndicators();
-                updateContactsCount();
-                updateInvalidsTooltip();
-                updateGlobalMessageHints();
-                document.getElementById('contacts-section').classList.remove('hidden');
+                contatos.forEach(renderContactRow);
+                setContactsLoadError(null);
+                try {
+                    // A tabela acabou de vir da planilha: nenhuma ordenação aplicada.
+                    sortState = { coluna: null, desc: false };
+                    updateSortIndicators();
+                    updateContactsCount();
+                    updateInvalidsTooltip();
+                    updateGlobalMessageHints();
+                    document.getElementById('contacts-section').classList.remove('hidden');
+                } catch (errUi) {
+                    console.warn('Contatos carregados, mas a tela falhou ao atualizar:', errUi);
+                }
+                return true;
             } catch (err) {
-                console.warn('Erro ao carregar contatos:', err);
+                console.warn(`Erro ao carregar contatos (tentativa ${tentativa}):`, err);
+                if (tentativa < MAX_TENTATIVAS) {
+                    // O servidor pode estar ocupado — a verificação de licença usa
+                    // requests bloqueante e segura o event loop enquanto responde.
+                    await new Promise(r => setTimeout(r, 800 * tentativa));
+                    return loadContacts(tentativa + 1);
+                }
+                setContactsLoadError('Não foi possível carregar a planilha ('
+                    + (err && err.message ? err.message : 'erro desconhecido')
+                    + '). O salvar está bloqueado para não sobrescrever a planilha.');
+                return false;
             }
         }
 
@@ -1827,6 +2072,21 @@
 
         async function saveContacts(silent = false) {
             const statusEl = document.getElementById('contacts-status');
+
+            // A tela não reflete a planilha (o GET /contacts falhou ou veio
+            // vazio). Gravar daqui reescreveria a planilha inteira a partir de
+            // uma tabela incompleta, zerando "Enviado" e reenviando quem já
+            // recebeu. O Ctrl+S não passa pelo disabled do botão, então a trava
+            // precisa estar aqui também.
+            if (contactsLoadFailed) {
+                if (!silent) {
+                    statusEl.textContent = 'Salvar bloqueado: a planilha não foi carregada corretamente. '
+                        + 'Use "Tentar de novo" ou recarregue a página antes de salvar.';
+                    statusEl.className = 'mt-2 text-sm text-red-600';
+                }
+                return;
+            }
+
             dropEmptyContactRows();
             const contacts = collectContacts();
 
@@ -1911,6 +2171,16 @@
         }
 
         async function saveConfig(silent = false) {
+            if (settingsLocked && !salvandoParaIniciar) {
+                if (!silent) {
+                    const el = document.getElementById('control-status');
+                    if (el) {
+                        el.textContent = 'Configuração bloqueada durante o envio. Pare o envio para alterar.';
+                        el.className = 'mt-2 text-sm text-amber-600';
+                    }
+                }
+                return false;
+            }
             const statusEl = document.getElementById('config-status');
 
             const config = {
@@ -1992,7 +2262,20 @@
             document.getElementById('btn-start').disabled = true;
             document.getElementById('btn-stop').disabled = false;
             lockContactsEditing(true);
+            lockSettingsEditing(true);
 
+            // Os três saves abaixo são o retrato do que o usuário configurou e
+            // acontecem ANTES do /start, com o sender ainda parado — a trava de
+            // envio não vale para eles.
+            salvandoParaIniciar = true;
+            try {
+                return await _startSendingSalvandoEDisparando(statusEl);
+            } finally {
+                salvandoParaIniciar = false;
+            }
+        }
+
+        async function _startSendingSalvandoEDisparando(statusEl) {
             // Salva a configuração no servidor antes de iniciar (garante que os valores visíveis são os usados)
             const cfgOk = await saveConfig(true);
             if (!cfgOk) {
@@ -2002,6 +2285,7 @@
                 document.getElementById('btn-start').disabled = false;
                 document.getElementById('btn-stop').disabled = true;
                 lockContactsEditing(false);
+                lockSettingsEditing(false);
                 statusEl.textContent = 'Não foi possível salvar a configuração no servidor. Envio cancelado.';
                 statusEl.className = 'mt-2 text-sm text-red-600';
                 return;
@@ -2021,6 +2305,7 @@
                     document.getElementById('btn-start').disabled = false;
                     document.getElementById('btn-stop').disabled = true;
                     lockContactsEditing(false);
+                    lockSettingsEditing(false);
                     statusEl.textContent = 'Erro ao salvar contatos. Envio cancelado.';
                     statusEl.className = 'mt-2 text-sm text-red-600';
                     return;
@@ -2040,6 +2325,7 @@
                     document.getElementById('btn-start').disabled = false;
                     document.getElementById('btn-stop').disabled = true;
                     lockContactsEditing(false);
+                    lockSettingsEditing(false);
                     statusEl.textContent = data.detail;
                     statusEl.className = 'mt-2 text-sm text-red-600';
                 }
@@ -2049,6 +2335,7 @@
                 document.getElementById('btn-start').disabled = false;
                 document.getElementById('btn-stop').disabled = true;
                 lockContactsEditing(false);
+                lockSettingsEditing(false);
                 statusEl.textContent = `Erro: ${err.message}`;
                 statusEl.className = 'mt-2 text-sm text-red-600';
             }
@@ -2313,24 +2600,27 @@
         function toggleGlobalMessage() {
             const active = isGlobalMessageActive();
             const textarea = document.getElementById('global-message');
-            const btn = document.getElementById('btn-save-global-msg');
             const label = document.getElementById('global-msg-toggle-label');
 
-            textarea.disabled = !active;
-            btn.disabled = !active;
+            aplicarEstadoMensagemGlobal();
             label.textContent = active ? 'ON' : 'OFF';
             label.className = active ? 'text-xs text-green-600 font-medium' : 'text-xs text-gray-400';
 
             // Salva estado no localStorage
             localStorage.setItem('whatsapp_global_msg_active', active ? '1' : '0');
 
-            // Sincroniza com backend
-            const mensagem = textarea.value;
-            fetch('/global-message', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mensagem, ativa: active }),
-            }).catch(() => {});
+            // Sincroniza com backend — exceto durante o envio. Esta função roda
+            // também na carga da página (restaurando o toggle do localStorage):
+            // sem esta guarda, recarregar a tela no meio de um envio reposta a
+            // mensagem global e trocaria o texto dos contatos restantes.
+            if (!settingsLocked || salvandoParaIniciar) {
+                const mensagem = textarea.value;
+                fetch('/global-message', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mensagem, ativa: active }),
+                }).catch(() => {});
+            }
 
             // Atualiza hints nos campos de mensagem vazios
             updateGlobalMessageHints();
@@ -2354,6 +2644,11 @@
 
         async function saveGlobalMessage() {
             const statusEl = document.getElementById('global-msg-status');
+            if (settingsLocked && !salvandoParaIniciar) {
+                statusEl.textContent = 'Bloqueada durante o envio';
+                statusEl.className = 'text-xs text-amber-600';
+                return false;
+            }
             const mensagem = document.getElementById('global-message').value;
             const ativa = isGlobalMessageActive();
 

@@ -176,15 +176,24 @@ class NavRetryTest(unittest.TestCase):
         # Não é TimeoutException: o laço de envio trata os dois de formas opostas
         self.assertNotIsInstance(WhatsAppNotLoadedError("x"), TimeoutException)
 
-    def test_pane_nao_carrega_tenta_de_novo_sem_digitar_nada(self):
-        """A retentativa recarrega a URL e NÃO digitou nem anexou nada antes."""
+    def test_pane_nao_carrega_espera_antes_de_recarregar_sem_digitar_nada(self):
+        """
+        As tentativas do MEIO não renavegam: recarregar joga fora o
+        carregamento em andamento e reinicia o boot do WhatsApp Web (ver
+        tests/test_pane_lento.py). Só a última recarrega, para o caso de página
+        travada em vez de lenta — daí 2 navegações, não `_NAV_MAX_ATTEMPTS`.
+
+        O que continua igual, e é o ponto original deste teste: nada foi
+        digitado nem anexado em nenhuma delas.
+        """
         driver = FakeDriverNav(pane_por_tentativa=[False, False], chat_por_tentativa=[True])
         sender = self.novo_sender(driver)
 
         with self.assertRaises(WhatsAppNotLoadedError):
             sender._send_message("Ana", "19994229146", "Oi")
 
-        self.assertEqual(len(driver.urls), WhatsAppSender._NAV_MAX_ATTEMPTS)
+        self.assertEqual(len(driver.urls), 2, "navegação inicial + reload final")
+        self.assertLess(len(driver.urls), WhatsAppSender._NAV_MAX_ATTEMPTS)
         self.assertEqual(driver.input.calls, [], "nenhuma tecla pode ter sido digitada")
         self.assertEqual(driver.file_input.anexados, [], "nenhum anexo pode ter sido enviado")
 

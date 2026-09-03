@@ -6,7 +6,9 @@ Adaptado do main.py original para funcionar como classe reutilizável.
 import logging
 import math
 import os
+import platform
 import random
+import subprocess
 import time
 import threading
 import traceback
@@ -75,6 +77,18 @@ class WhatsAppNotLoadedError(RuntimeError):
     """
 
 
+class ChromeProfileInUseError(RuntimeError):
+    """
+    Já existe um Chrome aberto usando o perfil do app (`chrome_profile/`).
+
+    Um segundo Chrome lançado com o mesmo `--user-data-dir` não abre uma
+    instância nova: ele entrega o pedido para a que já está rodando e encerra
+    o próprio processo. O ChromeDriver, que estava esperando esse processo,
+    reporta "session not created: Chrome instance exited" — mensagem que não
+    diz nada ao usuário sobre a causa real.
+    """
+
+
 class InvalidNumberError(RuntimeError):
     """
     Levantada quando o WhatsApp Web exibe o popup de 'número inválido' ao
@@ -105,6 +119,34 @@ _INVALID_NUMBER_MARKERS = (
 )
 
 
+# Textos do aviso que o WhatsApp Web mostra quando perde a conexão. Servem só
+# para o diagnóstico: um contato que falha nessa janela quase certamente falhou
+# por causa da rede, não por causa do número.
+_WHATSAPP_DISCONNECTED_MARKERS = (
+    "computador não conectado",
+    "aguardando conexão",
+    "verifique sua conexão",
+    "sem conexão",
+    "reconectando",
+    "computer not connected",
+    "waiting for connection",
+    "trying to reconnect",
+    "no internet connection",
+    "check your internet",
+)
+
+
+# Trechos do erro do ChromeDriver que apontam para perfil já em uso. Repetir
+# a abertura com outro chromedriver não resolve nenhum deles — só lança mais
+# uma janela do Chrome, que é o que o usuário via acontecer quatro vezes.
+_PROFILE_IN_USE_MARKERS = (
+    "user data directory is already in use",
+    "chrome instance exited",
+    "cannot create default profile directory",
+    "failed to create a temporary user data directory",
+)
+
+
 # Trechos de mensagem que indicam que o navegador/sessão morreu
 _DEAD_SESSION_MARKERS = (
     "invalid session id",
@@ -131,17 +173,91 @@ class WhatsAppSender:
     # 19s a 34s por contato (o WhatsApp Web recarrega o app inteiro a cada
     # `driver.get`). Um orçamento de 30s ficava dentro dessa faixa, então
     # qualquer variação de rede estourava o timeout e o contato era marcado como
-    # inválido sem culpa nenhuma. 60s dá folga real.
-    _PANE_LOAD_TIMEOUT = 60
+    # inválido sem culpa nenhuma. 60s dava folga real — para um WhatsApp Web já
+    # aquecido.
+    #
+    # No primeiro envio do dia é outra história: com o app voltando de ~20h
+    # offline, o próprio login levou ~60s (log de 01/09/2026), e as três falhas
+    # daquela execução foram detectadas em 65s, 61s e 61s. Ou seja, 60s era
+    # exatamente a fronteira, e o resultado virava cara ou coroa. 75s tira a
+    # decisão da fronteira sem encarecer muito o caso perdido — e, somado à
+    # espera contínua (ver `recarregar` no laço de navegação), dá 150s
+    # ininterruptos antes do reload de última instância.
+    _PANE_LOAD_TIMEOUT = 75
 
     # Espera pela conversa aberta DEPOIS que o app já carregou. Número
     # inexistente/bloqueado não depende deste tempo: é detectado pelo popup.
-    _CHAT_OPEN_TIMEOUT = 20
+    #
+    # Eram 20s, e a medição do log do cliente (24 a 26/08/2026) mostrou que não
+    # sobrava margem nenhuma: descontando os ~16s fixos de scroll + driver.get +
+    # #pane-side, metade das aberturas BEM-SUCEDIDAS consumia ~15s dos 20s, e o
+    # caso mais lento raspou o limite (41s do disparo até começar a digitar).
+    # Qualquer lentidão a mais virava "timeout" num número perfeitamente válido:
+    # o 19978094539 falhou às 14:40, 14:50 e 14:56 de 26/08 e recebeu a mensagem
+    # normalmente às 15:18. 45s dá folga para a cauda sem mudar nada para quem
+    # abre rápido — quem abre em 15s continua saindo em 15s.
+    _CHAT_OPEN_TIMEOUT = 45
+
+    # Com que frequência reconsultar o campo de digitação enquanto espera. As
+    # detecções de popup/bloqueio leem `.text` de vários elementos, o que é caro
+    # em WebDriver; misturadas no mesmo passo, faziam a conversa ser reconsultada
+    # poucas vezes dentro da janela. Agora o campo é verificado num intervalo
+    # curto e as detecções caras rodam num intervalo próprio, mais espaçado.
+    _CHAT_POLL_INTERVAL = 0.3
+    _POPUP_CHECK_INTERVAL = 2.0
 
     # Tentativas da fase de navegação. Retentar aqui é seguro porque nada foi
     # entregue ainda — nenhum anexo enviado, nenhuma tecla digitada. Depois do
     # primeiro anexo ou keystroke NÃO existe retentativa em nenhum caminho.
-    _NAV_MAX_ATTEMPTS = 2
+    _NAV_MAX_ATTEMPTS = 3
+
+    # Pausa antes de repetir a navegação. As duas tentativas antigas eram
+    # coladas (~30s de intervalo) e caíam dentro da mesma janela ruim do
+    # WhatsApp Web — em 26/08 houve 8 contatos seguidos falhando as duas vezes.
+    # Dar um respiro crescente entre elas custa pouco e sai da janela ruim.
+    _NAV_RETRY_BACKOFF = (5.0, 15.0)
+
+    # --- Abertura da sessão do WhatsApp Web --------------------------------- #
+    # Quanto esperar, depois de abrir web.whatsapp.com, antes de decidir se a
+    # sessão está salva ou se o QR Code está na tela. Eram 8s fixos: como o
+    # WhatsApp Web demora mais que isso para desenhar a lista de conversas num
+    # início frio, o app anunciava "Sessão não encontrada. Escaneie o QR Code"
+    # e logo em seguida "Login realizado com sucesso" 3 a 6 segundos depois —
+    # sem ninguém ter escaneado nada (visto no log do cliente em 25/08 13:00,
+    # 26/08 14:47 e 26/08 14:54). Agora a decisão espera mais e só fala em QR
+    # Code quando o QR está mesmo desenhado na tela.
+    _SESSION_DETECT_TIMEOUT = 40
+
+    # Tempo máximo aguardando o usuário escanear o QR Code.
+    _QR_SCAN_TIMEOUT = 120
+
+    # Depois de vincular pelo QR, o WhatsApp Web baixa o histórico do celular.
+    # Enquanto isso, abrir conversa por link direto (send?phone=) trava e o
+    # envio vira uma sequência de timeouts: em 26/08 o login saiu 14:37:37, a
+    # primeira mensagem foi disparada 2s depois e os 8 contatos seguintes deram
+    # timeout, sem nenhum envio. Sessão já ativa precisa de bem menos.
+    _SYNC_TIMEOUT_APOS_QR = 180
+    _SYNC_TIMEOUT_SESSAO_ATIVA = 45
+
+    # A sincronização é dada por concluída quando a lista de conversas para de
+    # crescer por este tempo (e não há aviso de sincronização na tela).
+    _SYNC_ESTAVEL_SEG = 6
+
+    # Aquecimento da navegação (_aquecer_navegacao).
+    #
+    # Quanto tempo uma navegação precisa custar para o envio poder começar. As
+    # medições do log em envios saudáveis ficam entre 19s e 46s do `driver.get`
+    # até a conversa pronta, e a parte de subir o app (#pane-side) é a menor
+    # delas. 25s é folgado para um WhatsApp Web já sincronizado e muito abaixo
+    # dos 60s+ que ele custa recém-saído de horas offline.
+    _AQUECIMENTO_ALVO_SEG = 25
+    # Quantas medições fazer antes de desistir, e teto de tempo total. Nunca
+    # bloqueia o envio: estourou, começa mesmo assim, avisando.
+    _AQUECIMENTO_MAX_TENTATIVAS = 3
+    _AQUECIMENTO_LIMITE_SEG = 180
+    # Pausa entre uma medição ruim e a próxima — é nela que o WhatsApp Web
+    # termina o trabalho de fundo que estava atrapalhando.
+    _AQUECIMENTO_PAUSA_SEG = 20
 
     def __init__(
         self,
@@ -170,6 +286,27 @@ class WhatsAppSender:
         # Zera junto com _total_invalids a cada novo envio; o histórico completo
         # continua na planilha (colunas Invalido/Motivo) e no log.txt.
         self._invalid_motivos: dict = {}
+        # Diagnóstico de queda de rede. O contato que falha durante uma
+        # desconexão continua sendo marcado como inválido, mas o log passa a
+        # dizer que a rede estava fora naquele momento — sem isso, uma queda de
+        # internet e uma lista de números ruins produzem exatamente o mesmo
+        # registro, e não dá para saber qual dos dois aconteceu.
+        self._sem_conexao_desde: Optional[float] = None
+        self._sem_conexao_no_contato: str = ""
+        self._invalidos_sem_conexao: int = 0
+        # Aviso de lentidão em tempo real. Uma conversa que não abre custa
+        # ~3,7min (3 tentativas de 45s + backoff) e ainda NÃO gasta vaga da
+        # rajada, então o próximo contato entra no lugar dela: com a rede ruim,
+        # o envio estoura a janela configurada sem que nada no painel explique
+        # por quê. Estes contadores alimentam o popup que avisa o usuário no
+        # meio do caminho — ver _registrar_resultado_de_abertura().
+        self._aberturas_ok: int = 0
+        self._aberturas_timeout: int = 0
+        # Quantas dessas falhas foram do app inteiro nao subir (#pane-side
+        # ausente), e nao apenas da conversa nao abrir. Decide o texto do aviso.
+        self._falhas_app: int = 0
+        self._alerta_lentidao: Optional[dict] = None
+        self._alerta_lentidao_em: int = 0  # nº de falhas quando o último aviso saiu
         # Quantas mensagens este envio pretende mandar: min(total_msgs configurado,
         # pendentes reais). É o denominador que o painel deve mostrar — sem isso o
         # "Pendentes" exibia a planilha inteira mesmo com o usuário pedindo 5.
@@ -237,6 +374,7 @@ class WhatsAppSender:
                 "pause_until": self._pause_until,
                 "next_leva_size": self._next_leva_size,
                 "elapsed_seconds": self._elapsed_seconds,
+                "alerta_lentidao": dict(self._alerta_lentidao) if self._alerta_lentidao else None,
             }
 
     def _contar_invalido(self, motivo: str):
@@ -261,6 +399,134 @@ class WhatsAppSender:
             self._total_invalids += 1
             self._invalid_motivos[chave] = self._invalid_motivos.get(chave, 0) + 1
         stats_log.registrar_rejeitado(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+    # Aviso de lentidão: quando disparar.
+    # Amostra mínima para não acusar rede ruim por causa de um único número
+    # errado logo no começo (com 3 contatos, 1 falha já daria 33%).
+    _ALERTA_AMOSTRA_MINIMA = 6
+    _ALERTA_TAXA_FALHA = 0.30
+    # Depois do primeiro aviso, só repete a cada N falhas novas — o popup
+    # existe para informar, não para atrapalhar quem está acompanhando a tela.
+    _ALERTA_REARME_A_CADA = 5
+
+    def _registrar_resultado_de_abertura(self, abriu: bool, tipo: str = "chat") -> None:
+        """
+        Contabiliza uma tentativa de chegar até a conversa e, se a taxa de
+        falha estiver alta, arma o aviso que o painel mostra em popup.
+
+        `tipo` distingue as DUAS maneiras de falhar, que têm causas diferentes:
+
+          "chat" — o WhatsApp Web está de pé, mas a conversa não abriu. O
+            contato vira inválido. Indistinguível, para o usuário, de um número
+            que não tem WhatsApp, mas custa ~3,3min de relógio; e como contato
+            inválido não gasta vaga da rajada, a leva puxa outro contato e o
+            envio estoura a janela. Foi o envio de 02/09/2026: 16 em 38 (42%)
+            transformaram "40 mensagens em 45min" em 2h.
+
+          "app" — o `#pane-side` nem apareceu: o WhatsApp Web não subiu. O
+            contato continua PENDENTE (nada foi entregue). Foi o envio de
+            01/09/2026, primeiro do dia, com o WhatsApp Web voltando de ~20h
+            offline; o cliente descreveu como "manda 2 mensagens e desconecta".
+
+        Contar só o "chat" deixava esse segundo caso mudo — justamente o mais
+        grave, porque ali o envio não avança nem marca nada. Naquele envio
+        foram 4 sucessos, 1 falha de conversa e 3 de app: contando só a de
+        conversa dava 1 em 5, e nenhum aviso teria saído.
+
+        Só contam tentativas que chegaram à fase de navegação: contato sem
+        número, mensagem vazia ou duplicado não diz nada sobre a rede.
+
+        O aviso vai junto do status (get_status) em vez de virar um evento
+        próprio, para sobreviver a um F5 ou a uma queda da conexão SSE — o
+        usuário que só voltou à tela depois continua vendo o que houve.
+        """
+        with self._lock:
+            if abriu:
+                self._aberturas_ok += 1
+            else:
+                self._aberturas_timeout += 1
+                if tipo == "app":
+                    self._falhas_app += 1
+
+            total = self._aberturas_ok + self._aberturas_timeout
+            falhas = self._aberturas_timeout
+            taxa = falhas / total if total else 0.0
+
+            if total < self._ALERTA_AMOSTRA_MINIMA or taxa < self._ALERTA_TAXA_FALHA:
+                return
+            # Já avisou e ainda não acumulou falhas novas suficientes: silêncio.
+            if self._alerta_lentidao_em and falhas < self._alerta_lentidao_em + self._ALERTA_REARME_A_CADA:
+                return
+
+            self._alerta_lentidao_em = falhas
+            falhas_app = self._falhas_app
+            falhas_chat = falhas - falhas_app
+            custo_seg = (
+                falhas_app * self._custo_estimado_de_uma_falha("app")
+                + falhas_chat * self._custo_estimado_de_uma_falha("chat")
+            )
+            # Qual das duas falhas domina decide o texto do aviso: "o WhatsApp
+            # Web não está carregando" e "a conversa não abre" pedem ações
+            # diferentes do usuário.
+            predominante = "app" if falhas_app > falhas_chat else "chat"
+            self._alerta_lentidao = {
+                # Muda a cada novo aviso: é assim que o painel sabe que tem
+                # popup novo para mostrar (e não remostra o mesmo a cada
+                # heartbeat de status).
+                "seq": self._alerta_lentidao_em,
+                "falhas": falhas,
+                "falhas_app": falhas_app,
+                "tentativas": total,
+                "percentual": round(taxa * 100),
+                "atraso_estimado_fmt": self._fmt_duracao(custo_seg),
+                "sem_conexao": bool(self._sem_conexao_desde),
+                "tipo": predominante,
+            }
+            alerta = dict(self._alerta_lentidao)
+
+        # Log fora do lock (o callback de log é externo e pode demorar).
+        if alerta["tipo"] == "app":
+            cabeca = (
+                f"⚠️ O WhatsApp Web não está carregando: em {alerta['falhas']} de "
+                f"{alerta['tentativas']} contatos ({alerta['percentual']}%) a tela do "
+                f"WhatsApp nem chegou a abrir. Esses contatos continuam PENDENTES."
+            )
+        else:
+            cabeca = (
+                f"⚠️ Conexão instável ou WhatsApp Web lento: {alerta['falhas']} de "
+                f"{alerta['tentativas']} conversas não abriram ({alerta['percentual']}%)."
+            )
+        self._log(
+            f"{cabeca} Cada uma dessas tentativas leva minutos até desistir, "
+            f"então o envio já acumulou cerca de {alerta['atraso_estimado_fmt']} "
+            f"além do tempo configurado."
+        )
+
+    @classmethod
+    def _custo_estimado_de_uma_falha(cls, tipo: str = "chat") -> float:
+        """
+        Quanto tempo de relógio custa um contato que falha na fase de navegação.
+
+        "chat" — a conversa não abre: cada tentativa paga a navegação inteira
+          mais a janela de espera estourada, e entre elas entram os backoffs.
+          Dá ~200s, contra os ~224s medidos no log de 02/09/2026 (n=16).
+
+        "app" — o WhatsApp Web não sobe: são `_PANE_LOAD_TIMEOUT` por
+          tentativa (as intermediárias apenas seguem esperando, sem renavegar)
+          mais o respiro antes do reload de última instância.
+
+        Ficar um pouco POR BAIXO é o lado certo do erro: o número aparece num
+        aviso ao usuário, e é melhor ele descobrir que o atraso foi maior do
+        que ouvir uma previsão exagerada.
+        """
+        if tipo == "app":
+            return cls._NAV_MAX_ATTEMPTS * cls._PANE_LOAD_TIMEOUT + cls._NAV_RETRY_BACKOFF[0]
+        esperas = sum(
+            cls._NAV_RETRY_BACKOFF[min(i, len(cls._NAV_RETRY_BACKOFF) - 1)]
+            for i in range(cls._NAV_MAX_ATTEMPTS - 1)
+        )
+        por_tentativa = cls._CHAT_OPEN_TIMEOUT + cls.TEMPO_ESTIMADO_NAVEGACAO
+        return cls._NAV_MAX_ATTEMPTS * por_tentativa + esperas
 
     def _sincronizar_pendentes(self, disponiveis_na_planilha: Optional[int] = None) -> int:
         """
@@ -314,6 +580,55 @@ class WhatsAppSender:
         except Exception:
             pass
 
+    @staticmethod
+    def _erro_de_perfil_em_uso(exc: Exception) -> bool:
+        texto = str(exc).lower()
+        return any(m in texto for m in _PROFILE_IN_USE_MARKERS)
+
+    @staticmethod
+    def _pids_chrome_no_perfil(user_data_dir: str) -> list:
+        """
+        PIDs de processos Chrome que já estão usando este perfil.
+
+        Serve para transformar "session not created: Chrome instance exited"
+        numa instrução que o usuário consegue seguir. Só no Windows — nas
+        outras plataformas devolve lista vazia e o fluxo segue pelo erro do
+        ChromeDriver, como antes.
+        """
+        if platform.system() != "Windows":
+            return []
+        alvo = os.path.normcase(os.path.abspath(user_data_dir))
+        script = (
+            "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+            "ForEach-Object { \"$($_.ProcessId)|$($_.CommandLine)\" }"
+        )
+        try:
+            resultado = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                capture_output=True, text=True, timeout=20,
+            )
+        except Exception as e:
+            file_logger.warning(f"Não foi possível listar processos do Chrome: {e!r}")
+            return []
+
+        pids = []
+        for linha in (resultado.stdout or "").splitlines():
+            pid, _, cmdline = linha.partition("|")
+            if not cmdline or "--user-data-dir" not in cmdline:
+                continue
+            # Renderer, GPU e crashpad herdam a linha de comando do processo
+            # principal, incluindo o --user-data-dir. Contá-los encheria a
+            # mensagem com PIDs que o usuário não tem o que fazer: quem segura
+            # o perfil é o processo principal, o único sem "--type=".
+            if "--type=" in cmdline:
+                continue
+            if alvo in os.path.normcase(cmdline):
+                try:
+                    pids.append(int(pid.strip()))
+                except ValueError:
+                    pass
+        return pids
+
     def _init_driver(self) -> webdriver.Chrome:
         """Inicializa o Chrome WebDriver."""
         chrome_options = Options()
@@ -341,7 +656,25 @@ class WhatsAppSender:
         except Exception:
             pass
 
-        # Remove arquivos de lock órfãos do perfil
+        # Chrome já rodando com ESTE perfil? Então nem adianta tentar: o novo
+        # processo delega para o que já existe e sai, e o ChromeDriver reporta
+        # "Chrome instance exited". Detectar aqui troca essa mensagem por uma
+        # instrução que o usuário consegue seguir.
+        pids_em_uso = self._pids_chrome_no_perfil(user_data_dir)
+        if pids_em_uso:
+            file_logger.error(
+                f"Perfil {user_data_dir} já está em uso pelos processos Chrome "
+                f"{pids_em_uso} — abertura cancelada antes de tentar."
+            )
+            raise ChromeProfileInUseError(
+                "Já existe uma janela do Chrome aberta pelo programa "
+                f"(processo{'s' if len(pids_em_uso) > 1 else ''} {', '.join(map(str, pids_em_uso))}). "
+                "Feche essa janela do Chrome e clique em Iniciar novamente."
+            )
+
+        # Remove arquivos de lock órfãos do perfil. Só é seguro fazer isso
+        # DEPOIS de confirmar que nenhum Chrome está usando o perfil: apagar o
+        # SingletonLock de um perfil vivo deixa o Chrome em estado inconsistente.
         for lock_file in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
             lock_path = os.path.join(user_data_dir, lock_file)
             if os.path.exists(lock_path):
@@ -360,6 +693,17 @@ class WhatsAppSender:
             driver = webdriver.Chrome(service=service, options=chrome_options)
             self._log("ChromeDriver instalado via webdriver-manager")
         except Exception as e:
+            # Perfil em uso não se resolve trocando de chromedriver: cada nova
+            # tentativa só abre mais uma janela do Chrome (o relato foi de
+            # quatro janelas seguidas). Os fallbacks abaixo existem para o caso
+            # de chromedriver ausente ou incompatível — só para esse caso.
+            if self._erro_de_perfil_em_uso(e):
+                file_logger.error(f"Chrome não subiu por perfil em uso: {e}")
+                raise ChromeProfileInUseError(
+                    "O Chrome não abriu porque o perfil do programa já está em uso. "
+                    "Feche todas as janelas do Chrome abertas pelo programa e clique "
+                    "em Iniciar novamente."
+                )
             file_logger.warning(f"webdriver-manager falhou: {e}")
             self._log(f"webdriver-manager falhou ({e}), tentando chromedriver local...")
             try:
@@ -374,6 +718,13 @@ class WhatsAppSender:
                     driver = webdriver.Chrome(options=chrome_options)
                     self._log("Usando chromedriver do PATH")
             except Exception as e2:
+                if self._erro_de_perfil_em_uso(e2):
+                    file_logger.error(f"Chrome não subiu por perfil em uso: {e2}")
+                    raise ChromeProfileInUseError(
+                        "O Chrome não abriu porque o perfil do programa já está em uso. "
+                        "Feche todas as janelas do Chrome abertas pelo programa e clique "
+                        "em Iniciar novamente."
+                    )
                 file_logger.error(f"Falha total ao iniciar Chrome: {e2}\n{traceback.format_exc()}")
                 raise RuntimeError(f"Não foi possível iniciar o Chrome: {e2}")
 
@@ -754,6 +1105,216 @@ class WhatsAppSender:
             for i, p in enumerate(partes)
         ]
 
+    def _qr_na_tela(self) -> bool:
+        """
+        True quando o QR Code está realmente desenhado na tela.
+
+        Serve para não acusar "escaneie o QR Code" só porque a lista de
+        conversas ainda não apareceu — que é o que acontecia antes e assustava
+        o cliente, já que a sessão dele estava salva o tempo todo.
+        """
+        for seletor in (
+            'canvas[aria-label*="QR"]',
+            'canvas[aria-label*="qr"]',
+            'div[data-ref] canvas',
+            '[data-testid="qrcode"]',
+        ):
+            try:
+                if any(e.is_displayed() for e in self._driver.find_elements(By.CSS_SELECTOR, seletor)):
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _conversas_carregadas(self) -> int:
+        """Quantas conversas já apareceram na lista lateral."""
+        try:
+            return len(self._driver.find_elements(
+                By.CSS_SELECTOR, '#pane-side [role="listitem"], #pane-side [role="row"]'
+            ))
+        except Exception:
+            return 0
+
+    def _sincronizando(self) -> str:
+        """
+        Texto do aviso de sincronização, se o WhatsApp estiver mostrando um.
+
+        Retorna "" quando não há nada do gênero na tela.
+        """
+        try:
+            corpo = (self._driver.find_element(By.TAG_NAME, "body").text or "").lower()
+        except Exception:
+            return ""
+        for marcador in (
+            "sincronizando",
+            "carregando suas conversas",
+            "obtendo suas mensagens",
+            "syncing",
+            "loading your chats",
+            "downloading your messages",
+        ):
+            if marcador in corpo:
+                return marcador
+        return ""
+
+    def _aguardar_sincronizacao(self, apos_qr: bool) -> None:
+        """
+        Espera o WhatsApp Web terminar de carregar as conversas antes do
+        primeiro envio.
+
+        Dispara a primeira mensagem cedo demais é o que produzia rajadas
+        inteiras de "conversa não abriu": o app está de pé (#pane-side existe)
+        mas ainda baixando o histórico, e nesse estado o link direto para a
+        conversa não abre. Não é erro fatal se estourar o tempo — segue o
+        envio, apenas registrando, porque o timeout de navegação ainda protege
+        contato a contato.
+        """
+        limite = self._SYNC_TIMEOUT_APOS_QR if apos_qr else self._SYNC_TIMEOUT_SESSAO_ATIVA
+        self._log("⏳ Aguardando o WhatsApp Web carregar as conversas...")
+        file_logger.info(
+            f"Aguardando sincronização do WhatsApp Web "
+            f"(limite {limite}s, {'após leitura do QR' if apos_qr else 'sessão já ativa'})."
+        )
+
+        fim = time.monotonic() + limite
+        ultimo_total = -1
+        estavel_desde = None
+
+        while time.monotonic() < fim:
+            if self._should_stop():
+                return
+
+            aviso = self._sincronizando()
+            total = self._conversas_carregadas()
+
+            if aviso:
+                estavel_desde = None
+            elif total > 0 and total == ultimo_total:
+                if estavel_desde is None:
+                    estavel_desde = time.monotonic()
+                elif time.monotonic() - estavel_desde >= self._SYNC_ESTAVEL_SEG:
+                    file_logger.info(
+                        f"WhatsApp Web sincronizado: {total} conversa(s) na lista, "
+                        f"estável por {self._SYNC_ESTAVEL_SEG}s."
+                    )
+                    self._log(f"✅ WhatsApp Web pronto ({total} conversas carregadas).")
+                    return
+            else:
+                estavel_desde = None
+
+            ultimo_total = total
+            if self._interruptible_sleep(1.0):
+                return
+
+        file_logger.warning(
+            f"Sincronização do WhatsApp Web não estabilizou em {limite}s "
+            f"({self._conversas_carregadas()} conversa(s) na lista) — seguindo mesmo assim."
+        )
+        self._log(
+            "⚠️ O WhatsApp Web ainda parece estar carregando conversas. "
+            "Começando o envio — contatos que não abrirem serão marcados."
+        )
+
+    def _aquecer_navegacao(self) -> bool:
+        """
+        Mede quanto custa uma navegação de verdade e só libera o envio quando
+        esse custo estiver normal. Devolve True se aqueceu, False se desistiu
+        (o envio segue nos dois casos).
+
+        Por que não basta `_aguardar_sincronizacao`
+        -------------------------------------------
+        Aquele portão libera quando a lista de conversas para de crescer por
+        6s. Só que, depois de uma noite offline, o WhatsApp Web renderiza a
+        lista inteira na hora, vinda do IndexedDB — é a lista de ontem, em
+        cache, e ela nasce estável. O resultado é que o portão dá o MESMO
+        veredito em toda sessão do log, boa ou catastrófica:
+
+            27/08 13:06  67 conversa(s), estável por 6s  -> envio saudável
+            31/08 13:14  67 conversa(s), estável por 6s  -> 36% de falha
+            01/09 13:01  67 conversa(s), estável por 6s  -> 43% + 3 quedas
+            01/09 14:41  67 conversa(s), estável por 6s  -> 6% de falha
+            02/09 09:22  67 conversa(s), estável por 6s  -> 67% de falha
+
+        Sempre 67, sempre em 10-15s. Ele não mede o que se supõe que meça.
+
+        O que este método mede é o gesto que o envio realmente faz a cada
+        contato: um `driver.get` e a espera do `#pane-side`. Se isso custar
+        mais que `_AQUECIMENTO_ALVO_SEG`, o app ainda está subindo — espera e
+        mede de novo, em vez de despejar contatos contra uma tela que não
+        responde (o "manda 2 mensagens e desconecta" de 01/09/2026).
+
+        Vai para `web.whatsapp.com` puro, nunca para um `send?phone=` de
+        contato real: abrir a conversa de alguém marcaria como lida uma
+        conversa que ninguém pediu para abrir.
+
+        Nunca bloqueia. Numa máquina cronicamente lenta o envio começa assim
+        mesmo, com aviso — igual ao que `_aguardar_sincronizacao` já faz.
+        """
+        self._log("⏳ Verificando se o WhatsApp Web está respondendo bem...")
+        fim = time.monotonic() + self._AQUECIMENTO_LIMITE_SEG
+
+        for tentativa in range(1, self._AQUECIMENTO_MAX_TENTATIVAS + 1):
+            if self._should_stop():
+                return False
+
+            inicio = time.monotonic()
+            try:
+                self._driver.get("https://web.whatsapp.com/")
+            except Exception as e:
+                file_logger.warning(f"Aquecimento: falha ao navegar ({e}).")
+                return False
+
+            carregou = False
+            while time.monotonic() - inicio < self._PANE_LOAD_TIMEOUT:
+                if self._should_stop():
+                    return False
+                try:
+                    self._driver.find_element(By.CSS_SELECTOR, "#pane-side")
+                    carregou = True
+                    break
+                except Exception:
+                    pass
+                if self._interruptible_sleep(0.5):
+                    return False
+
+            custo = time.monotonic() - inicio
+
+            if carregou and custo <= self._AQUECIMENTO_ALVO_SEG:
+                file_logger.info(
+                    f"Aquecimento: navegação levou {custo:.0f}s "
+                    f"(alvo {self._AQUECIMENTO_ALVO_SEG}s) na tentativa "
+                    f"{tentativa}/{self._AQUECIMENTO_MAX_TENTATIVAS} — pronto para enviar."
+                )
+                self._log(f"✅ WhatsApp Web respondendo normalmente ({custo:.0f}s).")
+                return True
+
+            estado = f"{custo:.0f}s" if carregou else f"não carregou em {custo:.0f}s"
+            file_logger.warning(
+                f"Aquecimento: navegação {estado}, acima do alvo de "
+                f"{self._AQUECIMENTO_ALVO_SEG}s — tentativa "
+                f"{tentativa}/{self._AQUECIMENTO_MAX_TENTATIVAS}."
+            )
+
+            if tentativa >= self._AQUECIMENTO_MAX_TENTATIVAS or time.monotonic() >= fim:
+                break
+
+            self._log(
+                f"⏳ O WhatsApp Web ainda está lento ({estado}). Esperando ele "
+                f"terminar de carregar antes de começar o envio..."
+            )
+            if self._interruptible_sleep(self._AQUECIMENTO_PAUSA_SEG):
+                return False
+
+        file_logger.warning(
+            "Aquecimento: o WhatsApp Web não ficou rápido dentro do limite — "
+            "iniciando o envio mesmo assim."
+        )
+        self._log(
+            "⚠️ O WhatsApp Web continua lento. Começando o envio assim mesmo — "
+            "contatos que não abrirem continuam pendentes para a próxima execução."
+        )
+        return False
+
     def _is_session_dead(self, exc: Exception) -> bool:
         """
         Detecta se a exceção indica que o navegador/sessão morreu.
@@ -876,6 +1437,24 @@ class WhatsAppSender:
     # mensagem: escolher o input de arquivo, digitar o caminho no diálogo do
     # Windows e esperar o upload/preview no WhatsApp Web.
     TEMPO_ESTIMADO_POR_ANEXO = 18
+
+    # Idem, para o tempo que se gasta ANTES de digitar qualquer coisa: scroll
+    # aleatório, `driver.get`, esperar `#pane-side` e a conversa abrir. Não é
+    # desprezível — medindo o intervalo entre "Enviando para" e o início da
+    # digitação em envios bem-sucedidos na primeira tentativa:
+    #   log de 24-26/08/2026 (máquina rápida), n=150: mediana 31s, máximo 41s
+    #   log de 02/09/2026 (máquina lenta),      n=10:  mediana 46s, máximo 58s
+    # Ficar de fora da conta fazia a estimativa errar por ~4x: um envio de 40
+    # mensagens previsto para 45min levou 2h. 40s é um meio-termo entre as duas
+    # medições — a estimativa segue aproximada, mas na ordem de grandeza certa.
+    TEMPO_ESTIMADO_ABERTURA_CHAT = 40
+
+    # Parte fixa da abertura acima — scroll + `driver.get` + `#pane-side`, tudo
+    # que roda ANTES de começar a esperar a conversa em si. É o piso das
+    # medições (mínimo de 16s em 150 aberturas do log de 24-26/08/2026), e é o
+    # que cada tentativa paga de novo quando a conversa não abre. Usado só para
+    # estimar o custo de uma falha (_custo_estimado_de_uma_falha).
+    TEMPO_ESTIMADO_NAVEGACAO = 15
 
     @classmethod
     def _particiona_rajadas(cls, total_msgs: int) -> list:
@@ -1016,11 +1595,23 @@ class WhatsAppSender:
         _generate_burst_plan). Esta estimativa é só para avisar o usuário,
         antes de começar, que o tempo real tende a passar do configurado
         quando há anexos ou mensagens longas.
+
+        A abertura da conversa (TEMPO_ESTIMADO_ABERTURA_CHAT) entra aqui
+        porque é o maior componente do envio, maior até que a digitação — sem
+        ela a estimativa dizia "16min" para um envio que levou 2h. Ela conta
+        SEMPRE, com ou sem comportamento humano: o `driver.get` e a espera do
+        `#pane-side` acontecem nos dois modos.
+
+        O que continua de fora, por não ser previsível antes de começar, são as
+        falhas de abertura (cada timeout custa ~3,7min e não gasta vaga da
+        rajada). Quem cuida disso é o aviso em tempo real de lentidão
+        (_registrar_resultado_de_abertura).
         """
         if self._human_behavior_enabled():
             tempo = self._type_budget(len(str(mensagem or "")))
         else:
             tempo = 5.0  # sem digitação humanizada: texto pré-preenchido na URL
+        tempo += self.TEMPO_ESTIMADO_ABERTURA_CHAT
         arquivo = str(arquivo or "").strip()
         if arquivo:
             n_anexos = len([f for f in arquivo.split(",") if f.strip()])
@@ -1194,6 +1785,9 @@ class WhatsAppSender:
 
         human = self._human_behavior_enabled()
 
+        # Zerado por contato: o que interessa é se ESTE envio pegou a rede fora.
+        self._sem_conexao_no_contato = ""
+
         # Diagnóstico: registra o texto EXATO que será enviado, o nome usado e o
         # modo de digitação. É o que permite responder objetivamente a relatos do
         # tipo "enviou outro nome" ou "não digitou como humano".
@@ -1242,12 +1836,36 @@ class WhatsAppSender:
             # aqui não pode duplicar mensagem nem anexo. Depois da primeira
             # entrega, nenhum caminho retenta.
             # ---------------------------------------------------------------- #
-            for tentativa in range(1, self._NAV_MAX_ATTEMPTS + 1):
-                # Scroll aleatório antes de navegar (simula olhar conversas)
-                if human:
-                    self._random_scroll()
+            # Por que a retentativa falhou da vez anterior: None (primeira),
+            # "pane" (o app do WhatsApp Web não subiu) ou "chat" (o app subiu,
+            # a conversa é que não abriu). O remédio é diferente para cada um.
+            motivo_retentativa = None
 
-                self._driver.get(url)
+            for tentativa in range(1, self._NAV_MAX_ATTEMPTS + 1):
+                # Recarregar uma página que está apenas LENTA é o pior remédio
+                # possível: `driver.get` joga fora o carregamento em andamento e
+                # faz o WhatsApp Web recomeçar o boot do zero. No log do cliente
+                # (01/09/2026, primeiro envio do dia, WhatsApp Web voltando de
+                # ~20h offline) as três tentativas gastaram 65s, 61s e 61s
+                # coladas, cada uma reiniciando o que a anterior tinha começado.
+                #
+                # Então, quando a falha anterior foi de #pane-side, a tentativa
+                # seguinte NÃO renavega: apenas continua esperando, o que
+                # transforma duas janelas picotadas em espera contínua
+                # (2 x _PANE_LOAD_TIMEOUT) pelo mesmo preço.
+                # A última tentativa recarrega mesmo assim — se a página estiver
+                # travada (e não lenta), o reload ainda é o que destrava.
+                recarregar = (
+                    motivo_retentativa != "pane"
+                    or tentativa == self._NAV_MAX_ATTEMPTS
+                )
+
+                if recarregar:
+                    # Scroll aleatório antes de navegar (simula olhar conversas)
+                    if human:
+                        self._random_scroll()
+
+                    self._driver.get(url)
 
                 # Espera a página carregar (pane-side indica que o WhatsApp carregou)
                 # Usa espera interruptível em vez de WebDriverWait monolítico
@@ -1269,22 +1887,40 @@ class WhatsAppSender:
 
                 if not pane_found:
                     # O app do WhatsApp Web não subiu: problema de ambiente, não
-                    # do número. Recarrega e tenta de novo; se insistir, sinaliza
-                    # com exceção própria para o contato seguir PENDENTE.
+                    # do número. Se insistir, sinaliza com exceção própria para o
+                    # contato seguir PENDENTE.
                     if tentativa < self._NAV_MAX_ATTEMPTS:
+                        motivo_retentativa = "pane"
+                        # A próxima tentativa recarrega só se for a última.
+                        vai_recarregar = (tentativa + 1) == self._NAV_MAX_ATTEMPTS
                         file_logger.warning(
                             f"WhatsApp Web não carregou (#pane-side) em "
                             f"{self._PANE_LOAD_TIMEOUT}s para {pessoa} ({numero_limpo}) — "
-                            f"tentativa {tentativa}/{self._NAV_MAX_ATTEMPTS}, recarregando."
+                            f"tentativa {tentativa}/{self._NAV_MAX_ATTEMPTS}, "
+                            + ("recarregando." if vai_recarregar
+                               else "seguindo na espera SEM recarregar (o reload "
+                                    "reiniciaria o carregamento do zero).")
                         )
-                        self._log(
-                            f"🔄 {pessoa} — WhatsApp Web não carregou, recarregando "
-                            f"(tentativa {tentativa + 1}/{self._NAV_MAX_ATTEMPTS})..."
-                        )
+                        if vai_recarregar:
+                            self._log(
+                                f"🔄 {pessoa} — WhatsApp Web não carregou, recarregando "
+                                f"(tentativa {tentativa + 1}/{self._NAV_MAX_ATTEMPTS})..."
+                            )
+                            # Um respiro antes do reload de última instância:
+                            # recarregar no mesmo instante da desistência é o que
+                            # produzia três boots empilhados.
+                            if self._interruptible_sleep(self._NAV_RETRY_BACKOFF[0]):
+                                self._dismiss_on_stop()
+                                return False
+                        else:
+                            self._log(
+                                f"⏳ {pessoa} — WhatsApp Web ainda carregando, "
+                                f"aguardando mais um pouco..."
+                            )
                         continue
                     raise WhatsAppNotLoadedError(
                         f"WhatsApp Web não carregou (#pane-side) em "
-                        f"{self._PANE_LOAD_TIMEOUT}s após {self._NAV_MAX_ATTEMPTS} tentativa(s)"
+                        f"{self._PANE_LOAD_TIMEOUT}s x {self._NAV_MAX_ATTEMPTS} tentativa(s)"
                     )
 
                 # Espera o chat carregar OU detecta popup de número inválido/bloqueado.
@@ -1304,15 +1940,29 @@ class WhatsAppSender:
                         self._dismiss_on_stop()
                         return False
                     if tentativa < self._NAV_MAX_ATTEMPTS:
+                        # Aqui o app ESTÁ de pé — quem não abriu foi a conversa.
+                        # Reabrir é o remédio certo neste caso, ao contrário da
+                        # falha de #pane-side logo acima.
+                        motivo_retentativa = "chat"
+                        espera = self._NAV_RETRY_BACKOFF[
+                            min(tentativa - 1, len(self._NAV_RETRY_BACKOFF) - 1)
+                        ]
                         file_logger.warning(
                             f"Conversa de {pessoa} ({numero_limpo}) não abriu em "
                             f"{self._CHAT_OPEN_TIMEOUT}s — tentativa "
-                            f"{tentativa}/{self._NAV_MAX_ATTEMPTS}, reabrindo."
+                            f"{tentativa}/{self._NAV_MAX_ATTEMPTS}, "
+                            f"aguardando {espera:.0f}s antes de reabrir."
                         )
                         self._log(
                             f"🔄 {pessoa} — conversa não abriu, tentando novamente "
                             f"({tentativa + 1}/{self._NAV_MAX_ATTEMPTS})..."
                         )
+                        # Nada foi entregue nesta tentativa (o anexo e a digitação
+                        # só acontecem depois desta fase), então esperar aqui não
+                        # tem como duplicar mensagem.
+                        if self._interruptible_sleep(espera):
+                            self._dismiss_on_stop()
+                            return False
                         continue
                     raise
 
@@ -1605,8 +2255,13 @@ class WhatsAppSender:
         qualquer um dos cenários acima, evitando esperar o timeout inteiro.
         """
         fim = time.time() + timeout
+        # Força a primeira verificação de popup/bloqueio já na primeira volta:
+        # número rejeitado costuma abrir o modal de imediato, e esperar o
+        # intervalo inteiro para descobrir isso só gastaria a janela à toa.
+        proxima_checagem_cara = 0.0
         while time.time() < fim:
-            # Verifica se o chat abriu (campo de digitação apareceu)
+            # Verifica se o chat abriu (campo de digitação apareceu). É a
+            # consulta barata, e roda a cada volta.
             try:
                 elements = self._driver.find_elements(
                     By.CSS_SELECTOR, "footer div[contenteditable='true']"
@@ -1615,6 +2270,14 @@ class WhatsAppSender:
                     return  # Chat abriu com sucesso
             except Exception:
                 pass
+
+            # Popup e contato bloqueado leem `.text` de vários elementos: caro
+            # em WebDriver. Espaçados, para não roubar as voltas do campo.
+            if time.time() < proxima_checagem_cara:
+                if self._interruptible_sleep(self._CHAT_POLL_INTERVAL):
+                    return  # Stop requested — caller will check _should_stop()
+                continue
+            proxima_checagem_cara = time.time() + self._POPUP_CHECK_INTERVAL
 
             # Verifica se apareceu popup de número inválido
             popup_text = self._detect_invalid_number_popup()
@@ -1629,6 +2292,13 @@ class WhatsAppSender:
                     f"WhatsApp rejeitou o número {numero}: {popup_text[:100]}"
                 )
 
+            # Estado da conexão. Não interrompe a espera nem muda o desfecho
+            # do contato — serve para o log poder dizer, depois, que a falha
+            # aconteceu com a internet fora.
+            self._registrar_estado_de_conexao(
+                self._detect_sem_conexao(), pessoa, numero
+            )
+
             # Verifica se é um contato bloqueado (aparece botão Desbloquear
             # ou "Apagar conversa" no lugar do campo de texto)
             blocked_reason = self._detect_blocked_contact()
@@ -1641,7 +2311,7 @@ class WhatsAppSender:
                     f"Contato bloqueado no WhatsApp: {pessoa} ({numero})"
                 )
 
-            if self._interruptible_sleep(0.5):
+            if self._interruptible_sleep(self._CHAT_POLL_INTERVAL):
                 return  # Stop requested — caller will check _should_stop()
 
         # Se chegou aqui, deu timeout sem chat nem popup — comportamento antigo
@@ -1649,6 +2319,70 @@ class WhatsAppSender:
             f"Timeout aguardando chat de {pessoa} ({numero}) — "
             f"nem chat nem popup de erro apareceram em {timeout}s"
         )
+
+    def _detect_sem_conexao(self) -> str:
+        """
+        Descreve por que o WhatsApp Web parece estar sem conexão, ou "".
+
+        Usa dois sinais:
+          - `navigator.onLine`: uma chamada só, barata, e um `false` é prova
+            forte de que a máquina perdeu a rede;
+          - o aviso que o WhatsApp Web desenha ("Computador não conectado",
+            "Aguardando conexão"...), lido apenas dos elementos de alerta — ler
+            o texto da página inteira a cada volta seria caro demais.
+
+        Não detectar é aceitável: no pior caso o diagnóstico fica de fora e o
+        comportamento é o de sempre.
+        """
+        try:
+            if self._driver.execute_script("return navigator.onLine === false"):
+                return "navegador sem rede (navigator.onLine = false)"
+        except Exception:
+            pass
+
+        try:
+            alertas = self._driver.find_elements(
+                By.CSS_SELECTOR,
+                'div[role="alert"], [data-testid="alert-computer"], '
+                '[data-testid="alert-phone"]',
+            )
+            texto = " ".join((a.text or "") for a in alertas).lower()
+        except Exception:
+            return ""
+
+        for marcador in _WHATSAPP_DISCONNECTED_MARKERS:
+            if marcador in texto:
+                return f"aviso do WhatsApp Web: {texto[:120]}"
+        return ""
+
+    def _registrar_estado_de_conexao(self, motivo: str, pessoa: str, numero: str) -> None:
+        """
+        Anota entrada e saída do estado "sem conexão" — uma linha em cada
+        transição, não uma por verificação.
+        """
+        if motivo:
+            self._sem_conexao_no_contato = motivo
+            if self._sem_conexao_desde is None:
+                self._sem_conexao_desde = time.time()
+                file_logger.warning(
+                    f"SEM CONEXÃO detectada durante o envio para {pessoa} ({numero}) — "
+                    f"{motivo}. Contatos que falharem daqui em diante provavelmente "
+                    f"falharam por causa da rede, não do número."
+                )
+                self._log(
+                    "🚫 Sem conexão com o WhatsApp Web. Verifique a internet — "
+                    "os contatos que falharem agora serão marcados como inválidos "
+                    "e precisarão do botão de reenvio (↺)."
+                )
+        elif self._sem_conexao_desde is not None:
+            fora = time.time() - self._sem_conexao_desde
+            self._sem_conexao_desde = None
+            file_logger.warning(
+                f"Conexão restabelecida após {fora:.0f}s sem conexão "
+                f"({self._invalidos_sem_conexao} contato(s) marcado(s) como "
+                f"inválido(s) nesse período até agora)."
+            )
+            self._log(f"✅ Conexão restabelecida (ficou {fora:.0f}s fora).")
 
     def _detect_blocked_contact(self) -> str:
         """
@@ -2254,6 +2988,12 @@ class WhatsAppSender:
 
             try:
                 self._driver = self._init_driver()
+            except ChromeProfileInUseError as e:
+                # Causa conhecida e com solução clara: não afogar a instrução
+                # dentro de um despejo de erro do Selenium.
+                self._set_state("erro")
+                self._log(f"🚫 {e}")
+                return
             except Exception as e:
                 self._set_state("erro")
                 self._log(f"ERRO: Não foi possível iniciar o Chrome: {e}")
@@ -2263,10 +3003,17 @@ class WhatsAppSender:
             self._driver.get("https://web.whatsapp.com")
             self._log("WhatsApp Web aberto. Verificando sessão...")
 
-            # Verifica se a sessão já está ativa (login instantâneo via perfil salvo)
-            # Usa polling interruptível (8s) para responder ao stop durante inicialização
+            # Decide entre "sessão salva" e "precisa escanear o QR".
+            #
+            # A decisão espera até _SESSION_DETECT_TIMEOUT e só anuncia QR Code
+            # quando o QR está desenhado na tela. Antes eram 8s fixos e qualquer
+            # início frio do WhatsApp Web (que passa disso com folga) fazia o app
+            # dizer "Sessão não encontrada. Escaneie o QR Code" para um cliente
+            # cuja sessão estava salva — seguido de "Login realizado com sucesso"
+            # poucos segundos depois, sem ninguém ter escaneado nada.
             session_found = False
-            session_deadline = time.monotonic() + 8
+            precisou_qr = False
+            session_deadline = time.monotonic() + self._SESSION_DETECT_TIMEOUT
             while time.monotonic() < session_deadline:
                 if self._should_stop():
                     self._set_state("parado")
@@ -2279,18 +3026,35 @@ class WhatsAppSender:
                     break
                 except Exception:
                     pass
+                if self._qr_na_tela():
+                    precisou_qr = True
+                    break
                 self._interruptible_sleep(0.5)
 
             if session_found:
                 self._log("✅ Sessão ativa detectada! Login automático via perfil salvo.")
+                file_logger.info("Sessão do WhatsApp Web restaurada do perfil salvo (sem QR).")
             else:
-                # Sessão não estava ativa — precisa escanear QR Code
                 self._set_state("waiting_qr")
-                self._log("⏳ Sessão não encontrada. Escaneie o QR Code no navegador...")
+                if precisou_qr:
+                    self._log("⏳ Escaneie o QR Code no navegador para conectar seu WhatsApp...")
+                    file_logger.info("QR Code detectado na tela — aguardando leitura pelo celular.")
+                else:
+                    # Nem lista de conversas nem QR: o app está lento, não
+                    # necessariamente desconectado. Não afirmar que a sessão
+                    # sumiu evita alarme falso.
+                    self._log(
+                        "⏳ O WhatsApp Web está demorando para carregar. "
+                        "Se aparecer um QR Code na tela, escaneie com o celular..."
+                    )
+                    file_logger.warning(
+                        f"Nem #pane-side nem QR Code em {self._SESSION_DETECT_TIMEOUT}s — "
+                        f"continuando a aguardar."
+                    )
 
-                # Aguarda até 120s pelo login, verificando stop a cada 0.5s
+                # Aguarda o login, verificando stop a cada 0.5s
                 qr_found = False
-                qr_deadline = time.monotonic() + 120
+                qr_deadline = time.monotonic() + self._QR_SCAN_TIMEOUT
                 while time.monotonic() < qr_deadline:
                     if self._should_stop():
                         self._set_state("parado")
@@ -2303,14 +3067,33 @@ class WhatsAppSender:
                         break
                     except Exception:
                         pass
+                    if not precisou_qr and self._qr_na_tela():
+                        # O QR apareceu depois: corrige a mensagem para o usuário.
+                        precisou_qr = True
+                        self._log("⏳ Escaneie o QR Code no navegador para conectar seu WhatsApp...")
+                        file_logger.info("QR Code apareceu depois da espera inicial.")
                     self._interruptible_sleep(0.5)
 
                 if not qr_found:
                     self._set_state("erro")
-                    self._log("ERRO: Tempo esgotado aguardando QR Code. Tente novamente.")
+                    self._log("ERRO: Tempo esgotado aguardando o WhatsApp Web conectar. Tente novamente.")
                     self._cleanup()
                     return
                 self._log("✅ Login realizado com sucesso!")
+                file_logger.info(
+                    f"Login concluído (QR exibido na tela: {precisou_qr})."
+                )
+
+            # O app está de pé, mas pode continuar baixando o histórico. Enviar
+            # antes disso é o que gerava rajadas inteiras de "conversa não abriu".
+            self._aguardar_sincronizacao(apos_qr=precisou_qr)
+
+            # A checagem acima olha a lista de conversas, que volta do cache já
+            # estável e por isso aprova qualquer estado. Esta aqui mede o gesto
+            # real do envio (navegar + esperar o app) e é a que segura o
+            # arranque frio. Roda antes de `_envio_iniciado_em`, então o tempo
+            # gasto aqui não entra na duração relatada nem no plano de rajadas.
+            self._aquecer_navegacao()
 
             if self._should_stop():
                 self._set_state("parado")
@@ -2369,6 +3152,14 @@ class WhatsAppSender:
                 # Inválidos de sessões anteriores já estão na planilha mas não são desta rodada.
                 self._total_invalids = 0
                 self._invalid_motivos = {}
+                # Mesma lógica para o aviso de lentidão: a taxa de falha é
+                # sempre a DESTA sessão. Herdar o aviso da rodada anterior faria
+                # o popup reaparecer num envio que está indo bem.
+                self._aberturas_ok = 0
+                self._aberturas_timeout = 0
+                self._falhas_app = 0
+                self._alerta_lentidao = None
+                self._alerta_lentidao_em = 0
 
             if session_target == 0:
                 self._log("✅ Todos os contatos já foram processados!")
@@ -2536,6 +3327,9 @@ class WhatsAppSender:
 
                                 enviados_burst += 1
                                 total_enviados_sessao += 1
+                                # A conversa abriu: entra como amostra "boa" na
+                                # taxa que dispara o aviso de lentidão.
+                                self._registrar_resultado_de_abertura(True)
                                 self._log(f"✅ {pessoa} — mensagem enviada com sucesso.")
                                 self._notify_contact_update(idx, numero, "enviado", data_envio)
                             else:
@@ -2636,6 +3430,10 @@ class WhatsAppSender:
                                 f"(internet/navegador lentos). Nada foi enviado; o "
                                 f"contato continua pendente para a próxima execução."
                             )
+                            # Conta como falha de abertura do tipo "app". Sem
+                            # isto o aviso de lentidao ficava mudo justamente no
+                            # caso mais grave, em que o envio nao avanca.
+                            self._registrar_resultado_de_abertura(False, tipo="app")
 
                         except TimeoutException:
                             # A conversa não abriu mesmo com o WhatsApp Web carregado
@@ -2644,13 +3442,23 @@ class WhatsAppSender:
                             # que pode ter acontecido, para o usuário investigar pelo
                             # tooltip do contato. Ficar retentando escondia o
                             # problema e consumia a janela de envio.
-                            tooltip_motivo = (
-                                "Timeout: a conversa não abriu no WhatsApp após "
-                                f"{self._NAV_MAX_ATTEMPTS} tentativa(s). "
-                                "Pode ser número sem WhatsApp, número inexistente, ou "
-                                "WhatsApp Web/internet lentos no momento do envio. "
-                                "Confira o número e use o botão de reenvio (↺) para tentar de novo."
-                            )
+                            sem_conexao = self._sem_conexao_no_contato
+                            if sem_conexao:
+                                self._invalidos_sem_conexao += 1
+                                tooltip_motivo = (
+                                    "Timeout: a conversa não abriu e o WhatsApp Web "
+                                    "estava SEM CONEXÃO neste momento. Provavelmente "
+                                    "não é problema do número — verifique a internet e "
+                                    "use o botão de reenvio (↺)."
+                                )
+                            else:
+                                tooltip_motivo = (
+                                    "Timeout: a conversa não abriu no WhatsApp após "
+                                    f"{self._NAV_MAX_ATTEMPTS} tentativa(s). "
+                                    "Pode ser número sem WhatsApp, número inexistente, ou "
+                                    "WhatsApp Web/internet lentos no momento do envio. "
+                                    "Confira o número e use o botão de reenvio (↺) para tentar de novo."
+                                )
                             df.at[idx, "Invalido"] = "X"
                             df.at[idx, "Motivo"] = tooltip_motivo
                             self._save_contacts(df)
@@ -2658,6 +3466,12 @@ class WhatsAppSender:
                             file_logger.warning(
                                 f"Timeout ao abrir chat de {pessoa} ({numero}) — "
                                 f"marcado como inválido (sem retentativas)."
+                                + (
+                                    f" ATENÇÃO: sem conexão neste momento ({sem_conexao}) "
+                                    f"— {self._invalidos_sem_conexao}º contato invalidado "
+                                    f"durante queda de rede."
+                                    if sem_conexao else ""
+                                )
                             )
                             self._log(
                                 f"❌ {pessoa} ({numero}) — timeout ao abrir a conversa, "
@@ -2665,6 +3479,9 @@ class WhatsAppSender:
                                 f"contato para ver o motivo."
                             )
                             self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
+                            # Depois de notificar o contato: se a taxa de falha
+                            # estiver alta, isto arma o popup de lentidão.
+                            self._registrar_resultado_de_abertura(False)
 
                         except Exception as e:
                             if self._is_session_dead(e):
@@ -2801,6 +3618,7 @@ class WhatsAppSender:
                     f"🎉 Envio finalizado! Total enviado: {status['messages_sent']} mensagens"
                     f"{duracao_txt}"
                 )
+                self._log_resumo_de_conexao()
 
         except Exception as e:
             self._set_state("erro")
@@ -2808,6 +3626,26 @@ class WhatsAppSender:
             self._log(f"ERRO FATAL: {e}")
         finally:
             self._cleanup()
+
+    def _log_resumo_de_conexao(self) -> None:
+        """
+        Fecha o envio dizendo quantos contatos caíram durante falta de conexão.
+
+        É a linha que responde, lendo o log depois, se uma leva de inválidos foi
+        problema de rede ou dos números.
+        """
+        if not self._invalidos_sem_conexao:
+            return
+        file_logger.warning(
+            f"RESUMO: {self._invalidos_sem_conexao} contato(s) foram marcados como "
+            f"inválidos enquanto o WhatsApp Web estava sem conexão. Esses números "
+            f"provavelmente estão certos — use o botão de reenvio (↺) neles."
+        )
+        self._log(
+            f"⚠️ {self._invalidos_sem_conexao} contato(s) falharam durante queda de "
+            f"conexão e ficaram marcados como inválidos. Provavelmente os números "
+            f"estão certos: use o botão de reenvio (↺) neles."
+        )
 
     def _cleanup(self):
         """Fecha o navegador e limpa recursos."""
