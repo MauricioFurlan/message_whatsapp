@@ -109,7 +109,18 @@ class BaseSenderTest(unittest.TestCase):
         # verdade os intervalos entre mensagens e as pausas entre rajadas
         # (minutos ou horas), e a suíte travava.
         self._isleep_original = WhatsAppSender._interruptible_sleep
-        WhatsAppSender._interruptible_sleep = lambda self, segundos: False
+
+        def _sleep_falso(_sender, segundos):
+            # Avança o relógio FALSO em vez de dormir de verdade. Retornar
+            # False sem avançar nada deixava qualquer laço com prazo
+            # (`while time.monotonic() < fim`) rodando para sempre, porque o
+            # `time` do módulo aqui é o FakeTime e ele só anda em .sleep().
+            # Isso travou a suíte quando a abertura da sessão passou a esperar
+            # o WhatsApp Web sincronizar antes do primeiro envio.
+            self.clock.sleep(segundos)
+            return False
+
+        WhatsAppSender._interruptible_sleep = _sleep_falso
         # sender.start() aqui roda o laço de envio de verdade (só o Selenium é
         # mockado) — sem neutralizar isso, cada envio/rejeição de teste grava
         # de verdade em uploads/envios_stats.jsonl, poluindo o histórico real
@@ -252,6 +263,9 @@ class TestMensagemGlobalNoLoop(BaseSenderTest):
         sender._save_contacts = lambda df: estado.update({"df": df})
         sender._send_message = fake_send
         sender._wait_for_business_hours = lambda: None
+        # A espera pelo WhatsApp Web sincronizar tem testes próprios
+        # (tests/test_sync_inicial.py); aqui só atrasaria o laço de envio.
+        sender._aguardar_sincronizacao = lambda apos_qr: None
         sender.start()
 
         return enviados, estado["df"]

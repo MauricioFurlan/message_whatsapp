@@ -41,6 +41,9 @@ function fakeRow(numero, enviado = false, invalido = false, pessoa = 'Contato') 
     };
     const row = {
         dataset: { enviado: enviado ? '1' : '0', invalido: invalido ? '1' : '0', dataEnvio: '' },
+        // applyRowColor() pinta a linha inteira; sem classList o teste quebrava
+        // no stub, não no código sob teste.
+        classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
         querySelector: (sel) => cells[sel] || stubEl(),
         _removida: false,
         remove() { this._removida = true; },

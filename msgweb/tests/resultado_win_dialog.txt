@@ -1,0 +1,6 @@
+PASSOU  janela 'Abrir' encontrada (hwnd=6096364)
+PASSOU  campo 'Nome do arquivo' encontrado (hwnd=8127922)
+PASSOU  botão de confirmação encontrado: '&Abrir'
+PASSOU  janela preenchida e confirmada (sem teclado, sem foco)
+PASSOU  arquivo selecionado corretamente (caminho confere)
+RESULTADO: OK — dá para controlar a janela nativa sem teclado

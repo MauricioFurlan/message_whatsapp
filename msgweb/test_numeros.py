@@ -597,6 +597,13 @@ class TestCotaDaRodada(unittest.TestCase):
         # horas) e travava indefinidamente no meio da execução.
         self._orig_isleep = whatsapp_sender.WhatsAppSender._interruptible_sleep
         whatsapp_sender.WhatsAppSender._interruptible_sleep = lambda self, s: False
+        # A abertura da sessão espera o WhatsApp Web terminar de sincronizar as
+        # conversas antes do primeiro envio. Aqui o relógio é o REAL (só
+        # time.sleep foi neutralizado), então essa espera custaria dezenas de
+        # segundos de verdade em cada teste que chama start(). O comportamento
+        # dela está coberto em tests/test_sync_inicial.py.
+        self._orig_sync = whatsapp_sender.WhatsAppSender._aguardar_sincronizacao
+        whatsapp_sender.WhatsAppSender._aguardar_sincronizacao = lambda self, apos_qr: None
         # sender.start() aqui roda o laço de envio de verdade (só o Selenium é
         # mockado) — sem neutralizar isso, cada envio/rejeição de teste grava
         # de verdade em uploads/envios_stats.jsonl, poluindo o histórico real
@@ -610,6 +617,7 @@ class TestCotaDaRodada(unittest.TestCase):
     def _restore(self):
         self._ws.time.sleep = self._orig_sleep
         self._ws.WhatsAppSender._interruptible_sleep = self._orig_isleep
+        self._ws.WhatsAppSender._aguardar_sincronizacao = self._orig_sync
         self._ws.stats_log.registrar_envio = self._orig_registrar_envio
         self._ws.stats_log.registrar_rejeitado = self._orig_registrar_rejeitado
 
