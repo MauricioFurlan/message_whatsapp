@@ -1,0 +1,82 @@
+Nome,Número,Mensagem,Arquivo,Enviado,Invalido,Motivo
+Carlos Silva,19994229146,"Olá {nome}, esta mensagem deve conter 'Carlos Silva' no lugar de {nome}.",,,,
+Ana,19994229146,Oi {nome}! O {nome} deve aparecer duas vezes: 'Ana' e 'Ana'.,,,,
+  Pedro  ,19994229146,"Olá {nome}, os espaços ao redor do nome devem ser removidos. Deve aparecer 'Pedro'.",,,,
+Maria,19994229146,Esta mensagem não tem placeholder. O nome 'Maria' NÃO deve aparecer no texto enviado.,,,,
+João,19994229146,Promoção válida até amanhã! Aproveite 50% de desconto. Texto deve chegar exatamente assim.,,,,
+,19994229146,"Olá {nome}, o placeholder deve ficar vazio. Resultado esperado: 'Olá , o placeholder...'",,,,
+,19994229146,Olá {nome}! Nome 'nan' do pandas deve ser tratado como vazio. Esperado: 'Olá !',,,,
+,19994229146,Olá {nome}! Nome 'None' deve ser tratado como vazio. Esperado: 'Olá !',,,,
+Roberto,19994229146,"Mensagem com imagem PNG anexada. O texto deve ser enviado primeiro, depois a imagem.",test_media/teste_azul.png,,,
+Fernanda,19994229146,Mensagem com imagem JPG. O {nome} deve conter 'Fernanda'. Texto + imagem separados.,test_media/teste_vermelho.jpg,,,
+Lucas,19994229146,Imagem grande. Deve enviar texto primeiro e depois a imagem grande como foto inline.,test_media/teste_grande.png,,,
+Juliana,19994229146,"Mensagem com PDF anexado. Texto enviado primeiro, depois o documento como arquivo.",test_media/documento_teste.pdf,,,
+Rafael,19994229146,"Olá {nome}, segue o documento. Deve conter 'Rafael' e enviar o PDF após o texto.",test_media/documento_teste.pdf,,,
+Camila,19994229146,"Múltiplos anexos: PNG + PDF. Texto enviado primeiro, depois cada arquivo sequencialmente.","test_media/teste_azul.png, test_media/documento_teste.pdf",,,
+Bruno,19994229146,Três anexos: JPG + PNG + PDF. Todos devem ser enviados em sequência após o texto.,"test_media/teste_vermelho.jpg, test_media/teste_azul.png, test_media/documento_teste.pdf",,,
+Diana,19994229146,Arquivo inexistente. Sistema deve avisar que não encontrou e enviar só o texto.,test_media/nao_existe.pdf,,,
+Gustavo,19994229146,"Um arquivo existe e outro não. Deve enviar texto + PNG, e avisar sobre o inexistente.","test_media/teste_azul.png, test_media/nao_existe.pdf",,,
+Sem Telefone,,Este contato não tem número. Deve ser marcado como INVÁLIDO com motivo 'número ausente'.,,,,
+Numero Nan,,Número 'nan' do pandas. Deve ser marcado como INVÁLIDO com motivo 'número ausente'.,,,,
+Numero Curto,1234,Número com apenas 4 dígitos. Deve ser marcado como INVÁLIDO com motivo 'número inválido'.,,,,
+Numero 9 Digitos,199945199,Número com 9 dígitos (falta 1). Deve ser marcado como INVÁLIDO com motivo 'número inválido'.,,,,
+Sem Mensagem,19994229146,,,,,
+Mensagem Nan,19994229146,,,,,
+Mensagem None,19994229146,,,,,
+Formato Parenteses,(19)99422-9146,Número com parênteses e hífen. Deve normalizar para 19994229146.,,,,
+Formato Espacos,19 99422 9146,Número com espaços. Deve normalizar para 19994229146.,,,,
+Formato Internacional,+55 (19) 99422-9146,Número com +55. Deve remover o código de país e normalizar para 19994229146.,,,,
+Formato Codigo Pais Colado,5519994229146,Número com 55 colado. Deve remover o código de país. Normaliza para 19994229146.,,,,
+Numero Float,19994229146.0,Número como float (pandas). Deve remover o .0 e normalizar para 19994229146.,,,,
+DDD 55 RS,55987654321,DDD 55 (Rio Grande do Sul) com 11 dígitos. NÃO deve remover o 55. Fica 55987654321.,,,,
+Teste Bold,19994229146,Olá *{nome}*! O nome deve aparecer em *negrito* no WhatsApp. Esperado: *Teste Bold*.,,,,
+Teste Italico,19994229146,"Olá _{nome}_, o nome deve aparecer em _itálico_. Formatação preservada.",,,,
+Teste Riscado,19994229146,"Olá ~{nome}~, o nome deve aparecer ~riscado~. Formatação WhatsApp preservada.",,,,
+Teste Mono,19994229146,Código: ```print('Olá {nome}')``` — deve manter a formatação monoespaçada.,,,,
+Teste Quebra,19994229146,"Olá {nome}!
+
+Esta mensagem tem quebras de linha.
+- Item 1
+- Item 2
+
+Deve chegar com as quebras preservadas.",,,,
+Mensagem Longa,19994229146,"Olá {nome}!
+
+Esta é uma mensagem longa para testar o comportamento humano.
+
+Quando o modo humano está ativo, mensagens longas (>200 caracteres) devem ser digitadas palavra por palavra, não caractere por caractere.
+
+Isso simula o comportamento real de uma pessoa digitando no WhatsApp, evitando detecção de automação.
+
+O texto final deve conter 'Mensagem Longa' no lugar de {nome}.",,,,
+Teste Link,19994229146,Olá {nome}! Veja nosso site: https://exemplo.com.br — o sistema deve aguardar o preview do link carregar antes de enviar.,,,,
+Link WWW,19994229146,Confira: www.exemplo.com.br/promo — links com www também ativam o delay extra de preview.,,,,
+Combo Completo,(19) 99422-9146,"Olá *{nome}*!
+
+Segue o documento em anexo.
+Qualquer dúvida: https://ajuda.exemplo.com
+
+Abraços!",test_media/documento_teste.pdf,,,
+,19994229146,Mensagem sem nome e com anexo. O {nome} deve ficar vazio. Texto + imagem enviados.,test_media/teste_vermelho.jpg,,,
+Anexo Sem Msg,19994229146,,test_media/teste_azul.png,,,
+Ja Enviado,19994229146,Este contato já foi marcado como enviado. Deve ser PULADO no próximo envio.,,X,,
+Ja Invalido,19994229146,Este contato já foi marcado como inválido. Deve ser PULADO no próximo envio.,,,X,marcado na planilha de teste
+,,"Linha sem nome e sem número. No upload é preservada, mas no /contacts POST é filtrada.",,,,
+Teste Emojis,19994229146,"Oi {nome}! 😀🎉🚀💪🔥✨👏❤️🙏😎
+
+Testando emojis variados:
+🌟 Estrela
+🎯 Alvo
+💡 Ideia
+🏆 Troféu
+📱 Celular
+✅ Check
+
+Emoticons clássicos: :) ;) :D XD <3 :P
+
+Emojis de bandeira: 🇧🇷🇺🇸🇪🇸
+Família: 👨‍👩‍👧‍👦
+Animais: 🐶🐱🦁🐸🦋
+
+Se tudo chegou certinho, o envio de emojis está OK! 🎊👍",,,,
+Primeiro Duplicado,19994229146,"Número duplicado do Carlos Silva. No upload, este deve ser REMOVIDO (o primeiro vence).",,,,

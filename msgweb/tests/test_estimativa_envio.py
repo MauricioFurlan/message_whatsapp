@@ -33,9 +33,12 @@ def _sender(human_behavior=True):
 
 
 class TestEstimarTempoEnvioIndividual(unittest.TestCase):
-    def test_sem_anexo_usa_so_o_orcamento_de_digitacao(self):
+    def test_sem_anexo_soma_digitacao_e_abertura_da_conversa(self):
+        # Abrir a conversa é o MAIOR componente de um envio (41-58s medidos,
+        # contra ~25s de digitação). Deixá-lo de fora fazia a estimativa dizer
+        # "16min" para um envio que levou 2h — ver o CHANGELOG de 01/09/2026.
         s = _sender()
-        esperado = s._type_budget(len("Olá, tudo bem?"))
+        esperado = s._type_budget(len("Olá, tudo bem?")) + s.TEMPO_ESTIMADO_ABERTURA_CHAT
         self.assertEqual(s._estimar_tempo_envio_individual("Olá, tudo bem?", ""), esperado)
 
     def test_cada_anexo_soma_a_constante_dedicada(self):
@@ -59,11 +62,16 @@ class TestEstimarTempoEnvioIndividual(unittest.TestCase):
         longa = s._estimar_tempo_envio_individual("Oi " * 200, "")
         self.assertGreater(longa, curta)
 
-    def test_sem_comportamento_humano_usa_tempo_fixo_baixo(self):
-        # Sem digitação humanizada o texto vai pré-preenchido na URL — não
-        # faz sentido usar o orçamento de digitação humanizada aqui.
+    def test_sem_comportamento_humano_o_texto_nao_custa_mas_a_abertura_sim(self):
+        # Sem digitação humanizada o texto vai pré-preenchido na URL, então o
+        # TAMANHO dele deixa de pesar. A abertura da conversa continua pesando
+        # igual: o `driver.get` e a espera do #pane-side acontecem nos dois
+        # modos. É a metade que o teste antigo não via.
         s = _sender(human_behavior=False)
-        self.assertEqual(s._estimar_tempo_envio_individual("Mensagem enorme " * 50, ""), 5.0)
+        self.assertEqual(
+            s._estimar_tempo_envio_individual("Mensagem enorme " * 50, ""),
+            5.0 + s.TEMPO_ESTIMADO_ABERTURA_CHAT,
+        )
 
 
 class TestEstimarTempoEnvioTotal(unittest.TestCase):
@@ -130,9 +138,13 @@ class TestCalcularOrcamentoDePausas(unittest.TestCase):
         # Ajusta o tempo configurado pra cair bem na borda do piso
         # (DELAY_INTRA_MIN) e confirma que o "inviavel" reage exatamente a
         # essa fronteira, não a um valor arbitrário.
-        s = _sender(human_behavior=False)  # tempo de envio fixo e previsível (5s/contato)
+        s = _sender(human_behavior=False)  # sem digitação: custo fixo por contato
         pending = pd.DataFrame([{"Mensagem": "Oi", "Arquivo": ""}] * 3)  # 2 intervalos
-        tempo_envio_total = 3 * 5.0  # 15s
+        # Perguntado à própria função, não escrito à mão: este teste é sobre a
+        # FRONTEIRA do piso de segurança, e cravar o custo por contato fazia
+        # dele um teste sobre uma constante — que foi o que o quebrou quando a
+        # abertura da conversa passou a contar.
+        tempo_envio_total = 3 * s._estimar_tempo_envio_individual("Oi", "")
 
         # Exatamente no piso (30s de pausa / 2 intervalos = 15s = DELAY_INTRA_MIN): não inviável.
         tempo_configurado_no_piso = tempo_envio_total + 2 * s.DELAY_INTRA_MIN

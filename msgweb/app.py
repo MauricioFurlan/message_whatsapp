@@ -30,10 +30,17 @@ import license as license_mod
 from license import validar_licenca, ativar_licenca, desativar_licenca, get_cached_key
 from version import APP_VERSION
 import stats_log
+import seletores
+import varredura
+import caminhos
 GITHUB_REPO = "MauricioFurlan/message_whatsapp"
 
 # --- File Logger Setup ---
-LOG_FILE = Path("log.txt")
+# A pasta de dados pode não existir ainda (primeira execução depois da
+# atualização que tirou os dados de dentro da pasta do programa — ver
+# caminhos.py), e o RotatingFileHandler não cria o diretório sozinho.
+caminhos.dados_dir().mkdir(parents=True, exist_ok=True)
+LOG_FILE = caminhos.log_file()
 
 file_logger = logging.getLogger("whatsapp_sender_file")
 file_logger.setLevel(logging.DEBUG)
@@ -53,6 +60,14 @@ file_logger.info(f"Horário: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 file_logger.info(f"Python: {sys.version}")
 file_logger.info(f"SO: {platform.system()} {platform.release()} ({platform.machine()})")
 file_logger.info(f"Diretório: {os.getcwd()}")
+file_logger.info(f"Dados do cliente: {caminhos.dados_dir().resolve()}")
+
+# Traz o `uploads/` de uma instalação anterior que ainda esteja dentro da pasta
+# do programa. No-op depois da primeira vez, e no desenvolvimento (onde as duas
+# pastas são a mesma).
+_migracao = caminhos.migrar_dados_legados()
+if _migracao:
+    file_logger.info(_migracao)
 
 # Linha-base da licença. O cliente relata que "às vezes" o app pede a chave
 # de novo; sem registrar o estado no início de CADA sessão não dá para
@@ -110,11 +125,20 @@ class AppState:
     excel_saved_at: str = ""
     sender: Optional[WhatsAppSender] = None
     sender_thread: Optional[Thread] = None
+    # Thread da verificação de respostas. Separada da de envio de propósito:
+    # são ciclos de vida diferentes, e confundi-los faria `is_running()`
+    # (que congela config e contatos) valer para uma leitura que não envia nada.
+    varredura_thread: Optional[Thread] = None
     logs: list = field(default_factory=list)
     sse_queues: list = field(default_factory=list)
     _loop: Optional[asyncio.AbstractEventLoop] = None
     global_message: str = ""
     global_message_active: bool = False
+    # Anexo global: o mesmo arquivo para todos os contatos, com a MESMA regra
+    # de fallback da mensagem global — só vale para quem está com a coluna
+    # `Arquivo` vazia. Ver `WhatsAppSender._resolver_globais`.
+    global_attachment: str = ""
+    global_attachment_active: bool = False
 
 
 state = AppState()
@@ -150,7 +174,7 @@ def _count_contacts(df: pd.DataFrame) -> tuple[int, int, int, int]:
     return total, pendentes, enviados, invalidos, duplicados
 
 
-CONFIG_FILE = Path("uploads/config.json")
+CONFIG_FILE = caminhos.uploads_dir() / "config.json"
 
 # Marcador de "tem envio rodando agora". Gravado ao iniciar e apagado quando a
 # thread de envio termina — de qualquer jeito, inclusive por parada manual.
@@ -159,7 +183,88 @@ CONFIG_FILE = Path("uploads/config.json")
 # ficaram pendentes sem ninguém avisar. Foi o caso de 31/08/2026: o log termina
 # em "Aguardando 21s..." às 16:56, sem linha de encerramento, e no dia seguinte
 # o app reabriu calado com 40 pendentes e a configuração antiga.
-ENVIO_FLAG_FILE = Path("uploads/envio_em_andamento.json")
+ENVIO_FLAG_FILE = caminhos.uploads_dir() / "envio_em_andamento.json"
+
+# O anexo global é gravado no servidor, e não só no `localStorage` como a
+# mensagem global. A mensagem o usuário reconhece e reescreve em segundos; o
+# anexo é um caminho de arquivo que ele não tem como adivinhar, e perdê-lo em
+# silêncio faz a campanha inteira sair sem imagem — sem nada na tela dizendo
+# isso. É o mesmo tipo de perda calada que o CHANGELOG de 23/09/2026 descreve.
+ANEXO_GLOBAL_FILE = caminhos.uploads_dir() / "anexo_global.json"
+
+
+def _anexo_global_ativo() -> str:
+    """
+    O anexo global que vale para este envio — "" quando desligado.
+
+    Exige a mensagem global ATIVA: o anexo faz parte dela, não é um recurso
+    paralelo. Desligar a mensagem global desliga o anexo junto, e esta é a
+    garantia de backend — a tela também faz isso, mas tela não é garantia
+    (uma requisição fora dela chegaria igual).
+
+    Uma função e não um atributo porque o desligado tem que ser indistinguível
+    do inexistente para quem consome (o sender e a estimativa), do mesmo jeito
+    que `state.global_message if state.global_message_active else ""` já fazia.
+    """
+    if not (state.global_message_active and state.global_attachment_active):
+        return ""
+    return (state.global_attachment or "").strip()
+
+
+def _persistir_anexo_global() -> None:
+    """Grava o anexo global para ele sobreviver ao fechar e abrir o programa."""
+    try:
+        ANEXO_GLOBAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ANEXO_GLOBAL_FILE.write_text(
+            json.dumps({
+                "arquivo": state.global_attachment,
+                "ativo": state.global_attachment_active,
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError as e:
+        file_logger.warning(f"Não foi possível salvar o anexo global: {e!r}")
+
+
+def _restaurar_anexo_global() -> None:
+    """
+    Recarrega o anexo global gravado.
+
+    Se o arquivo apontado sumiu do disco, o anexo volta DESLIGADO e o log diz
+    por quê. Restaurar apontando para um caminho morto faria todo contato
+    falhar com `AttachmentError` — que marca inválido sem retentativa — e o
+    usuário veria a campanha inteira se invalidar sem entender o motivo.
+    """
+    if not ANEXO_GLOBAL_FILE.exists():
+        return
+    try:
+        salvo = json.loads(ANEXO_GLOBAL_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        file_logger.warning(f"Anexo global salvo ilegível ({e!r}) — ignorando.")
+        return
+    if not isinstance(salvo, dict):
+        return
+
+    caminho = str(salvo.get("arquivo", "") or "").strip()
+    ativo = bool(salvo.get("ativo", False))
+    if not caminho:
+        return
+
+    if not Path(caminho).is_file():
+        state.global_attachment = ""
+        state.global_attachment_active = False
+        _persistir_anexo_global()
+        add_log(
+            f"O anexo global da sessão anterior não está mais no disco "
+            f"({Path(caminho).name}) — anexo global desligado. Anexe o arquivo "
+            f"de novo antes de iniciar o envio."
+        )
+        return
+
+    state.global_attachment = caminho
+    state.global_attachment_active = ativo
+    if ativo:
+        add_log(f"Anexo global restaurado da sessão anterior: {Path(caminho).name}")
 
 
 def _marcar_envio_em_andamento(pendentes: int) -> None:
@@ -278,6 +383,14 @@ def _recusar_se_enviando(detalhe: str) -> None:
     """
     if state.sender and state.sender.is_running():
         raise HTTPException(status_code=400, detail=detalhe)
+    # A varredura de respostas reescreve a planilha e disputa o mesmo
+    # chrome_profile/. Aceitar uma edição de contatos no meio dela faria os
+    # dois gravarem o mesmo arquivo.
+    if state.sender and state.sender.is_varrendo():
+        raise HTTPException(
+            status_code=400,
+            detail="Aguarde a verificação de respostas terminar.",
+        )
 
 
 def get_excel_info() -> dict:
@@ -293,11 +406,19 @@ def get_excel_info() -> dict:
 async def startup_event():
     """Captura o event loop principal do asyncio e restaura estado."""
     state._loop = asyncio.get_event_loop()
+    # Seletores do WhatsApp Web: embutido -> cache em disco (síncrono) ->
+    # Supabase (em thread). A busca remota é deliberadamente assíncrona — o
+    # app tem que abrir na hora mesmo com a rede ruim, e o embutido já basta
+    # para operar. Ver seletores.py e BRAINSTORM_IA.md #7.
+    seletores.carregar()
     # A configuração precisa ser restaurada ANTES de a tela pedir os contatos:
     # `GET /contacts` usa allow_duplicates para decidir o que marcar como
     # duplicado, e responder com o padrão erraria o status de contatos já
     # enviados até o navegador reenviar a configuração dele.
     _restaurar_config_do_disco()
+    # Depois da configuração e antes de a tela pedir qualquer coisa, pelo mesmo
+    # motivo: o navegador vai perguntar o estado logo na abertura.
+    _restaurar_anexo_global()
     # Depois da configuração (para o aviso poder citá-la) e antes de qualquer
     # coisa que o usuário vá fazer na tela.
     _avisar_execucao_interrompida()
@@ -310,7 +431,7 @@ async def startup_event():
             add_log(f"AVISO: planilha informada via CLI não encontrada: {state.excel_path}")
         return
     # Restaura planilha se já existia (sobrevive a reloads)
-    upload_path = Path("uploads/contatos.xlsx")
+    upload_path = caminhos.planilha()
     if upload_path.exists():
         state.excel_path = str(upload_path)
         _set_excel_source("restaurada", upload_path)
@@ -403,6 +524,7 @@ def get_status_dict() -> dict:
             "next_leva_size": None,
             "elapsed_seconds": None,
             "alerta_lentidao": None,
+            "alerta_entrega": None,
         }
 
     return {
@@ -431,6 +553,13 @@ def get_status_dict() -> dict:
         # F5 ou a uma reconexão do SSE: o campo `seq` muda a cada novo aviso e
         # é o que faz o painel abrir o popup só uma vez por aviso.
         "alerta_lentidao": sender_status.get("alerta_lentidao"),
+        # Alarme de entrega: as mensagens saem e não chegam, que é a assinatura
+        # do número sendo limitado pelo WhatsApp. Mesmo mecanismo de `seq` do
+        # aviso acima, mas o popup dele recomenda PARAR — ver whatsapp_sender.
+        "alerta_entrega": sender_status.get("alerta_entrega"),
+        # Verificação de respostas em curso (ou None): {fase, atual, total}.
+        # É o que alimenta a barra de progresso do botão "Verificar respostas".
+        "varredura": state.sender.get_varredura() if state.sender else None,
         "config": state.config,
         "excel_loaded": state.excel_path is not None,
         "excel_info": get_excel_info(),
@@ -444,7 +573,15 @@ def get_status_dict() -> dict:
 async def serve_frontend():
     """Serve a página HTML principal."""
     html_path = Path("static/index.html")
-    return FileResponse(html_path)
+    # no-store: sem isto o navegador guarda a página e a exibe mesmo com o
+    # servidor desligado. A tela abria normalmente, todas as chamadas falhavam
+    # e o usuário via o formulário de ativação — parecia que a licença tinha
+    # sido perdida, quando o programa é que não estava rodando. Com no-store,
+    # abrir a página sem servidor dá o erro de conexão do próprio navegador.
+    return FileResponse(
+        html_path,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
 
 
 # --- Licença ---
@@ -599,7 +736,7 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Arquivo deve ser .xlsx ou .xls")
 
     # Salva em arquivo temporário para validar antes de sobrescrever o anterior
-    upload_dir = Path("uploads")
+    upload_dir = caminhos.uploads_dir()
     upload_dir.mkdir(exist_ok=True)
     file_path = upload_dir / "contatos.xlsx"
     temp_path = upload_dir / "contatos_temp.xlsx"
@@ -621,13 +758,18 @@ async def upload_file(file: UploadFile = File(...)):
             )
 
         # Adiciona colunas de controle se não existirem
-        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo", "Motivo"]:
+        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo", "Motivo",
+                    "Respondeu", "DataResposta", "Entrega", "UltimaVerificacao",
+                    "RespostaTexto"]:
             if col not in df.columns:
                 df[col] = ""
             else:
-                if col == "Arquivo":
-                    df[col] = df[col].fillna("").astype(str).str.strip()
-                elif col == "Motivo":
+                # `RespostaTexto` entra junto de Arquivo/Motivo: são as colunas
+                # de TEXTO LIVRE, e o `.str.upper()` do ramo de baixo (que
+                # existe para normalizar "x"/"X" em Enviado/Invalido) devolveria
+                # a resposta do contato GRITANDO — e estragaria a triagem por
+                # teor, que é a única razão de a coluna existir.
+                if col in ("Arquivo", "Motivo", "RespostaTexto"):
                     df[col] = df[col].fillna("").astype(str).str.strip()
                 else:
                     df[col] = df[col].fillna("").astype(str).str.strip().str.upper()
@@ -748,6 +890,11 @@ class GlobalMessageModel(BaseModel):
     ativa: bool = False
 
 
+class GlobalAttachmentModel(BaseModel):
+    arquivo: str = ""
+    ativo: bool = False
+
+
 @app.get("/global-message")
 async def get_global_message():
     """Retorna a mensagem global atual."""
@@ -763,12 +910,66 @@ async def set_global_message(payload: GlobalMessageModel):
     )
     state.global_message = payload.mensagem
     state.global_message_active = payload.ativa
+    # O anexo global é parte da mensagem global: desligar uma desliga a outra.
+    # O CAMINHO do arquivo é preservado de propósito — religar a mensagem
+    # global não pode obrigar o usuário a escolher o arquivo de novo.
+    if not payload.ativa and state.global_attachment_active:
+        state.global_attachment_active = False
+        _persistir_anexo_global()
+        add_log("Anexo global desativado junto com a mensagem global")
     if payload.ativa and payload.mensagem.strip():
         add_log(f"Mensagem global ativada ({len(payload.mensagem)} caracteres)")
     elif not payload.ativa:
         add_log("Mensagem global desativada")
     else:
         add_log("Mensagem global salva (vazia)")
+    return {"status": "ok"}
+
+
+@app.get("/global-attachment")
+async def get_global_attachment():
+    """Retorna o anexo global atual."""
+    caminho = state.global_attachment
+    return {
+        "status": "ok",
+        "arquivo": caminho,
+        "nome": Path(caminho).name if caminho else "",
+        "ativo": state.global_attachment_active,
+        "existe": bool(caminho) and Path(caminho).is_file(),
+    }
+
+
+@app.post("/global-attachment")
+async def set_global_attachment(payload: GlobalAttachmentModel):
+    """
+    Salva o anexo global.
+
+    Recusa durante o envio pela mesma razão que a mensagem global e a
+    configuração: o sender lê isto a CADA contato, então aceitar uma troca no
+    meio do caminho mudaria calado o que os contatos ainda na fila recebem.
+    """
+    _recusar_se_enviando(
+        "Não é possível alterar o anexo global durante o envio. "
+        "Pare o envio para trocar o arquivo."
+    )
+
+    caminho = (payload.arquivo or "").strip()
+    if caminho and not Path(caminho).is_file():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Arquivo do anexo global não encontrado: {caminho}",
+        )
+
+    state.global_attachment = caminho
+    state.global_attachment_active = bool(payload.ativo)
+    _persistir_anexo_global()
+
+    if state.global_attachment_active and caminho:
+        add_log(f"Anexo global ativado: {Path(caminho).name}")
+    elif not state.global_attachment_active:
+        add_log("Anexo global desativado")
+    else:
+        add_log("Anexo global removido")
     return {"status": "ok"}
 
 
@@ -789,7 +990,16 @@ async def estimate_time(total_msgs: int = 0, tempo_minutos: int = 0):
     if total_msgs <= 0 or tempo_minutos <= 0:
         return {"status": "ok", "session_target": 0, "inviavel": False}
 
-    sender = WhatsAppSender(excel_path=state.excel_path, config=state.config)
+    # Os globais entram aqui porque a conta é sobre o que vai ser REALMENTE
+    # enviado. Com anexo global ligado, todo contato passa a ter anexo — o
+    # componente mais caro depois de abrir a conversa —, e sem isto a
+    # estimativa mostraria na tela um tempo que o envio não tem como cumprir.
+    sender = WhatsAppSender(
+        excel_path=state.excel_path,
+        config=state.config,
+        global_message=state.global_message if state.global_message_active else "",
+        global_attachment=_anexo_global_ativo(),
+    )
     df = sender._load_contacts()
     pending = get_pending_contacts(df)
     session_target = min(total_msgs, len(pending))
@@ -827,8 +1037,31 @@ async def start_sending():
     if not state.excel_path:
         raise HTTPException(status_code=400, detail="Nenhuma planilha carregada. Faça upload primeiro.")
 
+    # O anexo global vale para todo contato sem arquivo próprio, então um
+    # caminho morto aqui não estraga um envio: estraga a campanha inteira. E
+    # falha do jeito mais caro possível — `AttachmentError` marca o contato
+    # como inválido SEM retentativa, um por um, até acabar a lista. Conferir
+    # uma vez, antes de abrir o navegador, custa nada.
+    _anexo = _anexo_global_ativo()
+    if _anexo and not Path(_anexo).is_file():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"O anexo global não está mais no disco ({Path(_anexo).name}). "
+                f"Anexe o arquivo de novo ou desligue o anexo global antes de iniciar."
+            ),
+        )
+
     if state.sender and state.sender.is_running():
         raise HTTPException(status_code=400, detail="Envio já está em andamento.")
+
+    # Envio e varredura disputam o mesmo chrome_profile/, e só um Chrome pode
+    # segurá-lo: iniciar os dois juntos daria ChromeProfileInUseError.
+    if state.sender and state.sender.is_varrendo():
+        raise HTTPException(
+            status_code=400,
+            detail="Uma verificação de respostas está em andamento. Aguarde ela terminar.",
+        )
 
     # Log de diagnóstico: configurações usadas neste envio
     file_logger.info("-" * 40)
@@ -843,12 +1076,16 @@ async def start_sending():
     file_logger.info(
         f"  Mensagem global: {'ATIVA' if state.global_message_active and state.global_message.strip() else 'inativa'}"
     )
+    file_logger.info(
+        f"  Anexo global: {Path(_anexo_global_ativo()).name if _anexo_global_ativo() else 'inativo'}"
+    )
 
     # Mesmas informações no log da tela: são as três perguntas que sempre
     # aparecem quando o cliente relata comportamento inesperado.
     add_log(
         f"Comportamento humano: {'ON (digitação simulada)' if state.config.get('human_behavior') else 'OFF (mensagem enviada de uma vez)'}"
         f" | Mensagem global: {'ATIVA' if state.global_message_active and state.global_message.strip() else 'inativa'}"
+        f" | Anexo global: {Path(_anexo_global_ativo()).name if _anexo_global_ativo() else 'inativo'}"
         f" | Planilha: {state.excel_source or 'desconhecida'} de {state.excel_saved_at or 'n/d'}"
     )
 
@@ -878,6 +1115,7 @@ async def start_sending():
         log_callback=add_log,
         contact_update_callback=broadcast_contact_update,
         global_message=state.global_message if state.global_message_active else "",
+        global_attachment=_anexo_global_ativo(),
     )
 
     # Seta estado como "iniciando" imediatamente para que o frontend saiba que está rodando
@@ -906,13 +1144,82 @@ async def start_sending():
 
 @app.post("/stop")
 async def stop_sending():
-    """Para o envio de mensagens."""
+    """Para o envio de mensagens (ou a verificação de respostas)."""
+    if state.sender and state.sender.is_varrendo():
+        state.sender.stop()
+        add_log("Parada da verificação solicitada.")
+        return {"status": "ok", "message": "Parada solicitada"}
+
     if not state.sender or not state.sender.is_running():
         raise HTTPException(status_code=400, detail="Nenhum envio em andamento.")
 
     state.sender.stop()
     add_log("Solicitação de parada enviada. Aguardando finalização...")
     return {"status": "ok", "message": "Parada solicitada"}
+
+
+@app.post("/verificar-respostas")
+async def verificar_respostas():
+    """
+    Dispara a varredura da lista de conversas (ver `varredura.py`).
+
+    Ciclo curto e independente do envio: abre o Chrome, lê o `#pane-side`,
+    grava as colunas de fato na planilha e fecha. Não abre conversa nenhuma —
+    filtrar pela busca não marca nada como lido, então o cliente não perde o
+    badge de não-lidas que usa para trabalhar.
+
+    Roda em thread pelo mesmo motivo do envio: são minutos de Selenium, e o
+    event loop não pode ficar preso. O progresso sai pelo `/status`.
+    """
+    if not state.excel_path or not Path(state.excel_path).exists():
+        raise HTTPException(status_code=400, detail="Nenhuma planilha carregada.")
+
+    if state.sender and state.sender.is_running():
+        raise HTTPException(
+            status_code=400,
+            detail="Há um envio em andamento. Aguarde ele terminar para verificar as respostas.",
+        )
+    if state.sender and state.sender.is_varrendo():
+        raise HTTPException(status_code=400, detail="A verificação já está em andamento.")
+
+    if not state.sender:
+        state.sender = WhatsAppSender(
+            excel_path=state.excel_path,
+            config=state.config,
+            log_callback=add_log,
+        )
+    else:
+        state.sender.excel_path = state.excel_path
+
+    # Reivindica a varredura ANTES de subir a thread: assim o `/status` que
+    # empurramos abaixo (e a resposta deste POST) já saem com a tela travada,
+    # em vez de deixá-la editável até o heartbeat seguinte.
+    if not state.sender.reservar_varredura():
+        raise HTTPException(status_code=400, detail="Já existe uma operação em andamento.")
+
+    def _rodar():
+        resumo = state.sender.verificar_respostas(ja_reservada=True)
+        if resumo.get("erro"):
+            add_log(f"⚠️ {resumo['erro']}")
+        # Push no fim para a tela destravar na hora — o heartbeat de 5s
+        # destravaria também, mas com a tela inteira bloqueada a espera aparece.
+        broadcast_status()
+
+    state.varredura_thread = Thread(target=_rodar, daemon=True)
+    state.varredura_thread.start()
+    broadcast_status()
+    return {"status": "ok", "message": "Verificação iniciada"}
+
+
+def broadcast_status() -> None:
+    """
+    Empurra o `/status` agora, sem esperar o heartbeat de 5s do `/events`.
+
+    Usado nas bordas da varredura de respostas: ela trava a tela inteira, e
+    esperar até 5s para travar (ou para destravar no fim) é tempo de sobra
+    para o usuário editar a planilha que ela está reescrevendo.
+    """
+    _broadcast_event("status", json.dumps(get_status_dict(), ensure_ascii=False))
 
 
 @app.get("/status")
@@ -975,8 +1282,13 @@ async def get_contacts():
 
     try:
         df = pd.read_excel(state.excel_path)
-        # Garante colunas de controle
-        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo", "Motivo"]:
+        # Garante colunas de controle. As quatro da varredura entram aqui pelo
+        # `fillna`: sem ele, uma célula vazia virava a string "nan" (o
+        # `str(NaN)` do pandas), que a tela mostrava literalmente na coluna
+        # Resposta e que ainda contava como Entrega preenchida.
+        for col in ["Enviado", "DataEnvio", "Invalido", "Arquivo", "Motivo",
+                    "Respondeu", "DataResposta", "Entrega", "UltimaVerificacao",
+                    "RespostaTexto"]:
             if col not in df.columns:
                 df[col] = ""
             else:
@@ -1011,6 +1323,21 @@ async def get_contacts():
                 "invalido": str(row.get("Invalido", "")).strip().upper() == "X",
                 "data_envio": str(row.get("DataEnvio", "")),
                 "motivo": str(row.get("Motivo", "")),
+                # Verificação de respostas: FATOS lidos da lista de conversas.
+                # `entrega` é o que a varredura gravou; `latencia_seg` é
+                # derivado aqui, na exibição — como o `duplicado` — para que
+                # mudar a régua do que é "quente" não obrigue a varrer de novo.
+                "entrega": str(row.get("Entrega", "")),
+                "respondeu": str(row.get("Respondeu", "")).strip().lower() == "sim",
+                "data_resposta": str(row.get("DataResposta", "")),
+                "verificado_em": str(row.get("UltimaVerificacao", "")),
+                # O texto da resposta. Vai para a tela junto dos outros fatos
+                # porque o editor reescreve a planilha INTEIRA a partir dela —
+                # o que não sai daqui não volta no POST e some.
+                "resposta_texto": str(row.get("RespostaTexto", "")),
+                "latencia_seg": varredura.latencia_segundos(
+                    row.get("DataEnvio", ""), row.get("DataResposta", "")
+                ),
             })
 
         # --- Detecção de duplicados ---
@@ -1082,6 +1409,16 @@ class ContactModel(BaseModel):
     invalido: bool = False
     data_envio: str = ""
     motivo: str = ""
+    # Fatos da verificação de respostas. Fazem o mesmo caminho de ida e volta
+    # de `enviado`/`data_envio`: o editor reescreve a planilha INTEIRA a partir
+    # da tela, então tudo o que não voltar aqui é apagado. Sem estes campos,
+    # salvar contatos (ou iniciar um envio, que salva antes) zerava toda a
+    # varredura anterior.
+    respondeu: bool = False
+    data_resposta: str = ""
+    entrega: str = ""
+    verificado_em: str = ""
+    resposta_texto: str = ""
 
 
 class ContactsPayload(BaseModel):
@@ -1114,11 +1451,21 @@ async def save_contacts(payload: ContactsPayload):
             "DataEnvio": c.data_envio.strip(),
             "Invalido": "X" if c.invalido else "",
             "Motivo": c.motivo.strip(),
+            "Respondeu": "Sim" if c.respondeu else ("Não" if c.entrega.strip() else ""),
+            "DataResposta": c.data_resposta.strip(),
+            "Entrega": c.entrega.strip(),
+            "UltimaVerificacao": c.verificado_em.strip(),
+            "RespostaTexto": c.resposta_texto.strip(),
         })
 
-    df = pd.DataFrame(rows, columns=["Nome", "Número", "Mensagem", "Arquivo", "Enviado", "DataEnvio", "Invalido", "Motivo"])
+    df = pd.DataFrame(rows, columns=[
+        "Nome", "Número", "Mensagem", "Arquivo", "Enviado", "DataEnvio", "Invalido", "Motivo",
+        # Sem estas cinco na lista, `to_excel` gravaria a planilha sem elas e
+        # a varredura anterior sumiria a cada save.
+        "Respondeu", "DataResposta", "Entrega", "UltimaVerificacao", "RespostaTexto",
+    ])
 
-    upload_dir = Path("uploads")
+    upload_dir = caminhos.uploads_dir()
     upload_dir.mkdir(exist_ok=True)
     file_path = upload_dir / "contatos.xlsx"
     df.to_excel(file_path, index=False)
@@ -1185,7 +1532,7 @@ async def upload_media(file: UploadFile = File(...)):
     if not nome_seguro or nome_seguro in (".", ".."):
         raise HTTPException(status_code=400, detail="Nome de arquivo inválido.")
 
-    media_dir = Path("uploads/media")
+    media_dir = caminhos.media_dir()
     media_dir.mkdir(parents=True, exist_ok=True)
     file_path = media_dir / nome_seguro
 
@@ -1208,7 +1555,7 @@ async def upload_media(file: UploadFile = File(...)):
 @app.get("/media-files")
 async def list_media_files():
     """Lista arquivos de mídia disponíveis em uploads/media/."""
-    media_dir = Path("uploads/media")
+    media_dir = caminhos.media_dir()
     if not media_dir.exists():
         return {"status": "ok", "files": []}
 
@@ -1228,7 +1575,7 @@ async def list_media_files():
 @app.delete("/media/{filename}")
 async def delete_media(filename: str):
     """Remove um arquivo de mídia."""
-    media_dir = Path("uploads/media")
+    media_dir = caminhos.media_dir()
     file_path = media_dir / filename
 
     if not file_path.exists():
@@ -1249,7 +1596,7 @@ async def delete_media(filename: str):
 @app.get("/session-status")
 async def session_status():
     """Verifica se existe sessão salva do WhatsApp (sem abrir o Chrome)."""
-    profile_dir = Path("chrome_profile")
+    profile_dir = caminhos.chrome_profile_dir()
     if profile_dir.exists() and any(profile_dir.iterdir()):
         # Encontra o timestamp do arquivo mais recente no perfil
         latest_mtime = max(
@@ -1311,15 +1658,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="WhatsApp Automação Web")
     parser.add_argument(
         "--planilha",
-        default="uploads/contatos.xlsx",
-        help="Caminho para a planilha de contatos (default: uploads/contatos.xlsx)",
+        default=str(caminhos.planilha()),
+        help=f"Caminho para a planilha de contatos (default: {caminhos.planilha()})",
     )
     args = parser.parse_args()
 
     # Aplica o caminho da planilha informado via CLI
     path = args.planilha
     if path == 'test':
-        path = 'uploads/test_contatos.xlsx'
+        path = str(caminhos.uploads_dir() / "test_contatos.xlsx")
     _cli_planilha = Path(path)
     if _cli_planilha.exists():
         state.excel_path = str(_cli_planilha)

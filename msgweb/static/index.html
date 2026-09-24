@@ -147,6 +147,36 @@
         </div>
     </div>
 
+    <!-- Overlay de servidor fora do ar. NUNCA reaproveitar o overlay de licença
+         para isto: "não consegui falar com o servidor" e "sua licença não vale"
+         são coisas opostas, e pedir a chave quando o programa está apenas
+         desligado faz o usuário achar que perdeu a licença. -->
+    <div id="offline-overlay" class="fixed inset-0 bg-gray-900/80 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md mx-4">
+            <div class="text-center mb-6">
+                <div class="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 5.636a9 9 0 010 12.728m-12.728 0a9 9 0 010-12.728m9.9 9.9a5 5 0 010-7.072m-7.072 0a5 5 0 010 7.072M13 12a1 1 0 11-2 0 1 1 0 012 0z"/>
+                    </svg>
+                </div>
+                <h2 class="text-xl font-bold text-gray-900">Programa não está rodando</h2>
+                <p class="text-sm text-gray-500 mt-1">Esta página está aberta, mas não consegue falar com o servidor.</p>
+            </div>
+
+            <div class="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700 space-y-2">
+                <p>Sua licença <strong>continua ativa</strong> — o programa é que está fechado ou ainda iniciando.</p>
+                <p>Abra o <strong>WhatsApp Automação</strong> (a janela preta precisa ficar aberta) e esta tela volta sozinha.</p>
+            </div>
+
+            <button onclick="checkLicense()" id="btn-retry-offline"
+                class="w-full mt-4 px-4 py-3 bg-gray-800 hover:bg-gray-900 text-white font-semibold rounded-lg transition-colors">
+                Tentar novamente
+            </button>
+
+            <p class="text-xs text-center text-gray-400 mt-3">Reconectando automaticamente...</p>
+        </div>
+    </div>
+
     <!-- Header -->
     <header class="px-4 py-2 border-b border-gray-200 bg-white flex-shrink-0">
         <div class="flex items-center gap-3">
@@ -236,6 +266,61 @@
         </div>
     </div>
 
+    <!-- Alarme de entrega.
+         Vermelho, e com o botão de PARAR como ação primária, de propósito: o
+         aviso de lentidão acima diz "o envio continua normalmente", enquanto
+         este diz o contrário. Mensagem que sai e não chega é a assinatura do
+         número sendo limitado pelo WhatsApp, e insistir custa a conta do
+         cliente, não só o relógio. -->
+    <div id="entrega-overlay" class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md mx-4">
+            <div class="flex items-start gap-3">
+                <div class="w-10 h-10 shrink-0 bg-red-100 rounded-full flex items-center justify-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+                    </svg>
+                </div>
+                <div>
+                    <h2 class="text-lg font-bold text-gray-900">Suas mensagens não estão chegando</h2>
+                    <p id="entrega-msg" class="text-sm text-gray-600 mt-1"></p>
+                </div>
+            </div>
+
+            <div class="mt-4 bg-red-50 border border-red-200 rounded-lg p-3">
+                <p class="text-xs text-red-800 font-medium mb-1">O que isso costuma significar:</p>
+                <ul class="text-xs text-red-800 space-y-0.5 list-disc list-inside">
+                    <li>O WhatsApp está <strong>limitando este número</strong> por
+                        volume de mensagens.</li>
+                    <li>As mensagens saem daqui, mas <strong>não chegam</strong> em
+                        quem deveria receber.</li>
+                    <li>Continuar enviando assim pode levar ao
+                        <strong>bloqueio da conta</strong>.</li>
+                </ul>
+            </div>
+
+            <div class="mt-3 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p class="text-xs text-gray-700 font-medium mb-1">Recomendado:</p>
+                <ul class="text-xs text-gray-700 space-y-0.5 list-disc list-inside">
+                    <li>Parar o envio agora e retomar amanhã.</li>
+                    <li>Quem já recebeu continua marcado — ao retomar, o envio
+                        segue de onde parou.</li>
+                    <li>Da próxima vez, use menos mensagens em mais tempo.</li>
+                </ul>
+            </div>
+
+            <div class="mt-4 flex gap-2">
+                <button onclick="pararPorAlertaDeEntrega()"
+                    class="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium py-2 rounded-lg text-sm">
+                    Parar o envio
+                </button>
+                <button onclick="fecharAvisoEntrega()"
+                    class="flex-1 bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 font-medium py-2 rounded-lg text-sm">
+                    Continuar mesmo assim
+                </button>
+            </div>
+        </div>
+    </div>
+
     <div class="flex-1 flex overflow-hidden">
 
         <!-- LEFT: Contatos table -->
@@ -254,7 +339,27 @@
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                     </svg>
-                    <span>Edição bloqueada durante o envio de mensagens</span>
+                    <span id="contacts-lock-text">Edição bloqueada durante o envio de mensagens</span>
+                </div>
+
+                <!-- Filtros da verificação de respostas (BRAINSTORM_IA.md #7).
+                     As abas filtram o grupo e a coluna "Resposta" ordena
+                     dentro dele. O contador da aba já responde "quantos
+                     responderam?" sem clicar em nada, que é a pergunta real
+                     do cliente.
+
+                     Não existe aba "morno": separar morno de quente exige ler
+                     o TEOR da resposta, e uma aba que nunca retorna nada é
+                     pior que não existir.
+
+                     O botão que DISPARA a varredura mora em "Controles", junto
+                     de Iniciar/Parar: é uma ação que abre o Chrome e reescreve
+                     a planilha, não um filtro de tela — e é o "Parar Envio" de
+                     lá que a interrompe. Aqui ficam só as abas, e a barra
+                     inteira some enquanto não há verificação nenhuma para
+                     filtrar (senão fica uma faixa vazia acima da tabela). -->
+                <div id="barra-resposta" class="hidden items-center gap-2 px-4 py-2 border-b border-gray-100 flex-wrap flex-shrink-0">
+                    <div id="abas-resposta" class="flex items-center gap-1 flex-wrap"></div>
                 </div>
 
                 <div class="flex-1 overflow-y-auto overflow-x-hidden">
@@ -272,14 +377,27 @@
                                 <th class="text-left px-2 py-2 font-medium w-36">Número</th>
                                 <th class="text-left px-2 py-2 font-medium">Mensagem <span class="font-normal text-gray-400" title="Use {nome} na mensagem para inserir o nome em qualquer posição. Exemplo: Olá {nome} esta é uma mensagem de teste.">· {nome}</span></th>
                                 <th class="text-left px-2 py-2 font-medium w-24">Arquivo</th>
-                                <th class="text-center px-1 py-2 font-medium w-14" id="th-status" aria-sort="none">
+                                <!-- 76px, nao `w-14` (56px): "Duplicado" e' o rotulo mais
+                                     largo desta coluna e nao cabia — vazava por cima de
+                                     "Data Envio". Como "Mensagem" e' a unica coluna sem
+                                     largura fixa, num `table-fixed` os 20px saem dela
+                                     sozinhos. Largura em `style` e nao em classe porque o
+                                     Tailwind daqui e' pre-compilado (`npm run build:css`):
+                                     uma classe nova so' existe depois do build, e as duas
+                                     colunas vizinhas ja usam `style` pelo mesmo motivo. -->
+                                <th class="text-center px-1 py-2 font-medium" style="width:76px" id="th-status" aria-sort="none">
                                     <button type="button" onclick="sortContacts('status')"
                                         title="Agrupar por status: pendentes, enviados, inválidos e duplicados juntos (inválidos ainda agrupados por motivo). Clique de novo para inverter. A nova ordem é salva na planilha."
                                         class="inline-flex items-center justify-center gap-1 hover:text-gray-800 transition-colors">
                                         Status <span class="sort-arrow text-gray-300 text-[10px]">↕</span>
                                     </button>
                                 </th>
-                                <th class="text-center px-1 py-2 font-medium w-24">Data Envio</th>
+                                <th class="text-center px-1 py-2 font-medium" style="width:96px">Data Envio</th>
+                                <th class="text-center px-1 py-2 font-medium cursor-pointer select-none hover:text-gray-700"
+                                    style="width:80px" id="th-resposta" onclick="ordenarPorResposta()"
+                                    title="Ordena por tempo de resposta: quem respondeu mais rapido primeiro">
+                                    Resposta <span id="th-resposta-seta" class="text-gray-300">&#8597;</span>
+                                </th>
                                 <th class="text-center px-1 py-2 font-medium w-12"></th>
                             </tr>
                         </thead>
@@ -371,6 +489,14 @@
                             <p id="status-pending" class="text-sm font-semibold mt-0.5 text-amber-700">0</p>
                         </div>
                     </div>
+
+                    <!-- Resumo de entrega, com os MESMOS símbolos da coluna
+                         Resposta. Só aparece depois da primeira verificação:
+                         antes dela não há nada a resumir, e uma faixa de zeros
+                         só ocuparia espaço. Os números saem da tabela de
+                         contatos (não de um contador próprio) para não poderem
+                         divergir do que a tela mostra. -->
+                    <div id="status-entrega" class="hidden mt-3 flex flex-wrap items-center justify-center gap-4 bg-gray-50 rounded-md p-2"></div>
 
                     <!-- Barra de Progresso do Envio -->
                     <div id="progress-container" class="hidden mt-3">
@@ -507,35 +633,71 @@
                                     <span class="text-xs text-gray-700">Ativar mensagem global</span>
                                 </label>
                             </div>
-                            <p class="text-xs text-gray-500 mb-1">Quando ativa, contatos com mensagem vazia usarão esta mensagem. Suporta *negrito*, _itálico_, ~riscado~, quebras de linha e {nome}. Use <kbd class="px-1 py-0.5 bg-gray-200 rounded text-[10px] font-mono">Win</kbd> + <kbd class="px-1 py-0.5 bg-gray-200 rounded text-[10px] font-mono">.</kbd> para emojis 😊</p>
-                            <textarea id="global-message" rows="5" placeholder="Olá *{nome}*! 👋&#10;&#10;Segue informação importante:&#10;- Item 1&#10;- Item 2&#10;&#10;Qualquer dúvida, é só chamar!" disabled
+                            <p class="text-xs text-gray-500 mb-1">Vale para os contatos com a coluna <strong>Mensagem em branco</strong>: eles recebem o texto abaixo e, se houver, o anexo. Quem escreveu a própria mensagem não recebe nem o texto nem o anexo. Suporta *negrito*, _itálico_, ~riscado~, quebras de linha e {nome}. Use <kbd class="px-1 py-0.5 bg-gray-200 rounded text-[10px] font-mono">Win</kbd> + <kbd class="px-1 py-0.5 bg-gray-200 rounded text-[10px] font-mono">.</kbd> para emojis 😊</p>
+                            <textarea id="global-message" rows="5" oninput="onGlobalMessageInput()" onblur="onGlobalMessageBlur()" placeholder="Olá *{nome}*! 👋&#10;&#10;Segue informação importante:&#10;- Item 1&#10;- Item 2&#10;&#10;Qualquer dúvida, é só chamar!" disabled
                                 class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm resize-y focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none disabled:opacity-50 disabled:bg-gray-100"
                                 style="min-height: 80px; max-height: 200px;"></textarea>
                             <div class="flex items-center justify-between mt-1.5">
-                                <button onclick="saveGlobalMessage()" id="btn-save-global-msg" disabled
-                                    class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white text-xs font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-                                    Salvar Mensagem
-                                </button>
+                                <span class="text-xs text-gray-400">Salva sozinho ao sair do campo</span>
                                 <span id="global-msg-status" class="text-xs text-gray-400"></span>
+                            </div>
+                            <!-- Anexo: parte da mensagem global, nao uma secao
+                                 a parte. Vive dentro deste <details> porque a
+                                 regra e uma so: quem tem a coluna Mensagem em
+                                 branco recebe o pacote (texto + anexo). -->
+                            <div class="mt-2 pt-2 border-t border-gray-200">
+                                <div class="flex items-center justify-between mb-1.5">
+                                    <label class="inline-flex items-center gap-2 cursor-pointer">
+                                        <input type="checkbox" id="global-anexo-toggle" onchange="toggleGlobalAnexo()" disabled
+                                            class="w-3.5 h-3.5 text-green-600 border-gray-300 rounded focus:ring-green-500">
+                                        <span class="text-xs text-gray-700">Enviar tamb&eacute;m um anexo</span>
+                                    </label>
+                                    <span id="global-anexo-toggle-label" class="text-xs text-gray-400">OFF</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <button onclick="selecionarAnexoGlobal()" id="btn-global-anexo-escolher" disabled
+                                        class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white text-xs font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                                        Escolher Arquivo
+                                    </button>
+                                    <span id="global-anexo-nome" class="text-xs text-gray-500 truncate flex-1">Nenhum arquivo</span>
+                                    <button onclick="removerAnexoGlobal()" id="btn-global-anexo-remover" title="Remover anexo"
+                                        class="hidden text-gray-300 hover:text-red-500 transition-colors text-xs flex-shrink-0">&#10005;</button>
+                                </div>
+                                <p class="mt-1 text-xs text-gray-500">O arquivo vai primeiro, a mensagem depois. Deixando o texto em branco, s&oacute; o anexo &eacute; enviado. Contato com arquivo pr&oacute;prio na coluna Arquivo continua com o dele.</p>
+                                <p id="global-anexo-status" class="mt-1 text-xs text-gray-400"></p>
                             </div>
                         </div>
                     </details>
                 </section>
 
+
                 <!-- Controles -->
                 <section class="flex-shrink-0">
                     <h2 class="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Controles</h2>
+                    <!-- Verificar respostas é irmã de Iniciar Envio: abre o
+                         mesmo Chrome, disputa o mesmo chrome_profile/ e
+                         reescreve a mesma planilha. Quem a interrompe é o
+                         "Parar Envio" ao lado, que o backend já roteia para a
+                         varredura quando é ela que está rodando. -->
                     <div class="flex gap-2">
-                        <button onclick="startSending()" id="btn-start"
-                            class="flex-1 px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-                            Iniciar Envio
+                        <button onclick="verificarRespostas()" id="btn-verificar"
+                            title="Olha suas conversas do WhatsApp e marca na lista quem já respondeu. Não abre nenhuma conversa e não marca nada como lido, então você não perde as bolinhas verdes de mensagem nova. Leva alguns minutos e pode ser feito quantas vezes quiser, a qualquer momento depois do envio."
+                            class="flex-1 px-3 py-2 bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 text-sm font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                            Verificar respostas
                         </button>
                         <button onclick="stopSending()" id="btn-stop"
+                            title="Interrompe o envio. A mensagem que estiver saindo no momento é concluída antes de parar. Ninguém recebe duas vezes: ao iniciar de novo, o envio continua de onde parou."
                             class="flex-1 px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                             disabled>
-                            Parar Envio
+                            Parar
                         </button>
                     </div>
+                    <button onclick="startSending()" id="btn-start"
+                        title="Começa a enviar as mensagens para os contatos que ainda não receberam. Uma janela do WhatsApp vai abrir sozinha: deixe-a aberta e não mexa nela até terminar. Você pode continuar usando o computador normalmente."
+                        class="mt-2 w-full px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                        Iniciar Envio
+                    </button>
+                    <p id="verificar-progresso" class="mt-1 text-xs text-gray-500 hidden"></p>
                     <p id="control-status" class="mt-1 text-xs text-gray-400"></p>
                 </section>
 
@@ -668,7 +830,7 @@
             const campos = [
                 'cfg-total-msgs-input', 'cfg-tempo', 'cfg-hora-inicio', 'cfg-hora-fim',
                 'cfg-skip-weekends', 'cfg-human-behavior', 'cfg-allow-duplicates',
-                'btn-save-config', 'global-msg-toggle',
+                'btn-save-config', 'global-msg-toggle', 'global-anexo-toggle',
             ];
             campos.forEach(id => {
                 const el = document.getElementById(id);
@@ -677,7 +839,8 @@
 
             // Textarea e botão da mensagem global dependem TAMBÉM do toggle:
             // com o toggle desligado eles já ficam desabilitados, e destravar
-            // não pode reabilitá-los por engano.
+            // não pode reabilitá-los por engano. O anexo vem junto, de
+            // dentro de aplicarEstadoMensagemGlobal().
             aplicarEstadoMensagemGlobal();
 
             const hint = document.getElementById('settings-locked-hint');
@@ -687,15 +850,28 @@
         function aplicarEstadoMensagemGlobal() {
             const active = isGlobalMessageActive();
             const textarea = document.getElementById('global-message');
-            const btn = document.getElementById('btn-save-global-msg');
+            // Não há botão de salvar: o textarea desabilitado é o que impede a
+            // edição, e `saveGlobalMessage` recusa sozinha durante o envio.
             if (textarea) textarea.disabled = !active || settingsLocked;
-            if (btn) btn.disabled = !active || settingsLocked;
+            // O anexo deriva daqui: ele so' existe dentro da mensagem global.
+            // Ficar junto garante que todo caminho que mexe no estado de uma
+            // atualiza a outra — foi o que faltou quando o toggle da mensagem
+            // ligava e o anexo continuava desabilitado.
+            aplicarEstadoAnexoGlobal();
         }
 
         // --- Lock/Unlock Contacts Editing ---
-        function lockContactsEditing(locked) {
+        function lockContactsEditing(locked, motivo) {
             const section = document.getElementById('contacts-section');
             if (!section) return;
+
+            // O banner serve às duas operações que travam a tela, e elas não
+            // são a mesma coisa para o usuário: "aguarde o envio" e "aguarde a
+            // leitura das conversas" pedem esperas de ordens diferentes.
+            const txt = document.getElementById('contacts-lock-text');
+            if (txt && locked) {
+                txt.textContent = motivo || 'Edição bloqueada durante o envio de mensagens';
+            }
 
             // Toggle classe para CSS (opacity + pointer-events no tbody, banner)
             section.classList.toggle('contacts-locked', locked);
@@ -718,6 +894,28 @@
             document.querySelectorAll('#contacts-tbody button').forEach(btn => {
                 btn.disabled = locked;
             });
+
+            // Os botões de ordenar vivem no <thead>, fora do #contacts-tbody que
+            // o CSS .contacts-locked neutraliza — e ordenar SALVA a nova ordem
+            // na planilha, que é exatamente o arquivo que o envio e a varredura
+            // estão reescrevendo.
+            document.querySelectorAll('#contacts-section thead button').forEach(btn => {
+                btn.disabled = locked;
+            });
+        }
+
+        const MOTIVO_TRAVA_VARREDURA = 'Edição bloqueada durante a verificação de respostas';
+
+        // Trava única para as duas operações que abrem o Chrome e reescrevem a
+        // planilha: envio e verificação de respostas. Só o "Parar" escapa — é a
+        // única saída de qualquer uma das duas.
+        function aplicarTravaGeral(locked, motivo) {
+            document.getElementById('btn-start').disabled = locked;
+            const btnVerificar = document.getElementById('btn-verificar');
+            if (btnVerificar) btnVerificar.disabled = locked;
+            document.getElementById('btn-stop').disabled = !locked;
+            lockContactsEditing(locked, motivo);
+            lockSettingsEditing(locked);
         }
 
         // --- Dashboard ---
@@ -926,6 +1124,431 @@
             document.getElementById('lentidao-overlay').classList.add('hidden');
         }
 
+        // --- Alarme de entrega: as mensagens saem e não chegam ---
+        //
+        // Mesmo mecanismo do aviso de lentidão (vive dentro do `status` para
+        // sobreviver a F5/queda de SSE, e o `seq` impede o popup de reabrir a
+        // cada heartbeat), mas o conteúdo é o oposto: lá o envio continua
+        // normalmente, aqui a recomendação é parar. Mensagem não entregue em
+        // bloco é sinal de o número estar sendo limitado pelo WhatsApp, e
+        // insistir arrisca a conta do cliente.
+        let ultimoAlertaEntregaVisto = null;
+
+        function mostrarAvisoEntrega(alerta) {
+            if (!alerta) return;
+            if (ultimoAlertaEntregaVisto === alerta.seq) return;
+            ultimoAlertaEntregaVisto = alerta.seq;
+
+            const overlay = document.getElementById('entrega-overlay');
+            if (!overlay) return;
+
+            document.getElementById('entrega-msg').innerHTML =
+                `<strong>${alerta.nao_entregues} de ${alerta.verificadas}</strong> ` +
+                `mensagens já enviadas (${alerta.percentual}%) ainda não foram ` +
+                `entregues a quem deveria recebê-las.`;
+
+            overlay.classList.remove('hidden');
+        }
+
+        function fecharAvisoEntrega() {
+            document.getElementById('entrega-overlay').classList.add('hidden');
+        }
+
+        function pararPorAlertaDeEntrega() {
+            fecharAvisoEntrega();
+            stopSending();
+        }
+
+        // ======================================================
+        // Verificacao de respostas (BRAINSTORM_IA.md #7)
+        // ======================================================
+        //
+        // O backend grava FATOS na planilha (Respondeu / DataResposta /
+        // Entrega) e o rotulo e derivado aqui, na exibicao — do mesmo jeito
+        // que `duplicado` ja e. Rotulo gravado congelaria a regua do que e
+        // "quente"; derivado, muda-la e mudar uma funcao, sem varrer de novo.
+        //
+        // E nao ha rotulo "morno": separar morno de quente exige ler o TEOR da
+        // resposta. "Sim" e a resposta mais quente possivel e tem uma palavra;
+        // "nao tenho interesse" tem quatro. Nenhuma regra sobre metadado
+        // resolve isso — e trabalho da triagem com IA.
+
+        let filtroResposta = 'todos';
+        // Comeca em false porque ordenarPorResposta() inverte ANTES de
+        // ordenar: assim o PRIMEIRO clique da a ordem crescente, que poe quem
+        // respondeu mais rapido no topo. E essa a pergunta do cliente ("em
+        // quem eu ligo agora?"); abrir pelo mais lento seria o oposto do util.
+        let ordemRespostaAsc = false;
+
+        function formatarLatencia(seg) {
+            if (seg === '' || seg === null || seg === undefined) return '';
+            const n = Number(seg);
+            if (!isFinite(n) || n < 0) return '';
+            // Abaixo de um minuto o horario da linha nao tem resolucao para
+            // dizer quantos segundos foram (o WhatsApp mostra "13:17", sem
+            // segundos), mas "menos de um minuto" e' verdade e e' a informacao
+            // que o cliente quer: esse e' o lead mais quente da lista.
+            // Arredondar para "1 min" afirmaria uma precisao que nao existe.
+            //
+            // "< 1 min" e nao "menos de 1 min" porque a coluna tem 80px e
+            // `whitespace-nowrap`: medido, a forma por extenso da 85,5px contra
+            // 72px de caixa util e vazaria por cima da coluna vizinha. A forma
+            // por extenso vive no tooltip, via `latenciaPorExtenso`.
+            if (n < 60) return '< 1 min';
+            if (n < 3600) return Math.max(1, Math.round(n / 60)) + ' min';
+            if (n < 86400) return Math.round(n / 3600) + ' h';
+            const d = Math.round(n / 86400);
+            return d + (d > 1 ? ' dias' : ' dia');
+        }
+
+        // A mesma latencia por extenso, para o tooltip — que nao tem limite de
+        // largura. Existe so' por causa do caso abaixo de um minuto: "Respondeu
+        // em < 1 min." fica truncado na leitura, "Respondeu em menos de um
+        // minuto." nao.
+        function latenciaPorExtenso(seg) {
+            const curto = formatarLatencia(seg);
+            if (!curto) return '';
+            return Number(seg) < 60 ? 'menos de um minuto' : curto;
+        }
+
+        // O tooltip da coluna Resposta traz o TEMPO, e so' o tempo.
+        //
+        // Chegou a trazer tambem o teor da ultima mensagem dele, e foi tirado de
+        // proposito: a varredura NAO reconsulta quem ja esta `Respondeu=Sim`
+        // (ver `linhas_para_verificar` em varredura.py), entao o texto gravado
+        // e' o da PRIMEIRA leitura e nunca mais e' atualizado. O tempo e' um
+        // fato que nao muda; o teor pode mudar e a tela nao ficaria sabendo —
+        // mostrar um teor velho da uma impressao errada da conversa.
+        //
+        // O `RespostaTexto` continua sendo gravado na planilha: e' materia-prima
+        // da triagem por teor, e ali a PRIMEIRA resposta e' justamente a certa
+        // (e' ela que responde a campanha; o resto e' conversa que o humano ja
+        // esta tendo).
+
+        // Os tiques do WhatsApp, desenhados. O cliente já lê esses símbolos
+        // todo dia na conversa: é vocabulário que ele não precisa aprender, e
+        // que ele pode conferir contra o WhatsApp real quando duvidar do app.
+        //
+        // SVG e não texto ("✓✓") porque o duplo do WhatsApp é SOBREPOSTO, e
+        // dois glifos lado a lado leem como outra coisa. Também evita que o
+        // sistema decida renderizar o caractere como emoji colorido.
+        // Cores dos tiques. O azul foi MEDIDO no WhatsApp Web real (sonda de
+        // 08/09/2026); os outros dois são escolha nossa.
+        //
+        // Vão em `style` e não em classe do Tailwind DE PROPÓSITO: o CSS deste
+        // projeto é pré-compilado (`npm run build:css`), então uma classe nova
+        // só passa a existir depois de rodar o build — e `text-blue-500`, que
+        // não estava no CSS gerado, fazia o tique de "lido" sair PRETO. Cor
+        // inline não depende de build nenhum e não regride do mesmo jeito.
+        const COR_TIQUE = {
+            lido: 'rgb(0, 123, 252)',
+            entregue: 'rgba(0, 0, 0, 0.45)',
+            // Cinza, igual ao WhatsApp — decisão do cliente, por fidelidade ao
+            // símbolo que ele já lê todo dia. Chegou a ser vermelho para
+            // sinalizar "base suja" (número que não presta, ≠ lead frio), mas
+            // essa distinção não depende da cor: ela vive na aba própria
+            // "Não entregou" e no tooltip, que manda conferir o número.
+            //
+            // O que separa este do entregue é a CONTAGEM de tiques — um contra
+            // dois — que é exatamente como o WhatsApp faz.
+            nao_entregue: 'rgba(0, 0, 0, 0.45)',
+            // Falha continua vermelha: não é tique, é um alerta, e é o único
+            // estado em que a mensagem nem saiu.
+            falhou: 'rgb(220, 38, 38)',
+        };
+
+        function tiqueSvg(duplo, cor, rotulo, tam) {
+            const w = tam || 17;
+            const h = Math.round(w * 11 / 17);
+            return '<svg viewBox="0 0 17 11" width="' + w + '" height="' + h + '" fill="none" '
+                + 'stroke="currentColor" stroke-width="1.7" stroke-linecap="round" '
+                + 'stroke-linejoin="round" class="inline-block align-middle" '
+                + 'style="color: ' + cor + '" role="img" aria-label="' + rotulo + '">'
+                + '<path d="M1 5.8 L4.2 9.1 L10.6 1.7"/>'
+                + (duplo ? '<path d="M6.2 5.8 L9.4 9.1 L15.8 1.7"/>' : '')
+                + '</svg>';
+        }
+
+        // Resposta não tem tique — os tiques falam da NOSSA mensagem, não da
+        // dele. A seta de responder é o símbolo que o cliente já associa a isso.
+        function respostaSvg(rotulo, tam) {
+            const w = tam || 14;
+            return '<svg viewBox="0 0 16 14" width="' + w + '" height="' + Math.round(w * 14 / 16) + '" '
+                + 'fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" '
+                + 'stroke-linejoin="round" class="inline-block align-middle" '
+                + 'style="color: rgb(21, 128, 61)" role="img" aria-label="' + rotulo + '">'
+                + '<path d="M14.5 2v3.2a3 3 0 0 1-3 3H2.6"/>'
+                + '<path d="M6 5 L2.3 8.3 L6 11.6"/>'
+                + '</svg>';
+        }
+
+        // Falha não tem tique: o WhatsApp mostra um alerta, e um tique vermelho
+        // leria como "chegou, mas deu errado" — que é o oposto.
+        function alertaSvg(rotulo, tam) {
+            const w = tam || 13;
+            return '<svg viewBox="0 0 16 16" width="' + w + '" height="' + w + '" fill="none" '
+                + 'stroke="currentColor" stroke-width="1.5" '
+                + 'class="inline-block align-middle" style="color: ' + COR_TIQUE.falhou + '" '
+                + 'role="img" aria-label="' + rotulo + '">'
+                + '<circle cx="8" cy="8" r="6.6"/><path d="M8 4.4v4.2" stroke-linecap="round"/>'
+                + '<circle cx="8" cy="11.4" r="0.9" fill="currentColor" stroke="none"/>'
+                + '</svg>';
+        }
+
+        // O que cada estado gravado na planilha vira na tela.
+        //
+        // O símbolo carrega o estado; o tooltip carrega o significado. Isso
+        // importa porque entregue e lido diferem SÓ na cor — quem não
+        // distingue azul de cinza precisa do texto, e ele está sempre a um
+        // hover de distância (além das abas, que agrupam sem depender de cor).
+        //
+        // A planilha continua gravando "Lido"/"Entregue": isto é a tela, não
+        // o dado, e mudar o desenho não obriga a varrer de novo.
+        const ROTULO_ENTREGA = {
+            'Lido': {
+                // Só entra aqui com o tique AZUL na tela, que é confirmação do
+                // próprio WhatsApp. Por isso pode afirmar.
+                simbolo: () => tiqueSvg(true, COR_TIQUE.lido, 'Lido'),
+                dica: 'Dois tiques azuis — confirmado pelo WhatsApp: ele leu a mensagem e não respondeu.',
+            },
+            'Entregue': {
+                // Não afirma "não leu": o tique só fica azul se a pessoa
+                // mantiver a confirmação de leitura ligada.
+                simbolo: () => tiqueSvg(true, COR_TIQUE.entregue, 'Entregue'),
+                dica: 'Dois tiques cinzas — a mensagem chegou no celular dele. Sem confirmação de '
+                    + 'leitura: ele pode ter lido sem o WhatsApp avisar.',
+            },
+            'Não entregue': {
+                simbolo: () => tiqueSvg(false, COR_TIQUE.nao_entregue, 'Não entregue'),
+                dica: 'Um tique só — a mensagem saiu, mas não chegou no celular dele. '
+                    + 'Confira se o número está certo e se tem WhatsApp.',
+            },
+            'Falhou': {
+                simbolo: () => alertaSvg('Falhou'),
+                dica: 'A mensagem não chegou a sair. Confira se o número está certo e se tem WhatsApp.',
+            },
+        };
+        ROTULO_ENTREGA['Nao entregue'] = ROTULO_ENTREGA['Não entregue'];
+
+        function respostaBadgeHtml(contact) {
+            // Ordem importa: um contato inválido NUNCA teve entrega, então
+            // qualquer Entrega remanescente na linha descreve outra mensagem
+            // (de antes de ele ser invalidado, ou de uma campanha anterior).
+            // Mostrá-la aqui afirmaria "a mensagem chegou" sobre uma mensagem
+            // que nunca foi enviada.
+            if (contact.invalido) {
+                return '<span class="text-gray-300 text-xs" '
+                    + 'title="Contato inválido: a mensagem não foi enviada para ele.">&mdash;</span>';
+            }
+            if (!contact.enviado) {
+                return '<span class="text-gray-300 text-xs" title="Ainda não enviado.">&mdash;</span>';
+            }
+
+            const entrega = (contact.entrega || '').trim();
+            if (!entrega) {
+                return '<span class="text-gray-300 text-xs" '
+                    + 'title="Enviado. Clique em Verificar respostas para saber se ele respondeu.">&mdash;</span>';
+            }
+
+            // Resposta continua em TEXTO, e não em símbolo: não existe tique
+            // para "ele respondeu" — os tiques falam da NOSSA mensagem, não da
+            // dele. E o tempo de resposta é o dado que a coluna ordena.
+            if (contact.respondeu) {
+                const lat = formatarLatencia(contact.latencia_seg);
+                const porExtenso = latenciaPorExtenso(contact.latencia_seg);
+                const dica = porExtenso ? 'Respondeu em ' + porExtenso + '.' : 'Respondeu.';
+                return '<span class="text-xs font-semibold text-green-700" title="'
+                    + escapeHtml(dica) + '">' + escapeHtml(lat || 'Respondeu') + '</span>';
+            }
+
+            // Estado desconhecido (planilha de uma versão futura, ou editada à
+            // mão): mostra o valor cru em vez de esconder o que está lá.
+            const r = ROTULO_ENTREGA[entrega];
+            if (!r) {
+                return '<span class="text-xs text-gray-500" title="Sem resposta até agora.">'
+                    + escapeHtml(entrega) + '</span>';
+            }
+            return '<span title="' + escapeHtml(r.dica) + '" class="cursor-help">'
+                + r.simbolo() + '</span>';
+        }
+
+        function grupoDaLinha(tr) {
+            // So quem recebeu tem resposta a ter.
+            if (tr.dataset.enviado !== '1') return null;
+            if (tr.dataset.respondeu === '1') return 'respondeu';
+            const e = tr.dataset.entrega || '';
+            if (e === 'Não entregue' || e === 'Falhou') return 'nao_entregue';
+            if (e) return 'sem_resposta';
+            return 'nao_verificado';
+        }
+
+        function atualizarAbasResposta() {
+            const cont = document.getElementById('abas-resposta');
+            if (!cont) return;
+            const linhas = [].slice.call(document.querySelectorAll('#contacts-tbody tr'));
+            const contagem = { respondeu: 0, sem_resposta: 0, nao_entregue: 0 };
+            linhas.forEach(function (tr) {
+                const g = grupoDaLinha(tr);
+                if (g && g in contagem) contagem[g]++;
+            });
+
+            // Nenhuma verificacao ainda: nada de abas vazias na tela — e a
+            // barra inteira some, senao sobra uma faixa vazia com borda.
+            const algum = contagem.respondeu + contagem.sem_resposta + contagem.nao_entregue;
+            const barra = document.getElementById('barra-resposta');
+            if (barra) {
+                barra.classList.toggle('hidden', !algum);
+                barra.classList.toggle('flex', !!algum);
+            }
+            atualizarResumoDeEntrega();
+            if (!algum) { cont.innerHTML = ''; return; }
+
+            const abas = [
+                ['todos', 'Todos', linhas.length],
+                ['respondeu', 'Respondeu', contagem.respondeu],
+                ['sem_resposta', 'Sem resposta', contagem.sem_resposta],
+                ['nao_entregue', 'Não entregou', contagem.nao_entregue]
+            ];
+            cont.innerHTML = abas.map(function (a) {
+                const ativa = filtroResposta === a[0];
+                const cls = ativa
+                    ? 'bg-gray-800 text-white border-gray-800'
+                    : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50';
+                return '<button onclick="filtrarPorResposta(\'' + a[0] + '\')" '
+                    + 'class="text-xs border px-2 py-1 rounded-lg ' + cls + '">'
+                    + escapeHtml(a[1]) + ' <span class="opacity-70">' + a[2] + '</span></button>';
+            }).join('');
+        }
+
+        // Resumo de entrega do painel Status. Lê a MESMA fonte das abas — a
+        // tabela — porque dois contadores independentes divergem na primeira
+        // linha que alguém editar, e aí o usuário não sabe em qual acreditar.
+        function atualizarResumoDeEntrega() {
+            const cont = document.getElementById('status-entrega');
+            if (!cont) return;
+
+            const c = { respondeu: 0, lido: 0, entregue: 0, nao_entregue: 0 };
+            document.querySelectorAll('#contacts-tbody tr').forEach(function (tr) {
+                // Só quem recebeu a mensagem tem entrega a relatar: um contato
+                // inválido nunca teve uma.
+                if (tr.dataset.enviado !== '1') return;
+                if (tr.dataset.respondeu === '1') { c.respondeu++; return; }
+                const e = tr.dataset.entrega || '';
+                if (e === 'Lido') c.lido++;
+                else if (e === 'Entregue') c.entregue++;
+                else if (e === 'Não entregue' || e === 'Nao entregue' || e === 'Falhou') c.nao_entregue++;
+            });
+
+            const total = c.respondeu + c.lido + c.entregue + c.nao_entregue;
+            cont.classList.toggle('hidden', !total);
+            cont.classList.toggle('flex', !!total);
+            if (!total) { cont.innerHTML = ''; return; }
+
+            const chip = function (n, simbolo, dica) {
+                if (!n) return '';
+                return '<span class="inline-flex items-center gap-1 cursor-help" title="'
+                    + escapeHtml(dica) + '"><span class="text-sm font-semibold text-gray-700">'
+                    + n + '</span>' + simbolo + '</span>';
+            };
+
+            cont.innerHTML = [
+                chip(c.respondeu, respostaSvg('responderam'),
+                    c.respondeu + ' responderam.'),
+                chip(c.lido, tiqueSvg(true, COR_TIQUE.lido, 'leram'),
+                    c.lido + ' leram e não responderam (dois tiques azuis).'),
+                chip(c.entregue, tiqueSvg(true, COR_TIQUE.entregue, 'entregues'),
+                    c.entregue + ' receberam, sem confirmação de leitura (dois tiques cinzas).'),
+                chip(c.nao_entregue, tiqueSvg(false, COR_TIQUE.nao_entregue, 'não entregues'),
+                    c.nao_entregue + ' não chegaram — confira os números (um tique só).'),
+            ].filter(Boolean).join('');
+        }
+
+        function filtrarPorResposta(id) {
+            filtroResposta = id;
+            document.querySelectorAll('#contacts-tbody tr').forEach(function (tr) {
+                tr.hidden = (id !== 'todos') && (grupoDaLinha(tr) !== id);
+            });
+            atualizarAbasResposta();
+        }
+
+        function ordenarPorResposta() {
+            ordemRespostaAsc = !ordemRespostaAsc;
+            const tbody = document.getElementById('contacts-tbody');
+            const linhas = [].slice.call(tbody.querySelectorAll('tr'));
+            // Sem latencia conhecida vai sempre para o fim, nas duas direcoes:
+            // "nao sei" nao e nem mais rapido nem mais lento que os outros.
+            const chave = function (tr) {
+                const v = tr.dataset.latencia;
+                return v === '' ? Number.POSITIVE_INFINITY : Number(v);
+            };
+            linhas.sort(function (a, b) {
+                const ka = chave(a), kb = chave(b);
+                if (ka === kb) return 0;
+                if (!isFinite(ka)) return 1;
+                if (!isFinite(kb)) return -1;
+                return ordemRespostaAsc ? ka - kb : kb - ka;
+            });
+            linhas.forEach(function (tr) { tbody.appendChild(tr); });
+            const seta = document.getElementById('th-resposta-seta');
+            if (seta) seta.textContent = ordemRespostaAsc ? '↑' : '↓';
+            if (typeof renumberRows === 'function') renumberRows();
+        }
+
+        // Trava local que vale so' entre o clique e a resposta do POST. O
+        // backend reserva a varredura ANTES de responder e empurra o /status,
+        // entao dali em diante quem manda e' o status — mas sem esta flag a
+        // tela ficaria editavel nesse intervalo.
+        let varreduraSolicitada = false;
+
+        async function verificarRespostas() {
+            varreduraSolicitada = true;
+            aplicarTravaGeral(true, MOTIVO_TRAVA_VARREDURA);
+            let ok = false;
+            try {
+                const r = await fetch('/verificar-respostas', { method: 'POST' });
+                const data = await r.json();
+                ok = r.ok;
+                if (!r.ok) alert(data.detail || 'Nao foi possivel verificar as respostas.');
+            } catch (e) {
+                alert('Nao foi possivel verificar as respostas.');
+            } finally {
+                varreduraSolicitada = false;
+                // Nao comecou: destrava agora, em vez de deixar a tela presa
+                // ate o proximo heartbeat.
+                if (!ok) aplicarTravaGeral(false);
+            }
+        }
+
+        // Progresso e termino vem pelo status: o heartbeat de 5s mais um push
+        // explicito do backend nas duas bordas (inicio e fim), para a tela nao
+        // ficar ate 5s travada depois que a varredura ja acabou.
+        //
+        // Esta funcao cuida so' do TEXTO. Habilitar/desabilitar botao e' do
+        // bloco central de travas em updateDashboard, porque a varredura trava
+        // a tela inteira e nao apenas o proprio botao.
+        let varreduraAtiva = false;
+
+        function atualizarProgressoVarredura(v) {
+            const txt = document.getElementById('verificar-progresso');
+            if (!txt) return;
+
+            if (v) {
+                varreduraAtiva = true;
+                txt.classList.remove('hidden');
+                txt.textContent = v.total
+                    ? 'Verificando ' + v.atual + ' de ' + v.total + '...'
+                    : 'Abrindo o WhatsApp...';
+                return;
+            }
+
+            txt.classList.add('hidden');
+            if (varreduraAtiva) {
+                // Acabou agora: recarrega para trazer as colunas gravadas.
+                varreduraAtiva = false;
+                if (typeof loadContacts === 'function') loadContacts();
+            }
+        }
+
 
         function updateDashboard(status) {
             currentState = status.state;
@@ -951,6 +1574,10 @@
 
             // Aviso de rede ruim / WhatsApp Web lento (popup).
             mostrarAvisoLentidao(status.alerta_lentidao);
+            // Mensagens saindo e não chegando: mais grave, popup próprio.
+            mostrarAvisoEntrega(status.alerta_entrega);
+            // Progresso da verificação de respostas (ou o fim dela).
+            atualizarProgressoVarredura(status.varredura);
 
             document.getElementById('status-invalids').textContent = status.total_invalids || 0;
             updateInvalidsTooltip();
@@ -963,21 +1590,32 @@
             updateProgressBar(status);
 
             const isRunning = ['iniciando', 'waiting_qr', 'enviando', 'pausado'].includes(status.state);
-            // Se o envio terminou (não está mais rodando), reseta ambos os flags de transição.
+            // A verificação de respostas trava a tela pelos mesmos motivos do
+            // envio: segura o chrome_profile/ e reescreve a planilha. Sair dela
+            // é só pelo Parar. `varreduraSolicitada` cobre apenas a janela
+            // entre o clique e a resposta do POST.
+            const varrendo = !!status.varredura || varreduraSolicitada;
+            // Se nada mais está rodando, reseta ambos os flags de transição.
             // Isso cobre o caso em que o backend vai de "iniciando" para "finalizado"
             // rapidamente (ex.: nenhum pendente) antes que o frontend tenha recebido
             // um estado "enviando" que resetaria o flag starting.
-            if (!isRunning) {
+            if (!isRunning && !varrendo) {
                 stopping = false;
                 starting = false;
             }
-            const locked = isRunning || starting;
+            const locked = isRunning || starting || varrendo;
             document.getElementById('btn-start').disabled = locked || stopping;
-            // Botão parar fica desabilitado se não está rodando OU se já foi solicitada a parada
-            document.getElementById('btn-stop').disabled = (!isRunning && !starting) || stopping;
+            const btnVerificar = document.getElementById('btn-verificar');
+            // Verificar respostas sai das opções tanto durante a varredura
+            // quanto durante um envio: o backend recusa as duas combinações.
+            if (btnVerificar) btnVerificar.disabled = locked || stopping;
+            // Botão parar fica desabilitado se nada está rodando OU se já foi
+            // solicitada a parada. Durante a varredura ele fica ATIVO — é a
+            // única saída dela, e o /stop já a roteia corretamente.
+            document.getElementById('btn-stop').disabled = (!isRunning && !starting && !varrendo) || stopping;
 
-            // Desabilita edição de contatos durante o envio (ou enquanto está iniciando)
-            lockContactsEditing(locked);
+            // Desabilita edição de contatos durante o envio ou a varredura
+            lockContactsEditing(locked, varrendo && !isRunning ? MOTIVO_TRAVA_VARREDURA : undefined);
             // Mesma regra para configuração e mensagem global: o envio em curso
             // usa os valores que estavam valendo quando começou.
             lockSettingsEditing(locked);
@@ -1268,7 +1906,17 @@
         function escapeHtml(str) {
             const div = document.createElement('div');
             div.textContent = str == null ? '' : String(str);
-            return div.innerHTML;
+            // `innerHTML` escapa &, < e > — mas NAO as aspas. Quase todo uso
+            // desta funcao aqui e' dentro de um atributo (`title="..."`), e ai
+            // uma aspa no texto fecha o atributo e o resto vira markup.
+            //
+            // `pessoa` e `motivo` passam por este caminho e vem da planilha, que
+            // nem sempre foi digitada por quem esta rodando o programa — uma
+            // base de contatos costuma vir de terceiros.
+            //
+            // Seguro nos dois contextos: dentro de um atributo o parser devolve
+            // a aspa, e como texto `&quot;` renderiza como `"`.
+            return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
         // Formata número para exibição: (XX)XXXXX-XXXX
@@ -1400,7 +2048,10 @@
             const m = String(raw).trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
             if (!m) return escapeHtml(raw);
             const [, ano, mes, dia, hora, min] = m;
-            return `${dia}/${mes}/${ano} - ${hora}:${min}`;
+            // Ano com 2 digitos e sem separador: "08/09/26 22:27" em vez de
+            // "08/09/2026 - 22:27". Cabe numa linha numa coluna estreita, que
+            // e' o que a tabela precisa — a data completa fica no title.
+            return `${dia}/${mes}/${ano.slice(2)} ${hora}:${min}`;
         }
 
         // Todas as classes de fundo que podem ser aplicadas a uma linha —
@@ -1492,8 +2143,9 @@
                     </div>
                     <input type="hidden" class="contact-arquivo" value="${escapeHtml(arquivoPath)}">
                 </td>
-                <td class="contact-status px-3 py-1 text-center">${statusBadgeHtml(contact.enviado, contact.invalido, contact.motivo, contact.duplicado, contact.motivo_duplicado)}</td>
-                <td class="contact-data px-1 py-1 text-center text-xs text-gray-500">${formatDataEnvio(contact.data_envio)}</td>
+                <td class="contact-status px-1 py-1 text-center whitespace-nowrap">${statusBadgeHtml(contact.enviado, contact.invalido, contact.motivo, contact.duplicado, contact.motivo_duplicado)}</td>
+                <td class="contact-data px-1 py-1 text-center text-xs text-gray-500 whitespace-nowrap" title="${escapeHtml(contact.data_envio || '')}">${formatDataEnvio(contact.data_envio)}</td>
+                <td class="contact-resposta px-1 py-1 text-center whitespace-nowrap">${respostaBadgeHtml(contact)}</td>
                 <td class="px-1 py-1 text-center">
                     ${resetBtn}
                     <button onclick="this.closest('tr').remove(); markUnsaved(); updateContactsCount();"
@@ -1506,6 +2158,20 @@
             tr.dataset.invalido = contact.invalido ? '1' : '0';
             tr.dataset.duplicado = contact.duplicado ? '1' : '0';
             tr.dataset.dataEnvio = contact.data_envio || '';
+            // Fatos da verificação de respostas. Ficam na linha (e não num
+            // estado paralelo) pelo mesmo motivo dos de cima: a tabela é a
+            // fonte do que será salvo, e um estado à parte sairia de sincronia
+            // assim que o usuário editasse ou removesse uma linha.
+            tr.dataset.entrega = contact.entrega || '';
+            tr.dataset.respondeu = contact.respondeu ? '1' : '0';
+            tr.dataset.dataResposta = contact.data_resposta || '';
+            tr.dataset.verificadoEm = contact.verificado_em || '';
+            // O texto da resposta so' faz a viagem de ida e volta (nao e'
+            // exibido ainda). Sem ele aqui, salvar contatos apagaria a coluna
+            // — o editor reescreve a planilha inteira a partir da tela.
+            tr.dataset.respostaTexto = contact.resposta_texto || '';
+            tr.dataset.latencia = (contact.latencia_seg === null || contact.latencia_seg === undefined)
+                ? '' : String(contact.latencia_seg);
             tr.dataset.motivo = contact.motivo || '';
             tr.dataset.motivoDuplicado = contact.motivo_duplicado || '';
 
@@ -1519,9 +2185,20 @@
             tr.dataset.invalido = '0';
             tr.dataset.dataEnvio = '';
             tr.dataset.motivo = '';
+            // A leitura da varredura descrevia a mensagem ANTERIOR. Reenfileirar
+            // o contato sem limpa-la deixaria "Respondeu" de uma campanha
+            // antiga colado numa linha que ainda nem foi enviada de novo.
+            tr.dataset.entrega = '';
+            tr.dataset.respondeu = '0';
+            tr.dataset.dataResposta = '';
+            tr.dataset.verificadoEm = '';
+            tr.dataset.respostaTexto = '';
+            tr.dataset.latencia = '';
             // Atualiza a exibição
             tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(false, false);
             tr.querySelector('.contact-data').textContent = '—';
+            const celResposta = tr.querySelector('.contact-resposta');
+            if (celResposta) celResposta.innerHTML = respostaBadgeHtml({ entrega: '', respondeu: false });
             btn.classList.add('hidden');
             applyRowColor(tr, false, '');
             markUnsaved();
@@ -1967,10 +2644,38 @@
             }
         }
 
+        // Primeira execução: ainda não existe planilha nenhuma, e isso é um
+        // estado NORMAL, não uma falha. Antes da 1.4.8 o app saía de fábrica com
+        // uma planilha de teste dentro da pasta do programa, então esta tela
+        // nunca aparecia; agora os dados moram fora dela (ver caminhos.py) e a
+        // primeira abertura é legitimamente vazia.
+        //
+        // Não pode passar por setContactsLoadError: aquilo trava o "Salvar
+        // Alterações" para impedir que uma tela incompleta reescreva a planilha
+        // — proteção certa para um GET que falhou, e errada aqui, porque
+        // travaria justamente quem quer começar do zero pelo "Adicionar Contato".
+        function mostrarPrimeiraVez() {
+            const statusEl = document.getElementById('upload-status');
+            if (!statusEl || statusEl.textContent.trim()) return;
+            statusEl.textContent = 'Nenhuma planilha carregada ainda. '
+                + 'Use "Carregar Planilha" para abrir a sua, ou "Adicionar Contato" '
+                + 'para montar a lista aqui mesmo.';
+            statusEl.className = 'px-4 pb-2 text-sm text-gray-500';
+        }
+
         async function loadContacts(tentativa = 1) {
             const MAX_TENTATIVAS = 3;
             try {
                 const response = await fetch('/contacts');
+                // 404 com a tabela ainda vazia é primeira execução. Com a tabela
+                // preenchida é outra coisa (a planilha sumiu do disco no meio da
+                // sessão), e aí o erro vale: cai no catch junto com o resto.
+                if (response.status === 404
+                        && document.querySelectorAll('#contacts-tbody tr').length === 0) {
+                    setContactsLoadError(null);
+                    mostrarPrimeiraVez();
+                    return false;
+                }
                 if (!response.ok) throw new Error('HTTP ' + response.status);
                 const data = await response.json();
                 const contatos = (data && data.contacts) || [];
@@ -1999,6 +2704,10 @@
                     updateSortIndicators();
                     updateContactsCount();
                     updateInvalidsTooltip();
+                    // Abas da verificacao de respostas. Ficam ocultas ate a
+                    // primeira varredura: aba vazia so confunde.
+                    filtroResposta = 'todos';
+                    atualizarAbasResposta();
                     updateGlobalMessageHints();
                     document.getElementById('contacts-section').classList.remove('hidden');
                 } catch (errUi) {
@@ -2044,6 +2753,13 @@
                     invalido: tr.dataset.invalido === '1',
                     data_envio: tr.dataset.dataEnvio || '',
                     motivo: tr.dataset.motivo || '',
+                    // Fatos da varredura: o backend reescreve a planilha
+                    // inteira a partir daqui, entao o que nao subir e' apagado.
+                    respondeu: tr.dataset.respondeu === '1',
+                    data_resposta: tr.dataset.dataResposta || '',
+                    entrega: tr.dataset.entrega || '',
+                    verificado_em: tr.dataset.verificadoEm || '',
+                    resposta_texto: tr.dataset.respostaTexto || '',
                 });
             });
             return contacts;
@@ -2254,15 +2970,26 @@
         }
 
         // --- Controles ---
+        // As três seções de ajuste, na ordem em que aparecem na barra lateral.
+        // Enquanto abertas, empurram o log para fora da tela: ele é o último
+        // bloco da coluna e é quem tem `flex-1`, ou seja, fica com a sobra.
+        const SECOES_DE_AJUSTE = ['config-details', 'global-msg-details'];
+
+        function recolherAjustesParaMostrarOLog() {
+            // Só o <details>. Nada aqui mexe em valor, toggle ou estado de
+            // envio — se recolher falhasse, o envio seguiria igual.
+            SECOES_DE_AJUSTE.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.open = false;
+            });
+        }
+
         async function startSending() {
             const statusEl = document.getElementById('control-status');
 
             // Bloqueia imediatamente (antes de qualquer request) para evitar flicker
             starting = true;
-            document.getElementById('btn-start').disabled = true;
-            document.getElementById('btn-stop').disabled = false;
-            lockContactsEditing(true);
-            lockSettingsEditing(true);
+            aplicarTravaGeral(true);
 
             // Os três saves abaixo são o retrato do que o usuário configurou e
             // acontecem ANTES do /start, com o sender ainda parado — a trava de
@@ -2282,10 +3009,7 @@
                 // Sem confirmação do servidor não há garantia de qual config será usada
                 // (ex.: comportamento humano ficaria no padrão OFF sem o usuário saber).
                 starting = false;
-                document.getElementById('btn-start').disabled = false;
-                document.getElementById('btn-stop').disabled = true;
-                lockContactsEditing(false);
-                lockSettingsEditing(false);
+                aplicarTravaGeral(false);
                 statusEl.textContent = 'Não foi possível salvar a configuração no servidor. Envio cancelado.';
                 statusEl.className = 'mt-2 text-sm text-red-600';
                 return;
@@ -2302,10 +3026,7 @@
                 if (!saved) {
                     // Desfaz o bloqueio
                     starting = false;
-                    document.getElementById('btn-start').disabled = false;
-                    document.getElementById('btn-stop').disabled = true;
-                    lockContactsEditing(false);
-                    lockSettingsEditing(false);
+                    aplicarTravaGeral(false);
                     statusEl.textContent = 'Erro ao salvar contatos. Envio cancelado.';
                     statusEl.className = 'mt-2 text-sm text-red-600';
                     return;
@@ -2317,25 +3038,28 @@
                 const data = await response.json();
                 if (response.ok) {
                     resetAllContactsStatus();
+                    // Daqui em diante o que o usuário precisa acompanhar é o
+                    // log. As seções de ajuste já estão travadas pelo envio, e
+                    // abertas só ocupam a altura que o log ia usar.
+                    //
+                    // Recolher só no SUCESSO é deliberado: um /start recusado
+                    // (licença, anexo global sumido, planilha vazia) manda o
+                    // usuário de volta justamente para essas seções, e escondê-las
+                    // seria esconder o que ele tem que corrigir.
+                    recolherAjustesParaMostrarOLog();
                     statusEl.textContent = 'Envio iniciado. Escaneie o QR Code no navegador.';
                     statusEl.className = 'mt-2 text-sm text-green-600';
                 } else {
                     // Falhou: desfaz o bloqueio
                     starting = false;
-                    document.getElementById('btn-start').disabled = false;
-                    document.getElementById('btn-stop').disabled = true;
-                    lockContactsEditing(false);
-                    lockSettingsEditing(false);
+                    aplicarTravaGeral(false);
                     statusEl.textContent = data.detail;
                     statusEl.className = 'mt-2 text-sm text-red-600';
                 }
             } catch (err) {
                 // Erro de rede: desfaz o bloqueio
                 starting = false;
-                document.getElementById('btn-start').disabled = false;
-                document.getElementById('btn-stop').disabled = true;
-                lockContactsEditing(false);
-                lockSettingsEditing(false);
+                aplicarTravaGeral(false);
                 statusEl.textContent = `Erro: ${err.message}`;
                 statusEl.className = 'mt-2 text-sm text-red-600';
             }
@@ -2351,7 +3075,9 @@
                 const response = await fetch('/stop', { method: 'POST' });
                 const data = await response.json();
                 if (response.ok) {
-                    statusEl.textContent = 'Parada solicitada. Finalizando envio atual...';
+                    statusEl.textContent = varreduraAtiva
+                        ? 'Parada solicitada. Encerrando a verificação...'
+                        : 'Parada solicitada. Finalizando envio atual...';
                     statusEl.className = 'mt-2 text-sm text-amber-600';
                 } else {
                     // Falhou: reabilita o botão
@@ -2454,6 +3180,161 @@
         }
 
 
+        // --- Anexo Global ---
+        // Espelha a Mensagem Global, com uma diferenca deliberada: o anexo e
+        // gravado NO SERVIDOR assim que muda, nao no localStorage. A mensagem o
+        // usuario reconhece e reescreve em segundos; o anexo e um caminho de
+        // arquivo que ele nao tem como adivinhar, e perde-lo calado faz a
+        // campanha inteira sair sem imagem.
+        // Caminho do arquivo no servidor (o que vai para a planilha/sender),
+        // nao o nome que o usuario ve.
+        let anexoGlobalPath = '';
+
+        function isGlobalAnexoActive() {
+            return document.getElementById('global-anexo-toggle').checked;
+        }
+
+        // O anexo e parte da mensagem global: sem ela ativa, nem o proprio
+        // toggle do anexo fica acessivel. Quem garante isso de verdade e o
+        // backend (`_anexo_global_ativo` exige as duas), porque tela nao e
+        // garantia — uma requisicao fora dela chegaria igual.
+        function aplicarEstadoAnexoGlobal() {
+            const msgAtiva = isGlobalMessageActive();
+            const active = msgAtiva && isGlobalAnexoActive();
+            const toggle = document.getElementById('global-anexo-toggle');
+            const btnEscolher = document.getElementById('btn-global-anexo-escolher');
+            const label = document.getElementById('global-anexo-toggle-label');
+            if (toggle) toggle.disabled = !msgAtiva || settingsLocked;
+            if (btnEscolher) btnEscolher.disabled = !active || settingsLocked;
+            if (label) {
+                label.textContent = active ? 'ON' : 'OFF';
+                label.className = active
+                    ? 'text-xs text-green-600 font-semibold'
+                    : 'text-xs text-gray-400';
+            }
+        }
+
+        async function salvarAnexoGlobal(arquivo, ativo) {
+            const statusEl = document.getElementById('global-anexo-status');
+            try {
+                const resp = await fetch('/global-attachment', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ arquivo: arquivo, ativo: ativo }),
+                });
+                const data = await resp.json();
+                if (!resp.ok) {
+                    statusEl.textContent = data.detail || 'Erro ao salvar o anexo global.';
+                    statusEl.className = 'mt-1 text-xs text-red-600';
+                    return false;
+                }
+                statusEl.textContent = ativo && arquivo
+                    ? 'Anexo global ativo.'
+                    : 'Anexo global desativado.';
+                statusEl.className = 'mt-1 text-xs text-gray-400';
+                return true;
+            } catch (err) {
+                statusEl.textContent = 'Erro de conexao ao salvar o anexo global.';
+                statusEl.className = 'mt-1 text-xs text-red-600';
+                return false;
+            }
+        }
+
+        function toggleGlobalAnexo() {
+            aplicarEstadoAnexoGlobal();
+            salvarAnexoGlobal(anexoGlobalPath, isGlobalAnexoActive());
+            updateGlobalMessageHints();
+            updateEstimativa();
+        }
+
+        // Chamado quando a MENSAGEM global e desligada. O caminho do arquivo
+        // sobrevive de proposito: religar a mensagem global nao pode obrigar o
+        // usuario a escolher o arquivo de novo.
+        function desligarAnexoComMensagemGlobal() {
+            const toggle = document.getElementById('global-anexo-toggle');
+            if (!toggle || !toggle.checked) return false;
+            toggle.checked = false;
+            return true;
+        }
+
+        function mostrarAnexoGlobal(path, nome, existe) {
+            anexoGlobalPath = path || '';
+            const nomeEl = document.getElementById('global-anexo-nome');
+            const btnRemover = document.getElementById('btn-global-anexo-remover');
+            if (anexoGlobalPath) {
+                nomeEl.textContent = nome || anexoGlobalPath.split(/[/\\]/).pop();
+                nomeEl.title = anexoGlobalPath;
+                nomeEl.className = existe === false
+                    ? 'text-xs text-red-600 truncate flex-1'
+                    : 'text-xs text-gray-700 truncate flex-1';
+                btnRemover.classList.remove('hidden');
+            } else {
+                nomeEl.textContent = 'Nenhum arquivo';
+                nomeEl.title = '';
+                nomeEl.className = 'text-xs text-gray-500 truncate flex-1';
+                btnRemover.classList.add('hidden');
+            }
+        }
+
+        function selecionarAnexoGlobal() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.jpg,.jpeg,.png,.pdf,.mp3,.ogg,.opus';
+            input.onchange = async () => {
+                if (!input.files.length) return;
+                const statusEl = document.getElementById('global-anexo-status');
+                statusEl.textContent = 'Enviando arquivo...';
+                statusEl.className = 'mt-1 text-xs text-blue-600';
+
+                const formData = new FormData();
+                formData.append('file', input.files[0]);
+                try {
+                    const resp = await fetch('/upload-media', { method: 'POST', body: formData });
+                    const data = await resp.json();
+                    if (!resp.ok) {
+                        statusEl.textContent = data.detail || 'Erro ao enviar o arquivo.';
+                        statusEl.className = 'mt-1 text-xs text-red-600';
+                        return;
+                    }
+                    mostrarAnexoGlobal(data.path, data.filename, true);
+                    await salvarAnexoGlobal(data.path, isGlobalAnexoActive());
+                    updateGlobalMessageHints();
+                    updateEstimativa();
+                } catch (err) {
+                    statusEl.textContent = 'Erro de conexao ao enviar o arquivo.';
+                    statusEl.className = 'mt-1 text-xs text-red-600';
+                }
+            };
+            input.click();
+        }
+
+        async function removerAnexoGlobal() {
+            mostrarAnexoGlobal('', '', true);
+            await salvarAnexoGlobal('', isGlobalAnexoActive());
+            updateGlobalMessageHints();
+            updateEstimativa();
+        }
+
+        async function loadGlobalAnexo() {
+            try {
+                const resp = await fetch('/global-attachment');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                mostrarAnexoGlobal(data.arquivo, data.nome, data.existe);
+                document.getElementById('global-anexo-toggle').checked = !!data.ativo;
+                aplicarEstadoAnexoGlobal();
+                // O servidor e' a fonte da verdade aqui, e ele ja desliga o
+                // anexo sozinho quando o arquivo sumiu do disco. So avisamos.
+                if (data.arquivo && data.existe === false) {
+                    const statusEl = document.getElementById('global-anexo-status');
+                    statusEl.textContent = 'O arquivo do anexo global nao esta mais no disco. Escolha outro.';
+                    statusEl.className = 'mt-1 text-xs text-red-600';
+                }
+            } catch (e) {
+                // Silencioso: sem anexo global a tela funciona igual.
+            }
+        }
+
         // --- Media por Contato ---
         let _mediaTargetRow = null; // Referência à linha que está recebendo mídia
 
@@ -2508,6 +3389,9 @@
                     _mediaTargetRow.querySelector('.contact-arquivo-nome').title = allPaths;
                     // Mostra botão de remover
                     _mediaTargetRow.querySelector('.contact-arquivo-btn').closest('td').querySelector('button:last-of-type').classList.remove('hidden');
+                    // O arquivo proprio afasta o anexo global desta linha, e o
+                    // pin precisa parar de prometer "+ anexo".
+                    updateGlobalMessageHints();
                 }
 
                 _mediaTargetRow = null;
@@ -2518,6 +3402,8 @@
         function clearMediaForContact(btn) {
             const tr = btn.closest('tr');
             tr.querySelector('.contact-arquivo').value = '';
+            // Sem arquivo proprio, a linha volta a receber o anexo global.
+            updateGlobalMessageHints();
             tr.querySelector('.contact-arquivo-nome').innerHTML = '<span class="text-gray-300">—</span>';
             tr.querySelector('.contact-arquivo-nome').title = '';
             btn.classList.add('hidden');
@@ -2599,6 +3485,10 @@
 
         function toggleGlobalMessage() {
             const active = isGlobalMessageActive();
+            // Desligou a mensagem global: o anexo vai junto, porque ele e parte
+            // dela. Precisa acontecer ANTES do POST abaixo — senao a tela
+            // mostraria o anexo desligado e o servidor ainda o teria ligado.
+            if (!active) desligarAnexoComMensagemGlobal();
             const textarea = document.getElementById('global-message');
             const label = document.getElementById('global-msg-toggle-label');
 
@@ -2620,25 +3510,80 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ mensagem, ativa: active }),
                 }).catch(() => {});
+                // Este POST leva o texto junto, então ele também passa a ser
+                // o que o servidor tem — senão o blur seguinte reenviaria igual.
+                _mensagemGlobalSalva = mensagem;
             }
 
             // Atualiza hints nos campos de mensagem vazios
             updateGlobalMessageHints();
         }
 
+        // Último texto que o servidor confirmou. Serve para o blur não
+        // disparar um POST a cada vez que o usuário só passa pelo campo.
+        let _mensagemGlobalSalva = null;
+
+        function onGlobalMessageBlur() {
+            const atual = document.getElementById('global-message').value;
+            if (atual === _mensagemGlobalSalva) return;
+            // Marca ANTES de salvar. `saveGlobalMessage` e' assincrona, entao
+            // duas saidas seguidas do campo (clicar fora e voltar) mandariam o
+            // mesmo texto duas vezes se a marca so' fosse gravada no fim.
+            // Falhando, o proprio save zera isto e a proxima saida tenta de novo.
+            _mensagemGlobalSalva = atual;
+            saveGlobalMessage();
+        }
+
+        // Reavalia o pin enquanto o usuário digita a mensagem global.
+        //
+        // Só quando o "tem texto" VIRA, não a cada tecla: o pin depende de o
+        // texto estar vazio ou não, e nada mais. `updateGlobalMessageHints`
+        // percorre todas as linhas da tabela, então numa planilha grande
+        // chamá-la a cada caractere travaria a digitação por nada.
+        let _globalTinhaTexto = null;
+
+        function onGlobalMessageInput() {
+            const tem = !!document.getElementById('global-message').value.trim();
+            if (tem === _globalTinhaTexto) return;
+            _globalTinhaTexto = tem;
+            updateGlobalMessageHints();
+        }
+
+        // O pin na linha do contato diz o que ELE vai receber, e desde que o
+        // anexo virou parte do pacote isso deixou de ser só o texto: um
+        // contato de campo em branco recebe mensagem + anexo. Dizer só
+        // "mensagem global" esconderia metade do que vai sair.
         function updateGlobalMessageHints() {
-            const active = isGlobalMessageActive();
+            const textoGlobalAtivo = isGlobalMessageActive()
+                && !!document.getElementById('global-message').value.trim();
+            const anexoGlobalLigado = isGlobalMessageActive()
+                && isGlobalAnexoActive() && !!anexoGlobalPath;
+
             const rows = document.querySelectorAll('#contacts-tbody tr');
             rows.forEach(tr => {
                 const msgField = tr.querySelector('.contact-mensagem');
                 if (!msgField) return;
-                if (active && !msgField.value.trim()) {
-                    msgField.placeholder = '📌 Mensagem global será usada';
-                    msgField.classList.add('placeholder-amber-500');
-                } else {
-                    msgField.placeholder = '';
-                    msgField.classList.remove('placeholder-amber-500');
-                }
+
+                // O aviso e' calculado POR LINHA, nao uma vez para todas: duas
+                // linhas com a mensagem em branco podem receber coisas
+                // diferentes, porque o arquivo proprio de uma delas afasta o
+                // anexo global (ver `_resolver_globais`). Um aviso unico dizia
+                // "+ anexo" para quem ia receber o arquivo dela mesma.
+                const arquivoField = tr.querySelector('.contact-arquivo');
+                const temArquivoProprio = !!(arquivoField && arquivoField.value.trim());
+
+                // O pacote so' alcanca quem deixou a mensagem em branco.
+                const noPacote = !msgField.value.trim();
+                const recebeTexto = noPacote && textoGlobalAtivo;
+                const recebeAnexo = noPacote && anexoGlobalLigado && !temArquivoProprio;
+
+                let aviso = '';
+                if (recebeTexto && recebeAnexo) aviso = '📌 Mensagem global + anexo serão enviados';
+                else if (recebeTexto) aviso = '📌 Mensagem global será usada';
+                else if (recebeAnexo) aviso = '📌 Anexo global será enviado';
+
+                msgField.placeholder = aviso;
+                msgField.classList.toggle('placeholder-amber-500', !!aviso);
             });
         }
 
@@ -2665,13 +3610,23 @@
                     statusEl.className = 'text-xs text-green-600';
                     // Salva no localStorage como backup
                     localStorage.setItem('whatsapp_global_message', mensagem);
+                    _mensagemGlobalSalva = mensagem;
+                    // O pin depende do texto: com anexo ligado e texto vazio
+                    // ele diz "só o anexo", e escrever o texto tem que mudar
+                    // isso. Sem esta linha, quem escrevia a mensagem e salvava
+                    // continuava vendo "Anexo global será enviado" — a tela
+                    // prometendo menos do que o envio ia fazer.
+                    updateGlobalMessageHints();
                 } else {
                     statusEl.textContent = data.detail || 'Erro';
                     statusEl.className = 'text-xs text-red-600';
+                    // Nao gravou: a proxima saida do campo tem que tentar de novo.
+                    _mensagemGlobalSalva = null;
                 }
             } catch (err) {
                 statusEl.textContent = `Erro: ${err.message}`;
                 statusEl.className = 'text-xs text-red-600';
+                _mensagemGlobalSalva = null;
             }
             setTimeout(() => { statusEl.textContent = ''; }, 3000);
         }
@@ -2684,6 +3639,10 @@
                     if (data.mensagem) {
                         document.getElementById('global-message').value = data.mensagem;
                     }
+                    // Acabou de vir do servidor: é exatamente o que ele tem.
+                    // Sem isto, só passar pelo campo já dispararia um POST
+                    // reenviando o mesmo texto.
+                    _mensagemGlobalSalva = data.mensagem || '';
                     if (data.ativa) {
                         document.getElementById('global-msg-toggle').checked = true;
                         toggleGlobalMessage();
@@ -2722,6 +3681,8 @@
             checkSessionStatus();
             // Carrega mensagem global
             loadGlobalMessage();
+            // Carrega anexo global (este vem do servidor, nao do localStorage)
+            loadGlobalAnexo();
             // Verifica atualizações
             checkForUpdates();
             // Carrega o histórico persistente de envios (hoje/semana/mês)
@@ -2754,10 +3715,56 @@
         }
 
         // --- Licença ---
+        // Servidor fora do ar não é licença inválida. Enquanto estiver offline,
+        // repetimos a checagem sozinhos; quando o servidor volta, recarregamos a
+        // página inteira (as outras chamadas de inicialização já falharam e não
+        // vale remontar cada uma na mão).
+        let servidorOffline = false;
+        let offlineRetryTimer = null;
+
+        function mostrarServidorOffline() {
+            servidorOffline = true;
+            document.getElementById('license-overlay').classList.add('hidden');
+            document.getElementById('offline-overlay').classList.remove('hidden');
+            if (offlineRetryTimer === null) {
+                offlineRetryTimer = setInterval(checkLicense, 3000);
+            }
+        }
+
         async function checkLicense() {
             const overlay = document.getElementById('license-overlay');
+            let response;
             try {
-                const response = await fetch('/license/status');
+                response = await fetch('/license/status', { cache: 'no-store' });
+            } catch (err) {
+                // Erro de rede = o programa está fechado (ou ainda subindo).
+                mostrarServidorOffline();
+                return;
+            }
+
+            // Respondeu qualquer coisa: o programa está de pé.
+            document.getElementById('offline-overlay').classList.add('hidden');
+
+            if (servidorOffline) {
+                // O servidor voltou: recarrega para reiniciar contatos, SSE e o resto.
+                if (offlineRetryTimer !== null) clearInterval(offlineRetryTimer);
+                offlineRetryTimer = null;
+                servidorOffline = false;
+                location.reload();
+                return;
+            }
+
+            if (!response.ok) {
+                // O servidor respondeu, mas a verificação quebrou nele (500).
+                // Continua pedindo a chave, e diz que foi erro — não "licença expirada".
+                overlay.classList.remove('hidden');
+                document.getElementById('license-status-msg').textContent =
+                    'Não foi possível verificar a licença agora (erro no servidor). '
+                    + 'Feche e abra o programa; se continuar, fale com o suporte.';
+                return;
+            }
+
+            try {
                 const data = await response.json();
 
                 if (data.valida) {
@@ -2785,7 +3792,9 @@
                     overlay.classList.remove('hidden');
                 }
             } catch (err) {
-                // Se erro de rede, tenta cache offline (o backend faz isso)
+                // A resposta chegou mas não deu para interpretar. O servidor
+                // está de pé, então isto é problema de licença/versão, não offline.
+                console.warn('Resposta inválida de /license/status:', err);
                 overlay.classList.remove('hidden');
             }
         }

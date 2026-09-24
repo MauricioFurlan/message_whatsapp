@@ -8,6 +8,7 @@ import math
 import os
 import platform
 import random
+import re
 import subprocess
 import time
 import threading
@@ -36,6 +37,10 @@ from selenium.common.exceptions import (
 
 import win_dialog
 import stats_log
+import caminhos
+import linha_conversa
+import seletores
+import varredura
 from contact_logic import clean_number, validate_contact, get_pending_contacts, apply_deduplication
 
 # Logger de arquivo para diagnóstico (compartilhado com app.py)
@@ -74,6 +79,17 @@ class WhatsAppNotLoadedError(RuntimeError):
 
     Levantada sempre ANTES de qualquer entrega (nenhum anexo enviado, nenhuma
     tecla digitada), o que torna seguro retentar a navegação.
+    """
+
+
+class MensagemNaoSaiuError(RuntimeError):
+    """
+    A bolha foi criada mas a mensagem nao saiu da maquina.
+
+    Diferente de todas as outras falhas: aqui o WhatsApp Web ACEITOU a
+    mensagem (o campo esvaziou, que e' tudo o que `_confirm_message_sent`
+    sabe) e depois marcou a bolha com o container de falha. Do ponto de vista
+    do app o envio tinha dado certo — era exatamente este o buraco.
     """
 
 
@@ -266,12 +282,14 @@ class WhatsAppSender:
         log_callback: Optional[Callable[[str], None]] = None,
         contact_update_callback: Optional[Callable[[int, str, str, str], None]] = None,
         global_message: str = "",
+        global_attachment: str = "",
     ):
         self.excel_path = excel_path
         self.config = config
         self.log_callback = log_callback or print
         self.contact_update_callback = contact_update_callback
         self.global_message = global_message
+        self.global_attachment = global_attachment
 
         # Estado interno (thread-safe)
         self._lock = threading.Lock()
@@ -307,6 +325,29 @@ class WhatsAppSender:
         self._falhas_app: int = 0
         self._alerta_lentidao: Optional[dict] = None
         self._alerta_lentidao_em: int = 0  # nº de falhas quando o último aviso saiu
+        # Alarme de ENTREGA — risco diferente do de lentidão, e mais grave.
+        #
+        # Lentidão é a conversa não abrir: custa relógio. Aqui é a mensagem
+        # SAIR e não chegar, que é a assinatura de o número estar sendo
+        # limitado ou bloqueado pelo WhatsApp — o risco existencial do produto,
+        # e hoje nada o detecta. Descobrir na mensagem 40 e poder parar é a
+        # diferença entre perder um envio e perder o número do cliente.
+        #
+        # Os números enviados NESTA execução, em ordem, e o último estado lido
+        # de cada um. Só entram aqui contatos com envio de fato concluído: um
+        # contato inválido nunca teve entrega (AttachmentError não manda o
+        # texto, WhatsAppNotLoadedError é anterior a qualquer entrega), e ler a
+        # linha dele atribuiria a esta campanha o estado de uma conversa antiga.
+        self._enviados_nesta_execucao: list = []
+        self._estado_de_entrega: dict = {}
+        self._alerta_entrega: Optional[dict] = None
+        self._alerta_entrega_em: int = 0
+        # Verificação de respostas: estado PRÓPRIO, separado de `_running`.
+        # `is_running()` significa "está enviando" e é o que congela config e
+        # contatos; a varredura não é envio, mas disputa o mesmo
+        # `chrome_profile/` — então quem chama recusa um enquanto o outro roda.
+        self._varrendo: bool = False
+        self._varredura: Optional[dict] = None
         # Quantas mensagens este envio pretende mandar: min(total_msgs configurado,
         # pendentes reais). É o denominador que o painel deve mostrar — sem isso o
         # "Pendentes" exibia a planilha inteira mesmo com o usuário pedindo 5.
@@ -328,6 +369,10 @@ class WhatsAppSender:
         self._elapsed_seconds: Optional[float] = None
         self._running = False
         self._stop_event = threading.Event()
+        # Contatos seguidos em que o campo de digitação nunca apareceu. Um
+        # sozinho não diz nada (número inválido, rede caída, chat lento); vários
+        # em sequência, sim — ver _registrar_campo_mensagem_ausente().
+        self._falhas_campo_mensagem = 0
 
         # Selenium
         self._driver: Optional[webdriver.Chrome] = None
@@ -375,6 +420,7 @@ class WhatsAppSender:
                 "next_leva_size": self._next_leva_size,
                 "elapsed_seconds": self._elapsed_seconds,
                 "alerta_lentidao": dict(self._alerta_lentidao) if self._alerta_lentidao else None,
+                "alerta_entrega": dict(self._alerta_entrega) if self._alerta_entrega else None,
             }
 
     def _contar_invalido(self, motivo: str):
@@ -408,6 +454,238 @@ class WhatsAppSender:
     # Depois do primeiro aviso, só repete a cada N falhas novas — o popup
     # existe para informar, não para atrapalhar quem está acompanhando a tela.
     _ALERTA_REARME_A_CADA = 5
+
+    # Alarme de entrega: quando disparar.
+    # A amostra mínima é maior que a do aviso de lentidão porque o sinal é
+    # naturalmente atrasado — logo depois de enviar, é NORMAL a mensagem estar
+    # só "enviada". Só um bloco de mensagens que envelheceu sem ser entregue
+    # diz alguma coisa.
+    _ENTREGA_AMOSTRA_MINIMA = 8
+    _ENTREGA_TAXA_NAO_ENTREGUE = 0.70
+    _ENTREGA_REARME_A_CADA = 5
+    # Idade mínima de uma mensagem para ela contar. Abaixo disso, "não
+    # entregue" é só o WhatsApp ainda trabalhando, não sintoma de bloqueio.
+    _ENTREGA_IDADE_MINIMA_SEG = 120
+
+    # Quantos contatos seguidos sem o campo de digitação aparecer bastam para
+    # tratar como falha ESTRUTURAL (e não como azar de contato). Três é o
+    # menor número que uma sequência de números inválidos não explica bem.
+    _FALHAS_CAMPO_PARA_ESTRUTURAL = 3
+
+    # Verificação na pausa: quando vale a pena rodar.
+    # A pausa entre rajadas é ociosa (90-275s no caso de 118 msgs / 240min),
+    # mas nem sempre existe: com a janela apertada, _generate_burst_plan cai no
+    # ramo de fallback e todo intervalo vira DELAY_INTRA_MIN. Por isso a
+    # leitura é OPORTUNISTA — só roda se houver folga de verdade.
+    _VERIFICACAO_PAUSA_MINIMA_SEG = 45
+    # Teto de tempo da leitura, como fração da pausa. Estourar a pausa
+    # atrasaria a próxima rajada e faria o envio passar do tempo prometido ao
+    # usuário — o orçamento do plano é um total, não uma sugestão.
+    _VERIFICACAO_FRACAO_DA_PAUSA = 0.25
+
+    def _registrar_envio_para_entrega(self, numero: str, pessoa: str) -> None:
+        """Anota um envio concluído para que a pausa possa conferir a entrega."""
+        chave = clean_number(numero)
+        if not chave:
+            return
+        with self._lock:
+            if chave not in self._estado_de_entrega:
+                self._enviados_nesta_execucao.append(chave)
+            self._estado_de_entrega[chave] = {
+                "pessoa": pessoa,
+                "enviado_em": time.time(),
+                "estado": None,
+            }
+
+    def _verificar_entregas_na_pausa(self, pause_after: float) -> None:
+        """
+        Lê a lista de conversas durante a pausa entre rajadas e confere se as
+        mensagens já enviadas foram entregues.
+
+        Por que aqui: a pausa é ociosa por construção, e mandar mensagem joga a
+        conversa para o TOPO do `#pane-side` — então os contatos da rajada que
+        acabou de rodar são as primeiras linhas, já renderizadas, ao lado da
+        conversa aberta. É um `execute_script`, sub-segundo, sem interação
+        nenhuma: nada de digitar na busca, o que descaracterizaria a pausa
+        justamente no que ela existe para simular (comportamento humano).
+
+        Três regras que não podem regredir:
+
+        1. **Não pode derrubar um envio.** Qualquer exceção aqui é engolida.
+           Um StaleElementReference no código de leitura cascateando para o
+           laço de envio marcaria contato como inválido ou mataria a rajada.
+        2. **Não pode estourar a pausa.** Só roda se a pausa for folgada, e
+           desiste sozinha ao passar do orçamento.
+        3. **Não pode segurar o botão Parar.** Sai na hora se `_should_stop()`.
+
+        Deliberadamente NÃO conta na métrica de `_registrar_resultado_de_abertura`:
+        o tempo gasto aqui é nosso, não do WhatsApp, e poluí-la faria o aviso
+        de lentidão disparar por causa do nosso próprio código.
+        """
+        if pause_after < self._VERIFICACAO_PAUSA_MINIMA_SEG or self._should_stop():
+            return
+        with self._lock:
+            se_tem_o_que_ler = bool(self._enviados_nesta_execucao)
+        if not se_tem_o_que_ler or not self._driver:
+            return
+
+        limite = time.monotonic() + pause_after * self._VERIFICACAO_FRACAO_DA_PAUSA
+        try:
+            linhas = linha_conversa.ler_linhas(self._driver)
+            if time.monotonic() > limite or self._should_stop():
+                return
+            self._absorver_leitura_de_entrega(linhas)
+        except Exception as e:
+            # Silencioso de propósito: é uma leitura oportunista. Falhar aqui
+            # não pode virar ruído para o usuário nem interferir no envio.
+            file_logger.debug(f"[entrega] leitura na pausa falhou: {e!r}")
+
+    def _indice_de_nomes_de_entrega(self) -> dict:
+        """
+        chave de nome -> número, só para nomes que identificam UM envio.
+
+        Chamar com o `_lock` tomado. Ver `_absorver_leitura_de_entrega`.
+        """
+        por_nome = {}
+        for numero, info in self._estado_de_entrega.items():
+            chave = linha_conversa.chave_de_nome(info.get("pessoa"))
+            if len(chave) < linha_conversa.MIN_CARACTERES_NOME:
+                continue
+            por_nome.setdefault(chave, set()).add(numero)
+        return {c: next(iter(n)) for c, n in por_nome.items() if len(n) == 1}
+
+    def _absorver_leitura_de_entrega(self, linhas: list) -> None:
+        """
+        Casa as linhas lidas com os envios desta execução e arma o alarme.
+
+        Contato SALVO na agenda aparece na lista pelo nome, sem número nenhum.
+        Casar só pelo número deixava esses contatos fora da amostra — e a
+        amostra é o que decide se o alarme dispara, então uma lista de contatos
+        majoritariamente salvos podia nunca alcançar
+        `_ENTREGA_AMOSTRA_MINIMA` e calar o alarme inteiro. O nome entra como
+        reserva, e só quando identifica um envio só: nome repetido não é
+        identificador, e atribuir a entrega errada aqui empurraria o alarme
+        para um lado ou para o outro sem deixar rastro.
+        """
+        with self._lock:
+            nomes = self._indice_de_nomes_de_entrega()
+            for linha in linhas:
+                numero = linha.get("numero")
+                if not numero:
+                    numero = self._numero_por_nome(linha.get("titulo"), nomes)
+                if not numero or numero not in self._estado_de_entrega:
+                    # Conversa que não é desta campanha, ou nome ambíguo
+                    # demais para servir de prova: não diz nada aqui.
+                    continue
+                estado = linha.get("estado")
+                if estado == linha_conversa.INDETERMINADO:
+                    # Extração quebrada não é evidência: manter o que já se
+                    # sabia é melhor que gravar um estado inventado.
+                    continue
+                self._estado_de_entrega[numero]["estado"] = estado
+
+        self._avaliar_alarme_de_entrega()
+
+    @staticmethod
+    def _numero_por_nome(titulo, nomes: dict) -> str:
+        """O número de quem tem este título, quando houver exatamente um."""
+        achados = [
+            numero
+            for chave, numero in nomes.items()
+            if linha_conversa.titulo_casa_com_nome(titulo, chave)
+        ]
+        return achados[0] if len(achados) == 1 else ""
+
+    def _avaliar_alarme_de_entrega(self) -> None:
+        """
+        Arma o alarme quando um bloco de mensagens envelheceu sem ser entregue.
+
+        Só entram na conta as mensagens com pelo menos
+        `_ENTREGA_IDADE_MINIMA_SEG` — logo depois do envio é normal a mensagem
+        estar apenas "enviada", e contar isso daria alarme falso em todo envio.
+
+        Uma mensagem que ELE respondeu conta como entregue pelo caminho mais
+        curto possível: ele não teria como responder sem receber.
+        """
+        agora = time.time()
+        with self._lock:
+            maduros = [
+                info
+                for info in self._estado_de_entrega.values()
+                if info["estado"] is not None
+                and agora - info["enviado_em"] >= self._ENTREGA_IDADE_MINIMA_SEG
+            ]
+            total = len(maduros)
+            if total < self._ENTREGA_AMOSTRA_MINIMA:
+                return
+
+            nao_entregues = [
+                i
+                for i in maduros
+                if i["estado"] in (linha_conversa.NAO_ENTREGUE, linha_conversa.FALHOU)
+            ]
+            n = len(nao_entregues)
+            taxa = n / total
+            if taxa < self._ENTREGA_TAXA_NAO_ENTREGUE:
+                return
+            # Já avisou e ainda não acumulou casos novos suficientes: silêncio.
+            # O `seq` é o que impede o popup de reabrir a cada heartbeat de
+            # status (que sai a cada 5s), inclusive logo após o usuário fechá-lo.
+            if self._alerta_entrega_em and n < self._alerta_entrega_em + self._ENTREGA_REARME_A_CADA:
+                return
+
+            self._alerta_entrega_em = n
+            falharam = sum(1 for i in maduros if i["estado"] == linha_conversa.FALHOU)
+            self._alerta_entrega = {
+                "seq": n,
+                "nao_entregues": n,
+                "falharam": falharam,
+                "verificadas": total,
+                "percentual": round(taxa * 100),
+            }
+            alerta = dict(self._alerta_entrega)
+
+        # Log fora do lock (o callback de log é externo e pode demorar).
+        self._log(
+            f"🚨 {alerta['nao_entregues']} de {alerta['verificadas']} mensagens "
+            f"({alerta['percentual']}%) saíram mas NÃO foram entregues. Isso costuma "
+            f"significar que o WhatsApp está limitando este número. Considere parar o "
+            f"envio agora e retomar amanhã — continuar pode levar ao bloqueio da conta."
+        )
+
+    def _registrar_campo_mensagem_ausente(self) -> None:
+        """
+        Conta contatos seguidos em que o campo de digitação nunca apareceu e,
+        passado o limiar, trata como falha ESTRUTURAL de seletor.
+
+        Por que contar em vez de reportar na hora: um único timeout não diz
+        nada sobre o seletor — é exatamente o que acontece com número que não
+        existe, rede caindo ou WhatsApp lento, e a invariante do seletores.py é
+        que falha de contato nunca dispara busca remota. Já três contatos
+        seguidos sem o campo aparecer nenhuma vez, com o #pane-side de pé, não
+        se explica por azar: ou o WhatsApp mudou o rodapé, ou não há conserto
+        possível do nosso lado — e no primeiro caso há um publicado esperando.
+
+        O contador zera assim que o campo aparece (em _wait_chat_or_invalid_popup),
+        então só uma sequência ininterrupta chega aqui.
+        """
+        self._falhas_campo_mensagem += 1
+        if self._falhas_campo_mensagem < self._FALHAS_CAMPO_PARA_ESTRUTURAL:
+            return
+
+        self._falhas_campo_mensagem = 0
+        try:
+            # A trava de tempo do próprio seletores.py evita martelar o
+            # Supabase; aqui só não pode escapar exceção para o laço de envio.
+            if seletores.registrar_falha_estrutural("campo_mensagem"):
+                self._log(
+                    "🔄 " + seletores.MSG_ATUALIZANDO
+                )
+                file_logger.warning(
+                    "Seletores atualizados após falhas seguidas do campo de mensagem."
+                )
+        except Exception as e:
+            file_logger.warning(f"Falha ao buscar seletores novos: {e!r}")
 
     def _registrar_resultado_de_abertura(self, abriu: bool, tipo: str = "chat") -> None:
         """
@@ -642,7 +920,7 @@ class WhatsAppSender:
         chrome_options.add_experimental_option("useAutomationExtension", False)
 
         # Manter sessão do WhatsApp
-        user_data_dir = os.path.join(os.getcwd(), "chrome_profile")
+        user_data_dir = str(caminhos.chrome_profile_dir())
         chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
 
         # Mata chromedriver anterior que possa ter ficado travado (não afeta Chrome pessoal)
@@ -828,11 +1106,158 @@ class WhatsAppSender:
             df["Motivo"] = ""
         else:
             df["Motivo"] = df["Motivo"].fillna("").astype(str).str.strip()
+        # Colunas da verificação de respostas (ver varredura.py). São FATOS
+        # lidos da lista de conversas — o rótulo quente/frio NÃO é gravado: ele
+        # é derivado na exibição, como o `duplicado`. Assim mudar a régua do
+        # que é "quente" não obriga a varrer tudo de novo.
+        for col in ["Respondeu", "DataResposta", "Entrega", "UltimaVerificacao",
+                    "RespostaTexto"]:
+            if col not in df.columns:
+                df[col] = ""
+            else:
+                df[col] = df[col].fillna("").astype(str).str.strip()
         return df
 
     def _save_contacts(self, df: pd.DataFrame):
         """Salva a planilha com progresso atualizado."""
         df.to_excel(self.excel_path, index=False)
+
+    # ============================================================
+    # Verificação de respostas (varredura sob demanda) — ver varredura.py
+    # ============================================================
+    _VARREDURA_TIMEOUT_CARGA = 90
+
+    def is_varrendo(self) -> bool:
+        with self._lock:
+            return self._varrendo
+
+    def get_varredura(self) -> Optional[dict]:
+        with self._lock:
+            return dict(self._varredura) if self._varredura else None
+
+    def reservar_varredura(self) -> bool:
+        """
+        Reivindica a varredura ANTES de a thread começar.
+
+        Existe para o `/status` já sair travado na resposta do próprio POST.
+        Sem isso, a tela ficaria editável até o heartbeat seguinte (5s) — tempo
+        de sobra para o usuário mexer na planilha que a varredura vai
+        reescrever, ou para clicar em Iniciar Envio e cair no
+        `ChromeProfileInUseError`.
+
+        Devolve False se já há envio ou varredura em curso.
+        """
+        with self._lock:
+            if self._varrendo or self._running:
+                return False
+            self._varrendo = True
+            self._varredura = {"fase": "abrindo", "atual": 0, "total": 0}
+        return True
+
+    def verificar_respostas(self, ja_reservada: bool = False) -> dict:
+        """
+        Ciclo curto e independente: abre o Chrome, lê a lista de conversas,
+        grava a planilha, fecha.
+
+        Estruturalmente parecido com um envio mini, e reusa o mesmo
+        `_init_driver()` — mas com um estado próprio (`_varrendo`), porque
+        `is_running()` significa "está enviando" e é o que congela config e
+        contatos. Varredura e envio disputam o mesmo `chrome_profile/`, então
+        quem chama precisa recusar um enquanto o outro roda.
+
+        Nunca levanta: devolve o resumo com `erro` preenchido. A verificação é
+        um extra — nada nela pode deixar o app num estado ruim.
+        """
+        # `ja_reservada` é o caminho normal (o endpoint reserva primeiro, para
+        # travar a tela na hora); uma chamada direta reivindica aqui.
+        if not ja_reservada and not self.reservar_varredura():
+            return {"erro": "Já existe uma operação em andamento."}
+
+        self._stop_event.clear()
+        resumo = {"erro": None}
+        try:
+            self._log("🔎 Abrindo o WhatsApp para verificar as respostas...")
+            self._driver = self._init_driver()
+            self._driver.get("https://web.whatsapp.com")
+
+            if not self._esperar_lista_de_conversas():
+                resumo["erro"] = (
+                    "O WhatsApp Web não carregou a tempo. Verifique a conexão e "
+                    "tente de novo."
+                )
+                return resumo
+
+            # Mesma espera de sincronização do envio: a lista pode estar
+            # renderizada e ainda baixando histórico.
+            self._aguardar_sincronizacao(apos_qr=False)
+
+            def progresso(atual, total):
+                with self._lock:
+                    self._varredura = {"fase": "lendo", "atual": atual, "total": total}
+
+            with self._lock:
+                self._varredura = {"fase": "lendo", "atual": 0, "total": 0}
+
+            df = self._load_contacts()
+            v = varredura.Varredura(
+                self._driver,
+                log_cb=self._log,
+                stop_cb=self._should_stop,
+                progresso_cb=progresso,
+            )
+            resumo.update(v.executar(df))
+            # Salva uma vez, no fim: a planilha é o arquivo que o cliente abre
+            # no Excel, e reescrevê-la a cada contato multiplicaria por N o
+            # risco de deixá-la corrompida se algo morrer no meio.
+            self._save_contacts(df)
+        except ChromeProfileInUseError as e:
+            resumo["erro"] = str(e)
+        except Exception as e:
+            file_logger.exception("[varredura] falhou")
+            resumo["erro"] = f"Não foi possível verificar as respostas: {e}"
+            self._log(f"⚠️ {resumo['erro']}")
+        finally:
+            self._cleanup()
+            with self._lock:
+                self._varrendo = False
+                self._varredura = None
+                # `_cleanup` zera `_running`, que a varredura nunca ligou.
+                # Sem isto, um envio anterior finalizado ficaria com o estado
+                # sobrescrito por esta operação.
+                self._running = False
+        return resumo
+
+    def _esperar_lista_de_conversas(self) -> bool:
+        """
+        Espera o `#pane-side` aparecer, tolerando o caso de a sessão ter caído.
+
+        Não afirma "escaneie o QR Code" sem QR na tela — mesmo cuidado que o
+        envio tem, pelo mesmo motivo: um arranque frio demora e a mensagem
+        errada faz o usuário achar que perdeu a sessão.
+        """
+        avisou_qr = False
+        limite = time.monotonic() + self._VARREDURA_TIMEOUT_CARGA
+        while time.monotonic() < limite:
+            if self._should_stop():
+                return False
+            try:
+                self._driver.find_element(
+                    By.CSS_SELECTOR, seletores.get("pane_side")
+                )
+                return True
+            except Exception:
+                pass
+            if not avisou_qr and self._qr_na_tela():
+                avisou_qr = True
+                self._log("⏳ Escaneie o QR Code no navegador para conectar seu WhatsApp...")
+                limite = time.monotonic() + self._QR_SCAN_TIMEOUT
+            self._interruptible_sleep(0.5)
+
+        # Estrutural: a lista de conversas é a âncora de tudo. Se ela não
+        # apareceu, ou o WhatsApp está fora do ar para este usuário, ou o
+        # seletor mudou — e o segundo caso tem conserto publicável.
+        seletores.registrar_falha_estrutural("pane_side")
+        return False
 
     def _get_pending_contacts(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -847,8 +1272,8 @@ class WhatsAppSender:
     def _clean_number(self, numero) -> str:
         return clean_number(numero)
 
-    def _validate_contact(self, numero: str, mensagem: str) -> tuple:
-        return validate_contact(numero, mensagem)
+    def _validate_contact(self, numero: str, mensagem: str, arquivo: str = "") -> tuple:
+        return validate_contact(numero, mensagem, arquivo)
 
     def _human_behavior_enabled(self) -> bool:
         """Verifica se o modo comportamento humano está ativo."""
@@ -914,42 +1339,176 @@ class WhatsAppSender:
         except Exception as e:
             file_logger.debug(f"_clear_input_field: não conseguiu limpar campo: {e}")
 
+    # Quanto esperar o texto aparecer no campo depois de disparar o `paste`.
+    # É o tempo de o WhatsApp processar o evento e redesenhar o campo, não o de
+    # rede: 4s é folga larga para uma aba já carregada.
+    _PASTE_TIMEOUT_SEG = 4.0
+    # Quantas vezes tentamos consertar um campo que ficou com o texto repetido.
+    _PASTE_MAX_CORRECOES = 3
+
+    # O JS de cada uma das duas formas de inserir. Nenhuma das duas decide
+    # nada: quem decide é o Python, DEPOIS de olhar o campo (ver `_paste_text`).
+    _JS_DISPARAR_PASTE = """
+    var element = arguments[0];
+    var text = arguments[1];
+    element.focus();
+    var dt = new DataTransfer();
+    dt.setData('text/plain', text);
+    element.dispatchEvent(new ClipboardEvent('paste', {
+        clipboardData: dt, bubbles: true, cancelable: true
+    }));
+    """
+
+    _JS_INSERIR_TEXTO = """
+    arguments[0].focus();
+    document.execCommand('insertText', false, arguments[1]);
+    """
+
+    @staticmethod
+    def _normalizar_composer(texto: str) -> str:
+        """
+        Texto sem espaço nenhum, para comparar o que pedimos com o que o campo
+        mostra.
+
+        O campo não devolve o texto como ele entrou: cada quebra de linha vira
+        um `<br>` ou um `<p>` novo, e o `innerText` reconstrói essas quebras à
+        maneira dele. Comparar ignorando todo espaço em branco é o que sobra de
+        invariante — e basta, porque o que precisamos saber é *quantas vezes* a
+        mensagem está lá, não como ela está formatada.
+        """
+        return re.sub(r"\s+", "", texto or "")
+
+    def _ler_composer(self, element) -> str:
+        """Conteúdo atual do campo de mensagem, normalizado."""
+        try:
+            bruto = self._driver.execute_script(
+                "return arguments[0].innerText || arguments[0].textContent || '';",
+                element,
+            )
+        except StaleElementReferenceException:
+            return ""
+        except Exception as e:
+            if self._is_session_dead(e):
+                raise BrowserClosedError(str(e))
+            file_logger.debug(f"_ler_composer: não conseguiu ler o campo: {e}")
+            return ""
+        return self._normalizar_composer(bruto)
+
+    def _ocorrencias_no_composer(self, element, alvo: str, timeout: float) -> int:
+        """
+        Espera o texto aparecer no campo e devolve quantas cópias dele existem.
+
+        Sai no primeiro instante em que encontra alguma coisa — esperar o
+        timeout inteiro só para contar de novo atrasaria todos os envios.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            vezes = self._ler_composer(element).count(alvo)
+            if vezes:
+                return vezes
+            if time.monotonic() >= deadline:
+                return 0
+            time.sleep(0.15)
+
     def _paste_text(self, element, text: str):
         """
-        Insere texto no campo usando clipboard (Ctrl+V) via JavaScript.
+        Insere texto no campo de mensagem preservando emojis e quebras de linha.
 
         Necessário para caracteres fora do BMP (emojis compostos, bandeiras,
-        família etc.) que o ChromeDriver não suporta via send_keys.
-        Preserva quebras de linha usando insertText que respeita o contenteditable.
+        família etc.), que o `send_keys` do ChromeDriver não transmite.
+
+        POR QUE ISTO É UMA MÁQUINA DE ESTADO E NÃO UM `execute_script` SÓ:
+        o campo do WhatsApp Web é um editor controlado por JavaScript. Ele
+        escuta o evento `paste`, mas aplica o texto no seu próprio ciclo de
+        atualização — ou seja, DEPOIS que o `dispatchEvent` já retornou. A
+        versão anterior disparava o `paste` e, na mesma linha de JS, conferia
+        `element.textContent` para decidir se precisava de um
+        `execCommand('insertText')` de reserva. Essa leitura acontecia antes de
+        o WhatsApp ter desenhado qualquer coisa, então o campo ainda estava
+        vazio e o "reserva" entrava SEMPRE; um instante depois o `paste`
+        original também era aplicado e a mensagem ia para o contato **escrita
+        duas vezes, dentro do mesmo balão** (relato do cliente em 23/09/2026 —
+        só acontecia com mensagem com emoji, que é o único caminho que passa
+        por aqui).
+
+        A correção é não deixar o JS decidir: dispara o `paste`, VOLTA para o
+        Python, olha o campo até o texto aparecer, e só usa o `insertText`
+        quando ele comprovadamente não apareceu. E, como o `paste` é assíncrono,
+        uma cópia atrasada ainda pode cair depois daqui — quem fecha esse resto
+        é `_garantir_texto_unico_no_campo`, chamado de novo logo antes do ENTER.
         """
-        # Foca no elemento
         element.click()
         time.sleep(0.2)
 
-        # Usa execCommand insertText via JS — preserva quebras de linha
-        # e funciona em contenteditable do WhatsApp Web
-        js_script = """
-        var element = arguments[0];
-        var text = arguments[1];
-        element.focus();
+        alvo = self._normalizar_composer(text)
+        if not alvo:
+            return
 
-        // Usa a Clipboard API para colar texto com emojis
-        var dt = new DataTransfer();
-        dt.setData('text/plain', text);
-        var pasteEvent = new ClipboardEvent('paste', {
-            clipboardData: dt,
-            bubbles: true,
-            cancelable: true
-        });
-        element.dispatchEvent(pasteEvent);
+        # 1) Caminho normal: o evento de paste, que é o que preserva emoji e
+        #    quebra de linha do jeito que o WhatsApp espera.
+        self._driver.execute_script(self._JS_DISPARAR_PASTE, element, text)
+        vezes = self._ocorrencias_no_composer(element, alvo, self._PASTE_TIMEOUT_SEG)
 
-        // Fallback: se o paste event não inseriu, usa insertText
-        if (element.textContent.length === 0 || !element.textContent.includes(text.substring(0, 10))) {
-            document.execCommand('insertText', false, text);
-        }
+        # 2) Só agora o reserva é seguro: o campo continuou vazio depois da
+        #    espera inteira, então o WhatsApp de fato ignorou o paste.
+        if vezes == 0:
+            file_logger.info(
+                "_paste_text: o campo continuou vazio após o evento de paste "
+                f"({self._PASTE_TIMEOUT_SEG:.0f}s) — usando insertText"
+            )
+            self._driver.execute_script(self._JS_INSERIR_TEXTO, element, text)
+            vezes = self._ocorrencias_no_composer(element, alvo, self._PASTE_TIMEOUT_SEG)
+
+        # 3) Texto repetido no campo: limpa e reescreve.
+        if vezes == 0:
+            file_logger.warning(
+                "_paste_text: o texto não apareceu no campo por nenhum dos dois "
+                "caminhos — o ENTER seguinte não deve enviar nada"
+            )
+        else:
+            self._garantir_texto_unico_no_campo(element, text, vezes)
+
+        time.sleep(0.2)
+
+    def _garantir_texto_unico_no_campo(self, element, text: str,
+                                       vezes: Optional[int] = None) -> int:
         """
-        self._driver.execute_script(js_script, element, text)
-        time.sleep(0.3)
+        Deixa o campo com UMA cópia do texto, apagando e reescrevendo se houver
+        mais. Devolve quantas cópias ficaram.
+
+        Existe separado de `_paste_text` porque precisa rodar DUAS vezes, e a
+        segunda é a que fecha o buraco: colar é assíncrono, então uma cópia
+        atrasada pode cair no campo depois de `_paste_text` já ter conferido e
+        voltado. Quem chama de novo é `_send_message`, no último instante antes
+        do ENTER — que é o único momento em que a conferência vale, porque é o
+        conteúdo daquele instante que vira o balão no celular do contato.
+
+        `vezes` é a contagem que quem chama já fez, para não pagar outra leitura
+        do DOM à toa.
+        """
+        alvo = self._normalizar_composer(text)
+        if not alvo:
+            return 0
+        if vezes is None:
+            vezes = self._ler_composer(element).count(alvo)
+
+        tentativa = 0
+        while vezes > 1 and tentativa < self._PASTE_MAX_CORRECOES:
+            tentativa += 1
+            file_logger.warning(
+                f"campo de mensagem com {vezes} cópias do texto — limpando e "
+                f"reescrevendo (correção {tentativa}/{self._PASTE_MAX_CORRECOES})"
+            )
+            self._clear_input_field(element)
+            self._driver.execute_script(self._JS_INSERIR_TEXTO, element, text)
+            vezes = self._ocorrencias_no_composer(element, alvo, self._PASTE_TIMEOUT_SEG)
+
+        if vezes > 1:
+            file_logger.error(
+                f"campo de mensagem continuou com {vezes} cópias do texto após "
+                f"{self._PASTE_MAX_CORRECOES} correções — a mensagem pode sair repetida"
+            )
+        return vezes
 
     def _type_with_newlines(self, element, text: str):
         """
@@ -1113,12 +1672,7 @@ class WhatsAppSender:
         conversas ainda não apareceu — que é o que acontecia antes e assustava
         o cliente, já que a sessão dele estava salva o tempo todo.
         """
-        for seletor in (
-            'canvas[aria-label*="QR"]',
-            'canvas[aria-label*="qr"]',
-            'div[data-ref] canvas',
-            '[data-testid="qrcode"]',
-        ):
+        for seletor in seletores.lista("qr_canvas"):
             try:
                 if any(e.is_displayed() for e in self._driver.find_elements(By.CSS_SELECTOR, seletor)):
                     return True
@@ -1130,7 +1684,7 @@ class WhatsAppSender:
         """Quantas conversas já apareceram na lista lateral."""
         try:
             return len(self._driver.find_elements(
-                By.CSS_SELECTOR, '#pane-side [role="listitem"], #pane-side [role="row"]'
+                By.CSS_SELECTOR, seletores.get("linha_conversa")
             ))
         except Exception:
             return 0
@@ -1269,7 +1823,7 @@ class WhatsAppSender:
                 if self._should_stop():
                     return False
                 try:
-                    self._driver.find_element(By.CSS_SELECTOR, "#pane-side")
+                    self._driver.find_element(By.CSS_SELECTOR, seletores.get("pane_side"))
                     carregou = True
                     break
                 except Exception:
@@ -1328,6 +1882,64 @@ class WhatsAppSender:
         msg = str(exc).lower()
         return any(marker in msg for marker in _DEAD_SESSION_MARKERS)
 
+    # Quanto esperar o container de falha APARECER depois do ENTER. Nao e' o
+    # tempo que a falha leva para se resolver — ela nao se resolve: a bolha
+    # medida em 19/09/2026 seguia falhada 12 minutos depois, e so' saiu com o
+    # clique do usuario. E' so' a janela para o WhatsApp desistir e desenhar.
+    #
+    # Ser curto e' seguro POR CONSTRUCAO: a verificacao so' age quando ACHA a
+    # falha. Se o container ainda nao apareceu, o desfecho e' identico ao de
+    # antes desta verificacao existir — perde-se a deteccao, nunca se inventa
+    # uma.
+    _TIMEOUT_FALHA_DE_SAIDA_SEG = 4.0
+
+    def _contar_falhas_de_saida(self) -> int:
+        """
+        Quantas bolhas da conversa aberta estao marcadas como "nao saiu".
+
+        Devolve -1 quando nao deu para ler — e' "nao sei", que o chamador
+        trata como "nao acusa". Nunca levanta: esta funcao roda no caminho
+        critico do envio e uma excecao aqui marcaria como invalido um contato
+        que recebeu a mensagem.
+        """
+        try:
+            return len(
+                self._driver.find_elements(
+                    By.CSS_SELECTOR,
+                    f'{seletores.get("area_mensagens")} {seletores.get("bolha_falha")}',
+                )
+            )
+        except Exception as e:
+            file_logger.debug(f"[falha-de-saida] leitura falhou: {e!r}")
+            return -1
+
+    def _detectar_falha_de_saida(self, antes: int) -> bool:
+        """
+        Apareceu uma bolha falhada NOVA depois do nosso ENTER?
+
+        Compara com a contagem de antes em vez de perguntar "existe alguma
+        falha?": uma mensagem falhada de uma campanha anterior fica parada na
+        mesma conversa para sempre (a de 19/09 ficou), e a pergunta absoluta
+        marcaria como falha todo contato que ja' tivesse uma.
+
+        `antes < 0` significa que nao conseguimos contar antes do envio: sem
+        linha de base nao ha' comparacao possivel, e inventar uma e' pior que
+        nao verificar.
+        """
+        if antes < 0:
+            return False
+
+        fim = time.monotonic() + self._TIMEOUT_FALHA_DE_SAIDA_SEG
+        while time.monotonic() < fim:
+            agora = self._contar_falhas_de_saida()
+            if agora > antes:
+                return True
+            if self._interruptible_sleep(0.5):
+                # Stop pedido: nao acusa. O contato fica pendente pelo caminho
+                # normal do stop, que e' mais conservador que marca-lo invalido.
+                return False
+        return False
+
     def _confirm_message_sent(self, texto_enviado: str, timeout: float = 6.0) -> bool:
         """
         Confirma que a mensagem realmente saiu do campo de texto.
@@ -1365,7 +1977,7 @@ class WhatsAppSender:
         while time.monotonic() < deadline:
             try:
                 field = self._driver.find_element(
-                    By.CSS_SELECTOR, "footer div[contenteditable='true']"
+                    By.CSS_SELECTOR, seletores.get("campo_mensagem")
                 )
                 ultimo_conteudo = field.text
                 if alvo not in ultimo_conteudo:
@@ -1396,7 +2008,7 @@ class WhatsAppSender:
         simulando navegação humana.
         """
         try:
-            pane = self._driver.find_element(By.CSS_SELECTOR, "#pane-side")
+            pane = self._driver.find_element(By.CSS_SELECTOR, seletores.get("pane_side"))
             # Scroll para cima ou para baixo aleatoriamente
             direction = random.choice([-1, 1])
             amount = random.randint(100, 400) * direction
@@ -1618,18 +2230,77 @@ class WhatsAppSender:
             tempo += n_anexos * self.TEMPO_ESTIMADO_POR_ANEXO
         return tempo
 
+    @staticmethod
+    def _vazio(valor) -> bool:
+        """Célula vazia de verdade, incluindo o "nan"/"none" que o pandas cria."""
+        return str(valor).strip().lower() in ("", "nan", "none")
+
+    def _resolver_globais(self, mensagem, arquivo) -> tuple:
+        """
+        Aplica o PACOTE global a um contato: texto global + anexo global.
+
+        O gatilho é um só, e é a **coluna Mensagem em branco**. O anexo global
+        não tem gatilho próprio: ele faz parte da mensagem global e viaja com
+        ela. Quem escreveu a própria mensagem não recebe nem o texto nem o
+        anexo globais — o pacote é para quem deixou o campo em branco.
+
+        Três consequências que valem dizer em voz alta:
+
+        - **Pacote sem texto é válido.** Mensagem global vazia com anexo ligado
+          entrega só o arquivo. Por isso `validate_contact` passou a aceitar
+          mensagem vazia quando há anexo: sem isso a campanha só de imagem
+          virava uma lista inteira de inválidos.
+        - **O arquivo do contato vence o global.** Uma linha com `Arquivo`
+          preenchido é escolha explícita daquela linha, e o pacote não a
+          atropela — mesmo que o texto dela venha do global.
+        - **Quem consome isto são dois**, e eles precisam concordar: o laço de
+          envio e a estimativa de tempo. Enquanto a estimativa lia as colunas
+          direto da linha, ela não via nem o texto nem o anexo global, e com o
+          anexo ligado *todo* contato do pacote passa a ter anexo — o
+          componente mais caro do envio depois de abrir a conversa. A conta
+          sairia curta para a campanha inteira, que é o erro que o CHANGELOG de
+          06/09/2026 descreve (previu 45min para um envio de 2h).
+
+        Devolve `(mensagem, arquivo, usou_mensagem_global, usou_anexo_global)`.
+        """
+        texto = "" if self._vazio(mensagem) else str(mensagem)
+        anexo = "" if self._vazio(arquivo) else str(arquivo).strip()
+
+        # Campo preenchido: o contato não entra no pacote global, ponto.
+        if texto:
+            return texto, anexo, False, False
+
+        usou_msg = False
+        if self.global_message.strip():
+            texto = self.global_message
+            usou_msg = True
+
+        usou_anexo = False
+        if not anexo and self.global_attachment.strip():
+            anexo = self.global_attachment.strip()
+            usou_anexo = True
+
+        return texto, anexo, usou_msg, usou_anexo
+
     def _estimar_tempo_envio_total(self, pending, session_target: int) -> float:
         """
         Soma o tempo estimado de envio (digitação + anexos, ver
         _estimar_tempo_envio_individual) dos primeiros `session_target`
         contatos pendentes — uma amostra, não uma garantia: se algum vier a
         ser inválido, outro contato entra no lugar dele e o real pode variar.
+
+        Passa por `_resolver_globais` pelo mesmo motivo que o laço de envio:
+        é o texto e o anexo que vão REALMENTE ser enviados que custam tempo,
+        não o que está escrito na célula.
         """
         amostra = pending.head(session_target)
-        return sum(
-            self._estimar_tempo_envio_individual(row.get("Mensagem", ""), row.get("Arquivo", ""))
-            for _, row in amostra.iterrows()
-        )
+        total = 0.0
+        for _, row in amostra.iterrows():
+            texto, anexo, _, _ = self._resolver_globais(
+                row.get("Mensagem", ""), row.get("Arquivo", "")
+            )
+            total += self._estimar_tempo_envio_individual(texto, anexo)
+        return total
 
     def _calcular_orcamento_de_pausas(self, pending, session_target: int, tempo_minutos: float) -> dict:
         """
@@ -1876,7 +2547,7 @@ class WhatsAppSender:
                         self._dismiss_on_stop()
                         return False
                     try:
-                        self._driver.find_element(By.CSS_SELECTOR, "#pane-side")
+                        self._driver.find_element(By.CSS_SELECTOR, seletores.get("pane_side"))
                         pane_found = True
                         break
                     except Exception:
@@ -1984,6 +2655,10 @@ class WhatsAppSender:
             # contato será marcado como inválido. Isso garante que não se
             # entrega uma mensagem "solta" (sem o anexo prometido).
             if has_media:
+                # O campo tem que estar vazio ANTES de o menu de anexo abrir:
+                # o WhatsApp promove o que estiver nele a legenda do arquivo.
+                self._exigir_campo_vazio_antes_do_anexo(pessoa)
+
                 for media_file in media_files:
                     if self._should_stop():
                         self._dismiss_on_stop()
@@ -2015,10 +2690,15 @@ class WhatsAppSender:
                     self._dismiss_on_stop()
                     return False
 
-            # Passo 2: Envia a mensagem de texto (SOMENTE se NÃO for enviar como legenda de imagem)
-            if not all_images:
+            # Passo 2: Envia a mensagem de texto.
+            #
+            # `texto` vazio com anexo é um envio legítimo — a mensagem global
+            # pode ser só uma imagem. Aí não há o que digitar, e um ENTER num
+            # campo vazio não produz mensagem nenhuma: no melhor caso é inócuo,
+            # no pior o WhatsApp reage a uma tecla que ninguém pediu.
+            if not all_images and texto.strip():
                 input_field = self._driver.find_element(
-                    By.CSS_SELECTOR, "footer div[contenteditable='true']"
+                    By.CSS_SELECTOR, seletores.get("campo_mensagem")
                 )
 
                 # Garante que o campo está vazio antes de digitar (evita sobrescrever
@@ -2056,6 +2736,19 @@ class WhatsAppSender:
                         self._dismiss_on_stop()
                         return False
 
+                # Linha de base das bolhas falhadas ANTES do nosso ENTER.
+                # Ver `_detectar_falha_de_saida`: o que acusa e' o crescimento,
+                # porque uma falha antiga fica parada na conversa para sempre.
+                falhas_antes = self._contar_falhas_de_saida()
+
+                # Última conferência antes do ponto sem retorno: o que
+                # estiver no campo AGORA é o que vira o balão. Só o caminho da
+                # colagem (emoji fora do BMP) consegue escrever duas vezes
+                # sozinho — digitar caractere a caractere não tem como —, então
+                # é só nele que vale pagar a leitura do DOM. Ver `_paste_text`.
+                if self._has_non_bmp(texto):
+                    self._garantir_texto_unico_no_campo(input_field, texto)
+
                 input_field.send_keys(Keys.ENTER)
 
                 # Confirma que a mensagem saiu de fato.
@@ -2065,7 +2758,7 @@ class WhatsAppSender:
                     file_logger.warning(f"ENTER não enviou a mensagem de {pessoa}, tentando novamente")
                     try:
                         input_field = self._driver.find_element(
-                            By.CSS_SELECTOR, "footer div[contenteditable='true']"
+                            By.CSS_SELECTOR, seletores.get("campo_mensagem")
                         )
                         input_field.send_keys(Keys.ENTER)
                     except StaleElementReferenceException:
@@ -2082,12 +2775,23 @@ class WhatsAppSender:
                             f"Verifique manualmente esta conversa."
                         )
 
+                # O campo esvaziar so' prova que a BOLHA foi criada. Se ela
+                # nascer com o container de falha, a mensagem nao saiu da
+                # maquina — e era isso que o app vinha gravando como
+                # `Enviado=X` (caso de 19/09/2026, contato "Lucas" as 13:22).
+                if self._detectar_falha_de_saida(falhas_antes):
+                    raise MensagemNaoSaiuError(
+                        "o WhatsApp marcou a mensagem com erro de envio"
+                    )
+
             return True
 
         except BrowserClosedError:
             raise  # Sessão morta: aborta o envio inteiro
         except AttachmentError:
             raise  # Falha no anexo: contato será marcado inválido sem retentativa
+        except MensagemNaoSaiuError:
+            raise  # A bolha nasceu falhada: contato NÃO recebeu nada
         except InvalidNumberError:
             raise  # Número rejeitado pelo WhatsApp (popup detectado)
         except WhatsAppNotLoadedError:
@@ -2116,7 +2820,9 @@ class WhatsAppSender:
     def _find_all_file_inputs(self) -> list:
         """Retorna todos os input[type=file] presentes no DOM."""
         try:
-            return self._driver.find_elements(By.CSS_SELECTOR, 'input[type="file"]')
+            return self._driver.find_elements(
+                By.CSS_SELECTOR, seletores.get("input_arquivo")
+            )
         except Exception:
             return []
 
@@ -2218,9 +2924,7 @@ class WhatsAppSender:
         """Texto visível dos modais/overlays abertos (minúsculo)."""
         try:
             containers = self._driver.find_elements(
-                By.CSS_SELECTOR,
-                'div[role="dialog"], div[data-animate-modal-body="true"], '
-                'div[data-animate-modal-popup="true"], .overlay',
+                By.CSS_SELECTOR, seletores.get("modais")
             )
             return " ".join((c.text or "") for c in containers).lower()
         except Exception:
@@ -2264,9 +2968,12 @@ class WhatsAppSender:
             # consulta barata, e roda a cada volta.
             try:
                 elements = self._driver.find_elements(
-                    By.CSS_SELECTOR, "footer div[contenteditable='true']"
+                    By.CSS_SELECTOR, seletores.get("campo_mensagem")
                 )
                 if elements:
+                    # O campo apareceu: qualquer suspeita acumulada de que o
+                    # seletor tivesse mudado morre aqui.
+                    self._falhas_campo_mensagem = 0
                     return  # Chat abriu com sucesso
             except Exception:
                 pass
@@ -2314,7 +3021,11 @@ class WhatsAppSender:
             if self._interruptible_sleep(self._CHAT_POLL_INTERVAL):
                 return  # Stop requested — caller will check _should_stop()
 
-        # Se chegou aqui, deu timeout sem chat nem popup — comportamento antigo
+        # Se chegou aqui, deu timeout sem chat nem popup — comportamento antigo.
+        # Antes de propagar, anota que o campo de digitação não apareceu: é a
+        # única evidência que temos de que o seletor mais crítico do app possa
+        # ter mudado.
+        self._registrar_campo_mensagem_ausente()
         raise TimeoutException(
             f"Timeout aguardando chat de {pessoa} ({numero}) — "
             f"nem chat nem popup de erro apareceram em {timeout}s"
@@ -2342,9 +3053,7 @@ class WhatsAppSender:
 
         try:
             alertas = self._driver.find_elements(
-                By.CSS_SELECTOR,
-                'div[role="alert"], [data-testid="alert-computer"], '
-                '[data-testid="alert-phone"]',
+                By.CSS_SELECTOR, seletores.get("alertas_conexao")
             )
             texto = " ".join((a.text or "") for a in alertas).lower()
         except Exception:
@@ -2409,9 +3118,7 @@ class WhatsAppSender:
 
             # Verifica também na área principal do chat (span/button com texto)
             chat_area = self._driver.find_elements(
-                By.CSS_SELECTOR,
-                'div[data-tab] button, div[data-tab] span, '
-                'div.copyable-area button, div.copyable-area span'
+                By.CSS_SELECTOR, seletores.get("area_conversa")
             )
             for el in chat_area:
                 try:
@@ -2447,8 +3154,7 @@ class WhatsAppSender:
         try:
             # Tenta clicar no botão OK do popup
             buttons = self._driver.find_elements(
-                By.CSS_SELECTOR,
-                'div[role="dialog"] button, div[role="dialog"] div[role="button"]'
+                By.CSS_SELECTOR, seletores.get("modal_botoes")
             )
             for btn in buttons:
                 try:
@@ -2470,13 +3176,7 @@ class WhatsAppSender:
         Detecta o campo de legenda, que só existe no preview de foto/vídeo/
         documento — o editor de figurinha não tem legenda.
         """
-        selectors = [
-            'div[contenteditable="true"][aria-label*="legenda"]',
-            'div[contenteditable="true"][aria-label*="caption"]',
-            'div[data-testid="media-caption-input-container"]',
-            'div[role="dialog"] div[contenteditable="true"]',
-        ]
-        for selector in selectors:
+        for selector in seletores.lista("campo_legenda_presenca"):
             try:
                 for el in self._driver.find_elements(By.CSS_SELECTOR, selector):
                     if el.is_displayed():
@@ -2554,16 +3254,10 @@ class WhatsAppSender:
         except Exception:
             pass
 
-    # Botão de anexo (o "+" ao lado do campo de mensagem)
-    _ATTACH_BUTTON_SELECTORS = [
-        'button[aria-label="Anexar"]',
-        'button[aria-label="Attach"]',
-        'span[data-icon="plus-rounded"]',
-        'span[data-icon="plus"]',
-        'span[data-icon="clip"]',
-        'span[data-icon="attach-menu-plus"]',
-        '[data-testid="clip"]',
-    ]
+    # Botão de anexo (o "+" ao lado do campo de mensagem): ver
+    # `botao_anexar` em seletores.py. Lido a cada abertura de menu, e não
+    # guardado num atributo de classe, para que um seletor publicado valha na
+    # hora em vez de só no próximo start do app.
 
     # Rótulos dos itens do menu de anexo, por tipo de arquivo
     _MENU_LABELS_MIDIA = ("fotos e vídeos", "fotos e videos", "photos & videos")
@@ -2571,7 +3265,7 @@ class WhatsAppSender:
 
     def _open_attach_menu(self, pessoa: str) -> bool:
         """Abre o menu de anexo. Só abrir o menu não dispara janela nativa."""
-        for seletor in self._ATTACH_BUTTON_SELECTORS:
+        for seletor in seletores.lista("botao_anexar"):
             try:
                 elementos = self._driver.find_elements(By.CSS_SELECTOR, seletor)
             except Exception as e:
@@ -2697,6 +3391,68 @@ class WhatsAppSender:
         thread.join(timeout=15)
         return ""
 
+    # Quantas vezes tentamos esvaziar o campo antes de desistir do contato.
+    _LIMPEZA_MAX_TENTATIVAS = 2
+
+    def _exigir_campo_vazio_antes_do_anexo(self, pessoa: str) -> None:
+        """
+        Esvazia o campo de mensagem ANTES de abrir o menu de anexo.
+
+        O WhatsApp Web leva o que estiver escrito no campo para a **legenda do
+        modal de anexo**. Então um rascunho que já estava ali sai junto com o
+        arquivo, para um contato que nunca deveria recebê-lo — foi o que
+        aconteceu em teste: a conversa abriu com texto no campo, o anexo foi
+        adicionado e o texto antigo foi embarcado com ele.
+
+        A limpeza já existia, mas no lugar errado: no Passo 2, depois de o
+        anexo ter sido enviado. Ela protegia a digitação e não o anexo.
+
+        E rascunho não é acidente raro aqui: um envio interrompido entre
+        `_human_type` e `_confirm_message_sent` deixa exatamente isso para trás
+        (é o mesmo estado que a varredura precisa distinguir — ver o "draft
+        guard" em `linha_conversa.py`). Além do que o próprio usuário pode ter
+        digitado na conversa.
+
+        Não conseguir esvaziar levanta `AttachmentError`: o contato fica
+        inválido, sem envio e com o botão de reenviar disponível. É de
+        propósito o desfecho mais conservador — mandar para o contato de
+        alguém um texto que não era para ele não tem desfazer.
+        """
+        try:
+            campo = self._driver.find_element(
+                By.CSS_SELECTOR, seletores.get("campo_mensagem")
+            )
+        except Exception as e:
+            if self._is_session_dead(e):
+                raise BrowserClosedError(str(e))
+            # Sem campo não há rascunho para vazar; o anexo segue, e quem
+            # reclama da falta do campo é o Passo 2.
+            file_logger.debug(f"Campo de mensagem não encontrado antes do anexo: {e}")
+            return
+
+        resto = self._ler_composer(campo)
+        if not resto:
+            return
+
+        file_logger.warning(
+            f"Campo de mensagem de {pessoa} tinha rascunho antes do anexo "
+            f"({len(resto)} caracteres) — limpando para ele não virar legenda."
+        )
+        for _ in range(self._LIMPEZA_MAX_TENTATIVAS):
+            self._clear_input_field(campo)
+            resto = self._ler_composer(campo)
+            if not resto:
+                self._log(
+                    f"🧹 {pessoa} — havia um texto no campo de mensagem; "
+                    f"apagado antes de anexar o arquivo."
+                )
+                return
+
+        raise AttachmentError(
+            "não foi possível limpar o texto que já estava no campo de mensagem "
+            "(ele iria junto com o anexo)"
+        )
+
     def _send_media(self, media_path: str, pessoa: str, human: bool = False):
         """
         Envia um arquivo no chat atual.
@@ -2814,17 +3570,8 @@ class WhatsAppSender:
         Digita a legenda (caption) no campo de texto do modal de preview de imagem.
         O modal de foto/vídeo tem um campo editável para adicionar legenda.
         """
-        caption_selectors = [
-            'div[contenteditable="true"][data-testid="media-caption-input-container"]',
-            'div.copyable-text[contenteditable="true"][data-tab]',
-            # O modal tem um contenteditable que NÃO é o footer
-            'div[role="dialog"] div[contenteditable="true"]',
-            'div.overlay div[contenteditable="true"]',
-            # Genérico: segundo contenteditable na página (o primeiro é o chat principal)
-        ]
-
         caption_field = None
-        for selector in caption_selectors:
+        for selector in seletores.lista("campo_legenda_edicao"):
             try:
                 caption_field = WebDriverWait(self._driver, 5).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, selector))
@@ -2877,17 +3624,16 @@ class WhatsAppSender:
 
         self._interruptible_sleep(random.uniform(0.5, 1.0))
 
-    # Seletores do botão "enviar" do preview de anexo
-    _SEND_BUTTON_SELECTORS = [
-        '[data-testid="send"]',
-        'span[data-icon="wds-ic-send-filled"]',
-        'span[data-icon="send"]',
-        'span[data-icon="send-light"]',
-        'div[role="button"][aria-label*="Enviar"]',
-        'div[role="button"][aria-label*="Send"]',
-        'button[aria-label="Enviar"]',
-        'button[aria-label="Send"]',
-    ]
+        # A mesma conferência do último instante que `_send_message` faz antes
+        # do ENTER, e pela mesma razão: quem clica em enviar é quem chamou esta
+        # função, logo depois daqui, e é o conteúdo deste momento que vira a
+        # legenda. Uma cópia atrasada da colagem cabe nessa fresta — e a legenda
+        # com emoji é justamente o caso que passa por lá. Ver `_paste_text`.
+        if self._has_non_bmp(caption):
+            self._garantir_texto_unico_no_campo(caption_field, caption)
+
+    # Seletores do botão "enviar" do preview de anexo: ver
+    # `botao_enviar_modal` em seletores.py.
 
     def _find_send_button_modal(self, timeout: float = 10.0):
         """
@@ -2896,7 +3642,7 @@ class WhatsAppSender:
         """
         fim = time.time() + max(0.1, timeout)
         while True:
-            for selector in self._SEND_BUTTON_SELECTORS:
+            for selector in seletores.lista("botao_enviar_modal"):
                 try:
                     for btn in self._driver.find_elements(By.CSS_SELECTOR, selector):
                         if btn.is_displayed():
@@ -3021,7 +3767,7 @@ class WhatsAppSender:
                     self._cleanup()
                     return
                 try:
-                    self._driver.find_element(By.CSS_SELECTOR, "#pane-side")
+                    self._driver.find_element(By.CSS_SELECTOR, seletores.get("pane_side"))
                     session_found = True
                     break
                 except Exception:
@@ -3062,7 +3808,7 @@ class WhatsAppSender:
                         self._cleanup()
                         return
                     try:
-                        self._driver.find_element(By.CSS_SELECTOR, "#pane-side")
+                        self._driver.find_element(By.CSS_SELECTOR, seletores.get("pane_side"))
                         qr_found = True
                         break
                     except Exception:
@@ -3160,6 +3906,12 @@ class WhatsAppSender:
                 self._falhas_app = 0
                 self._alerta_lentidao = None
                 self._alerta_lentidao_em = 0
+                # Idem para o alarme de entrega: um envio que foi mal ontem não
+                # pode deixar o popup armado no de hoje.
+                self._enviados_nesta_execucao = []
+                self._estado_de_entrega = {}
+                self._alerta_entrega = None
+                self._alerta_entrega_em = 0
 
             if session_target == 0:
                 self._log("✅ Todos os contatos já foram processados!")
@@ -3269,21 +4021,21 @@ class WhatsAppSender:
 
                         pessoa = str(row["Nome"])
                         numero = self._clean_number(row["Número"])
-                        mensagem = str(row["Mensagem"])
-                        arquivo = str(row.get("Arquivo", "")).strip()
-                        if arquivo.lower() in ("", "nan", "none"):
-                            arquivo = ""
-                        usou_global = False
-                        if mensagem.strip().lower() in ("", "nan", "none") and self.global_message.strip():
-                            mensagem = self.global_message
-                            usou_global = True
+                        mensagem, arquivo, usou_global, usou_anexo_global = (
+                            self._resolver_globais(
+                                row["Mensagem"], row.get("Arquivo", "")
+                            )
+                        )
 
                         # Validação prévia
-                        valido, motivo = self._validate_contact(numero, mensagem)
+                        valido, motivo = self._validate_contact(numero, mensagem, arquivo)
                         if not valido:
                             df.at[idx, "Invalido"] = "X"
                             if motivo == "mensagem vazia":
-                                tooltip_motivo = "Coluna Mensagem vazia e sem mensagem global ativa."
+                                tooltip_motivo = (
+                                    "Coluna Mensagem vazia, sem mensagem global "
+                                    "e sem anexo global ativos."
+                                )
                             elif motivo == "número ausente":
                                 tooltip_motivo = "Coluna Número vazia. Preencha com DDD + telefone."
                             elif motivo == "número inválido":
@@ -3302,9 +4054,14 @@ class WhatsAppSender:
                             # próximo contato, sem esperar o delay entre mensagens.
                             continue
 
+                        marcas = []
+                        if usou_global:
+                            marcas.append("mensagem global")
+                        if usou_anexo_global:
+                            marcas.append("anexo global")
                         self._log(
                             f"Enviando para {pessoa} ({numero})"
-                            f"{' [mensagem global]' if usou_global else ''}..."
+                            f"{' [' + ' + '.join(marcas) + ']' if marcas else ''}..."
                         )
 
                         # Referência para saber, depois do try/except, se ESTA tentativa
@@ -3330,6 +4087,9 @@ class WhatsAppSender:
                                 # A conversa abriu: entra como amostra "boa" na
                                 # taxa que dispara o aviso de lentidão.
                                 self._registrar_resultado_de_abertura(True)
+                                # Entregue é outra coisa: a mensagem saiu, mas
+                                # só a pausa vai conferir se ela CHEGOU.
+                                self._registrar_envio_para_entrega(numero, pessoa)
                                 self._log(f"✅ {pessoa} — mensagem enviada com sucesso.")
                                 self._notify_contact_update(idx, numero, "enviado", data_envio)
                             else:
@@ -3359,6 +4119,31 @@ class WhatsAppSender:
                             )
                             browser_died = True
                             break
+
+                        except MensagemNaoSaiuError as e:
+                            # A mensagem NAO chegou a sair da maquina. O
+                            # contato nao recebeu nada, entao ele nao pode
+                            # ficar com Enviado=X — vai para invalido, que e'
+                            # o estado que o botao de reenvio (↺) recupera.
+                            tooltip_motivo = (
+                                "A mensagem não saiu: o WhatsApp marcou um erro de "
+                                "envio nesta conversa. Use ↺ para tentar de novo."
+                            )
+                            df.at[idx, "Invalido"] = "X"
+                            df.at[idx, "Motivo"] = tooltip_motivo
+                            self._save_contacts(df)
+                            self._contar_invalido(tooltip_motivo)
+                            file_logger.error(
+                                f"MENSAGEM NAO SAIU para {pessoa} ({numero}): {e} — "
+                                f"a bolha foi criada com o container de falha; o "
+                                f"contato NAO recebeu a mensagem."
+                            )
+                            self._log(
+                                f"❌ {pessoa} ({numero}) — a mensagem não saiu "
+                                f"(o WhatsApp marcou erro de envio). Contato NÃO "
+                                f"recebeu; use ↺ para tentar de novo."
+                            )
+                            self._notify_contact_update(idx, numero, "invalido", "", tooltip_motivo)
 
                         except AttachmentError as e:
                             # Falha no anexo: marca como inválido IMEDIATAMENTE, sem
@@ -3579,6 +4364,13 @@ class WhatsAppSender:
                         self._set_state("pausado")
                         self._pause_until = time.time() + pause_after
                         self._next_leva_size = burst_plan[burst_idx + 1]["burst_size"]
+
+                        # A pausa é ociosa por construção, e os contatos da
+                        # rajada que acabou de rodar estão no TOPO da lista de
+                        # conversas (mandar mensagem sobe a conversa). Ler dali
+                        # se as mensagens foram entregues custa um
+                        # execute_script e não atrasa nada. Nunca levanta.
+                        self._verificar_entregas_na_pausa(pause_after)
 
                         # Espera em intervalos curtos para poder parar
                         elapsed = 0.0

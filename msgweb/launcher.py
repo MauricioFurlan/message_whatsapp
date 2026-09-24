@@ -10,6 +10,7 @@ Ponto de entrada do .exe:
 import os
 import sys
 import signal
+import socket
 import threading
 import time
 import webbrowser
@@ -23,8 +24,19 @@ else:
 
 
 def open_browser():
-    """Abre o navegador após aguardar o servidor iniciar."""
-    time.sleep(2)
+    """Abre o navegador assim que o servidor aceitar conexão.
+
+    Esperar um tempo fixo era uma aposta: no .exe os imports pesados (selenium,
+    pandas) passam de 2s em máquina fria, o navegador chegava antes do servidor
+    e o usuário via erro de conexão. Aqui esperamos a porta de verdade.
+    """
+    limite = time.monotonic() + 60
+    while time.monotonic() < limite:
+        try:
+            with socket.create_connection(("127.0.0.1", 8000), timeout=0.5):
+                break
+        except OSError:
+            time.sleep(0.25)
     webbrowser.open("http://localhost:8000")
 
 

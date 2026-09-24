@@ -316,10 +316,12 @@ class FakeSenderCriado:
     ultima_instancia = None
 
     def __init__(self, excel_path, config, log_callback=None,
-                 contact_update_callback=None, global_message=""):
+                 contact_update_callback=None, global_message="",
+                 global_attachment=""):
         self.excel_path = excel_path
         self.config = config
         self.global_message = global_message
+        self.global_attachment = global_attachment
         self.estado = ""
         FakeSenderCriado.ultima_instancia = self
 

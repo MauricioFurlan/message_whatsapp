@@ -1,0 +1,8 @@
+# Dependências que só o desenvolvimento usa. NÃO entram no .exe: o PyInstaller
+# empacota o que é alcançável por import a partir do launcher.py, e nada aqui é.
+# (Travado por tests/e2e/test_isolamento_do_build.py.)
+-r requirements.txt
+
+# TestClient do FastAPI, usado pela bateria end-to-end (tests/e2e/) para bater
+# nas rotas de verdade em vez de chamar as funções por baixo do HTTP.
+httpx

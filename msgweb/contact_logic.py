@@ -43,20 +43,27 @@ def clean_number(numero) -> str:
     return digits
 
 
-def validate_contact(numero: str, mensagem: str) -> tuple[bool, str]:
+def validate_contact(numero: str, mensagem: str, arquivo: str = "") -> tuple[bool, str]:
     """
     Valida um contato antes de acionar o browser.
 
     Retorna (True, "") se válido, ou (False, motivo) caso contrário.
     Regras:
-      - Mensagem ausente/vazia => inválido
+      - Mensagem ausente/vazia E sem anexo => inválido
       - Número ausente/vazio ("", "nan", "none") => inválido
       - Número com menos de 10 dígitos (DDD + telefone) => inválido
+
+    `arquivo` existe porque "só o anexo, sem texto" é um envio legítimo: a
+    mensagem global pode ser só uma imagem. Sem este parâmetro, o contato era
+    barrado por "mensagem vazia" antes de chegar ao anexo — o que transformava
+    uma campanha só de imagem em uma lista inteira de inválidos.
     """
     numero_str = str(numero).strip().lower()
     mensagem_str = str(mensagem).strip()
+    arquivo_str = str(arquivo).strip()
+    tem_anexo = arquivo_str != "" and arquivo_str.lower() not in ("nan", "none")
 
-    if mensagem_str == "" or mensagem_str.lower() in ("nan", "none"):
+    if (mensagem_str == "" or mensagem_str.lower() in ("nan", "none")) and not tem_anexo:
         return False, "mensagem vazia"
 
     if numero_str == "" or numero_str in ("nan", "none"):

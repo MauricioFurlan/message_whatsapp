@@ -109,11 +109,17 @@ echo Copiando arquivos adicionais...
 :: Copia static/ para dist
 xcopy "static" "dist\WhatsAppAutomacao\static\" /E /I /Y >nul
 
-:: Cria uploads/ no dist com planilha modelo (sempre limpa, um contato de teste)
-python gerar_planilha_modelo.py "dist\WhatsAppAutomacao\uploads\contatos.xlsx"
+:: Planilha MODELO, para o cliente usar de base ao montar a dele.
+:: O nome NAO e contatos.xlsx de proposito. Ate a 1.4.7 era, e contatos.xlsx
+:: tambem era o arquivo vivo do cliente, dentro da pasta do programa: quem
+:: descompactava a versao nova por cima perdia a campanha e abria o programa
+:: com o contato de teste, "como se fosse a primeira vez" (relato de
+:: 23/09/2026). Hoje os dados moram em %LOCALAPPDATA% (ver caminhos.py) e o
+:: zip nao alcanca mais nada do cliente - este arquivo e so exemplo.
+python gerar_planilha_modelo.py "dist\WhatsAppAutomacao\uploads\modelo_contatos.xlsx"
 
 :: Valida que a planilha modelo saiu limpa (1 contato de teste, sem dado real)
-python validar_planilha_modelo.py "dist\WhatsAppAutomacao\uploads\contatos.xlsx"
+python validar_planilha_modelo.py "dist\WhatsAppAutomacao\uploads\modelo_contatos.xlsx"
 if %errorlevel% neq 0 (
     echo.
     echo ERRO: planilha modelo do build reprovada na validacao. Build interrompido.

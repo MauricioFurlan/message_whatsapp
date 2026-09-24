@@ -1,5 +1,646 @@
 # Changelog
 
+## 2026-09-23 (o anexo global virou parte da mensagem global)
+
+Revisão da regra logo depois de implementar a versão anterior. O anexo global
+tinha ganhado seção própria e gatilho próprio (coluna `Arquivo` vazia), e isso
+produzia um caso que ninguém queria: quem **escreveu a própria mensagem**
+recebia o texto dela com uma imagem que não tinha pedido.
+
+Agora o gatilho é **um só**: a coluna `Mensagem` em branco. O anexo não tem
+gatilho próprio — ele viaja com a mensagem global, como parte do mesmo pacote.
+Quem escreveu a própria mensagem não recebe nem o texto nem o anexo.
+
+Essa última frase é a consequência que custa: um contato com mensagem própria e
+sem arquivo fica **sem anexo nenhum**, e o anexo global não o alcança. Foi
+perguntado e **decidido assim** em 23/09/2026 — a alternativa era o anexo valer
+para todo contato sem arquivo próprio, o que na prática separaria de novo os
+dois gatilhos.
+
+Três consequências, todas com teste:
+
+- **Pacote sem texto é válido.** Mensagem global vazia com anexo ligado entrega
+  só o arquivo. Isso obrigou a mexer em `validate_contact`, que rejeitava
+  "mensagem vazia" antes de olhar para o anexo — uma campanha só de imagem
+  viraria uma lista inteira de inválidos. E `_send_message` deixa de passar pelo
+  Passo 2 quando não há texto: um ENTER em campo vazio não produz mensagem
+  nenhuma, e no pior caso é uma tecla que ninguém pediu.
+- **O arquivo do contato vence o do pacote.** `Arquivo` preenchido é escolha
+  explícita daquela linha; o pacote não atropela, mesmo quando o texto vem do
+  global. Isto foi perguntado e **decidido** em 23/09/2026, não inferido: as
+  alternativas em cima da mesa eram o anexo global vencer, ou o contato receber
+  os dois arquivos (a coluna `Arquivo` aceita vários separados por vírgula, e o
+  envio já percorre a lista — seria concatenar em vez de escolher).
+  Decidiu-se pela planilha.
+- **Desligar a mensagem global desliga o anexo.** A garantia é do backend —
+  `_anexo_global_ativo()` exige as duas ativas —, não da tela, porque uma
+  requisição fora dela chegaria igual. O **caminho do arquivo sobrevive** de
+  propósito: religar a mensagem global não pode obrigar a escolher o arquivo de
+  novo.
+
+Na tela, o anexo perdeu a seção e passou a morar dentro do `<details>` da
+Mensagem Global. O estado dele deriva do dela (`aplicarEstadoMensagemGlobal`
+chama `aplicarEstadoAnexoGlobal`), para que todo caminho que mexe numa atualize
+a outra — sem isso o toggle da mensagem ligava e o do anexo continuava
+desabilitado.
+
+O **pin** na linha do contato passou a dizer o que aquele contato realmente
+recebe: "Mensagem global + anexo serão enviados", ou "Anexo global será
+enviado" quando não há texto. Dizer só "mensagem global" esconderia metade do
+que vai sair — e no caso de só-anexo esconderia tudo, já que não há texto
+nenhum e mesmo assim o contato recebe algo.
+
+### E o pin ficava velho
+
+Pego em uso no mesmo dia: com os dois ligados e o texto ainda em branco (pin
+dizendo "só o anexo"), escrever a mensagem e clicar em **Salvar Mensagem** não
+mudava o pin — a tela seguia prometendo menos do que o envio ia fazer.
+
+Duas ausências, não uma: `saveGlobalMessage()` não chamava
+`updateGlobalMessageHints()`, e o textarea da mensagem global não tinha
+`oninput` — as linhas de contato tinham, o campo global não. Agora o salvar
+reavalia, e digitar também, mas só quando o "tem texto" **vira**:
+`updateGlobalMessageHints` percorre todas as linhas da tabela, e chamá-la a
+cada tecla travaria a digitação numa planilha grande, sem mudar nada — o pin
+depende de o texto estar vazio ou não, e de mais nada.
+
+Coberto por `tests/test_anexo_global.py` e `tests/test_anexo_global_ui.js`.
+
+
+## 2026-09-23 (rascunho no campo saía como legenda do anexo)
+
+Relatado em teste: a conversa abriu com um texto já escrito no campo de
+mensagem, o anexo foi adicionado, e **o texto antigo foi embarcado junto com o
+arquivo** — para um contato que nunca deveria recebê-lo.
+
+Não faltava limpeza; ela estava no lugar errado. `_clear_input_field` era
+chamado no **Passo 2**, depois de o anexo já ter sido enviado: protegia a
+digitação, não o anexo. E o WhatsApp Web promove o que estiver no campo de
+mensagem a **legenda do modal de anexo**, então o Passo 1 levava o rascunho
+junto sem ninguém no caminho olhar para ele.
+
+Ninguém olhava mesmo: `_type_caption_in_modal`, que limparia o campo de
+legenda, **não chega a ser chamado**. `all_images` é uma constante `False` em
+`_send_message`, então o texto sempre sai como mensagem separada e o modal é
+enviado por `_finalizar_envio_de_anexo`, que clica em enviar sem tocar na
+legenda. O que o modal herdou, o modal manda.
+
+E rascunho ali não é acidente raro: um envio interrompido entre `_human_type` e
+`_confirm_message_sent` deixa exatamente isso para trás — é o mesmo estado que
+a varredura precisa distinguir (o "draft guard" de `linha_conversa.py`) — além
+do que o próprio usuário pode ter digitado na conversa.
+
+`_exigir_campo_vazio_antes_do_anexo()` roda agora antes de qualquer anexo, e só
+gasta clique quando há o que apagar. Não conseguir esvaziar levanta
+`AttachmentError`: o contato fica inválido, sem envio, recuperável pelo botão
+de reenviar. É de propósito o desfecho mais conservador — mandar para o contato
+de alguém um texto que não era para ele não tem desfazer.
+
+Coberto por `tests/test_rascunho_no_anexo.py`, inclusive a garantia de ORDEM
+(a limpeza tem que vir antes do `_send_media`), que é onde o bug morava.
+
+## 2026-09-23 (anexo global)
+
+O mesmo arquivo para todos os contatos, ao lado da Mensagem Global. Veio do uso
+real: no log de 23/09/2026 o cliente anexou a mesma imagem linha por linha,
+quinze uploads do mesmo arquivo.
+
+A regra é a da mensagem global, de propósito: **fallback, não substituição**.
+Só vale para quem está com a coluna `Arquivo` vazia, para que dar um arquivo
+diferente a um contato não obrigue a desligar o global para todos os outros.
+Nada muda na ordem de envio — anexo primeiro, texto depois, como sempre foi.
+
+Duas diferenças deliberadas em relação à mensagem global:
+
+**É gravado no servidor** (`uploads/anexo_global.json`), não no `localStorage`
+do navegador. A mensagem o usuário reconhece e reescreve em segundos; o anexo é
+um caminho de arquivo que ele não tem como adivinhar, e perdê-lo calado faz a
+campanha inteira sair sem imagem, sem nada na tela dizendo isso.
+
+**O arquivo é conferido duas vezes**, na restauração e no `/start`. Um caminho
+morto num contato estraga um contato; no anexo global estraga a lista inteira, e
+do jeito mais caro que existe — `AttachmentError` marca inválido SEM
+retentativa, um por um, até acabar. Na restauração o anexo volta desligado com
+o motivo no log; no `/start` o envio é recusado antes de abrir o navegador.
+
+### A estimativa de tempo tinha que enxergar isso
+
+Com o anexo global ligado, *todo* contato passa a ter anexo — o componente mais
+caro do envio depois de abrir a conversa. `_estimar_tempo_envio_total` lia
+`Arquivo` direto da linha e não veria nada disso: o usuário ligaria o anexo, a
+tela continuaria prometendo o mesmo tempo de antes, e o envio estouraria a
+janela configurada. É o erro que o CHANGELOG de 06/09/2026 descreve (previu
+45min para um envio de 2h), pela mesma porta.
+
+Por isso a resolução dos globais virou `_resolver_globais()`, com **dois**
+consumidores que precisam concordar: o laço de envio e a estimativa. De quebra
+isso conserta a mensagem global, que tinha o mesmo furo — uma linha com
+`Mensagem` vazia custava ~nada de digitação na conta, mesmo quando o que ia ser
+digitado era uma mensagem global de 900 caracteres.
+
+Coberto por `tests/test_anexo_global.py`. A bateria e2e só consegue afirmar o
+caso "desligado": o `fake_whatsapp.py` não modela um anexo que dá certo — ver a
+lacuna anotada em `TestAnexoGlobal`.
+
+
+## 2026-09-23 (atualizar o programa apagava a campanha do cliente)
+
+Relato da mesma leva da 1.4.7: *"quando fecha e abre o programa ainda está
+sumindo a planilha anexada"* — e, perguntado o que ele via no lugar, *"ele abre
+a planilha com uma mensagem de teste inicial, como se ele tivesse abrindo pela
+primeira vez"*.
+
+Restaurar a planilha nunca esteve quebrado. O que estava errado era o **lugar**:
+a pasta de dados era a pasta de instalação.
+
+`launcher.py` faz `os.chdir(os.path.dirname(sys.executable))`, e todo caminho do
+app era relativo a isso — `uploads/contatos.xlsx`, `uploads/media/`,
+`uploads/config.json`, `uploads/seletores_cache.json`, `chrome_profile/`,
+`log.txt`. Tudo dentro da pasta do .exe, que é exatamente a pasta que o cliente
+sobrescreve para atualizar. E o `build.bat` ainda punha no .zip um
+`uploads/contatos.xlsx` de fábrica (um contato "Mauricio", `Olá {nome}, tudo
+bem?`), com o **mesmo nome do arquivo vivo dele**. Descompactar a versão nova
+não só apagava a campanha: deixava a planilha de teste no lugar dela.
+
+O log de 23/09/2026 tem o estrago inteiro, e cada linha é um pedaço diferente do
+mesmo problema:
+
+```
+16:14:56  Planilha restaurada da sessão anterior (gravada em 23/09/2026 16:13).
+16:43:48  ⏳ Escaneie o QR Code no navegador para conectar seu WhatsApp...
+```
+
+A "sessão anterior" tinha um minuto de idade: era a extração do .zip. O app
+chamou a planilha de fábrica de "sua sessão anterior" porque a única coisa que
+ele conferia era o arquivo existir. E o QR Code voltou porque o
+`chrome_profile/` morava no mesmo lugar e foi junto.
+
+A partir daí, a consequência que o cliente sentia: sem reconhecer a planilha, ele
+recarregava a dele toda sessão. E `/upload` monta a planilha do zero, sem
+reaproveitar nada da anterior — então cada recarga zerava a coluna `Arquivo`
+(era esse o "anexo que some") **e** as marcas de `Enviado`, o que devolve para a
+fila quem já tinha recebido. Ele vinha contornando isso apagando à mão as linhas
+já enviadas (49 → 47, depois 49 → 46, no mesmo log).
+
+`stats_log.py` já tinha esbarrado nisto em 21/08/2026 ("todo lançamento de versão
+nova perde o histórico") e resolveu só para si, mandando o histórico para a home
+do usuário. Faltou o resto.
+
+### `caminhos.py`: um lugar só decide onde os dados moram
+
+Empacotado, a raiz é `%LOCALAPPDATA%\WhatsAppAutomacao` (com a home como
+reserva, onde a licença e o histórico já moravam). Fora da pasta do .exe, então
+nem atualizar por cima nem descompactar numa pasta nova — que é o que o cliente
+faz, a dele se chama "Whats 3" — alcança o que é dele.
+
+**Em desenvolvimento nada mudou, e isso é de propósito.** `dados_dir()` devolve
+`Path(".")` quando o app não está empacotado, e `Path(".") / "uploads"` é
+`Path("uploads")`: o mesmo caminho **relativo** de antes, resolvido contra o
+diretório atual na hora de cada acesso. É isso que mantém o `testar.bat`, o
+`test_app_estado.py` e sobretudo o `tests/e2e/ambiente.py` funcionando sem
+mudança — esse último importa o `app.py` uma vez e depois dá `os.chdir` para uma
+pasta temporária nova a cada cenário, e um caminho absoluto resolvido no import
+prenderia todos os cenários na primeira.
+
+A migração roda uma vez, copia (não move, para a instalação antiga continuar
+inteira) e nunca escreve por cima do que já exista no lugar novo — rodar de novo
+é sempre no-op, senão a segunda execução comeria a campanha. O `chrome_profile/`
+fica **de fora de propósito**: são centenas de MB de LevelDB de um perfil
+possivelmente em uso, atravessando volumes (o .exe do cliente está em `D:`, o
+`%LOCALAPPDATA%` em `C:`), e meia cópia dá um perfil corrompido, que é pior que
+nenhum. Sem ele o cliente lê o QR Code mais uma vez, nesta atualização, e nunca
+mais.
+
+### O .zip deixa de levar um arquivo com o nome do arquivo vivo
+
+A planilha modelo do build virou `uploads/modelo_contatos.xlsx` — que é, aliás,
+o nome que o `LEIA-ME_CLIENTE.txt` sempre mandou o cliente procurar. O documento
+estava errado; agora está certo.
+
+Com isso a primeira execução de verdade fica legitimamente **sem planilha**, e
+`GET /contacts` responde 404. A tela trata esse 404 como primeira vez
+(`mostrarPrimeiraVez`), não como falha: passar por `setContactsLoadError`
+travaria o "Salvar Alterações" — proteção certa para um GET que falhou, e errada
+aqui, porque travaria justamente quem quer montar a lista do zero pelo
+"Adicionar Contato". O 404 só vira erro quando a tabela **já tinha** linhas, que
+é o caso diferente de a planilha sumir do disco no meio da sessão.
+
+Coberto por `tests/test_caminhos.py` (resolução e migração) e
+`tests/test_atualizacao_preserva_dados.py`, que encena a atualização inteira em
+processo separado — o `app.py` resolve os caminhos no import, então trocar o
+ambiente depois não provaria nada. Há também um teste que varre o código atrás
+de `Path("uploads...")` e `"chrome_profile"` escritos à mão, pela mesma razão do
+grep de seletores: o jeito realista de reintroduzir isto é alguém redigitar o
+caminho num arquivo novo, invisível num diff.
+
+
+## 2026-09-23 (a mensagem chegava escrita duas vezes no mesmo balão)
+
+O cliente relatou, na 1.4.7: *"está mandando a msg duplicada, ele copia a mesma
+msg duas vezes e envia"*. O balão chegava no celular do contato com o texto
+inteiro repetido, um logo depois do outro.
+
+Só um caminho do envio consegue fazer isso, e ele explica por que o bug era
+intermitente e por que apareceu só agora: `_paste_text`, usado **apenas** quando
+a mensagem tem caractere fora do BMP — emoji, bandeira, família. O `send_keys`
+do ChromeDriver não transmite esses caracteres, então o texto entra por um
+evento `paste` sintético. A mensagem da campanha do cliente tem 🙏 e 🇧🇷.
+
+O código antigo disparava o `paste` e, **na mesma linha de JavaScript**, lia
+`element.textContent` para decidir se precisava do `execCommand('insertText')`
+de reserva:
+
+```js
+element.dispatchEvent(pasteEvent);
+if (element.textContent.length === 0 || !element.textContent.includes(...)) {
+    document.execCommand('insertText', false, text);
+}
+```
+
+O campo do WhatsApp Web é um editor controlado por JavaScript: ele aceita o
+`paste`, mas escreve no DOM no **seu próprio ciclo de atualização**, depois que
+o `dispatchEvent` já retornou. A leitura da linha seguinte via, portanto, um
+campo ainda vazio — e o "reserva" entrava sempre. Um instante depois o `paste`
+original também era aplicado, por cima. Duas cópias, um ENTER, um balão.
+
+A condição era uma corrida, e é por isso que não saía em toda mensagem: quando o
+editor por acaso já tivesse desenhado, o `includes` acertava e o reserva ficava
+de fora.
+
+### A correção: o JavaScript não decide mais nada
+
+Os dois jeitos de inserir viraram dois scripts separados, e quem escolhe entre
+eles é o Python, **depois de olhar o campo**: dispara o `paste`, volta, e fica
+lendo `innerText` até o texto aparecer (`_PASTE_TIMEOUT_SEG`, 4s). O
+`insertText` só entra se o campo tiver ficado vazio a espera inteira — aí o
+WhatsApp de fato ignorou o evento, e sem o reserva a mensagem com emoji não
+sairia.
+
+A comparação ignora todo espaço em branco (`_normalizar_composer`), porque o
+campo devolve as quebras de linha remontadas à maneira dele, não como o texto
+entrou — comparar caractere a caractere daria "não encontrado" e faria o reserva
+entrar por cima do paste, que é o bug de novo, por outro caminho.
+
+### A conferência do último instante, que é o que fecha o buraco
+
+Esperar o campo estreita a fresta, mas não a fecha: colar é assíncrono, então
+uma cópia atrasada ainda pode cair **depois** de `_paste_text` ter conferido e
+voltado. Por isso `_garantir_texto_unico_no_campo` é um método à parte e roda
+**duas** vezes — a segunda dentro de `_send_message`, entre a pausa humana e o
+ENTER. É o único momento em que a conferência vale alguma coisa: o conteúdo
+daquele instante é o que vira o balão. Se houver mais de uma cópia, o campo é
+limpo e o texto reescrito antes de enviar.
+
+Essa segunda chamada é gasto de uma leitura do DOM, então ela é feita só no
+caminho que consegue duplicar sozinho (`_has_non_bmp`). Digitação caractere a
+caractere não tem como escrever duas vezes.
+
+Coberto por `tests/test_colagem_duplicada.py`. O dublê de navegador dos testes
+aplica o texto colado pela passagem do **tempo**, não na leitura seguinte — é
+assim no navegador de verdade, e um dublê que aplicasse o paste quando alguém
+olha esconderia justamente a corrida. Rodando a implementação antiga contra esse
+mesmo dublê, a mensagem fica 2x no campo; contra a nova, 1x.
+
+
+## 2026-09-16 (contato salvo na agenda não tinha leitura de entrega)
+
+O cliente relatou que, para quem já está **salvo na agenda dele**, o app não
+dizia se a mensagem tinha sido vista. A coluna ficava em `-`.
+
+A causa é uma só, e vale para as duas metades da feature: a linha da lista de
+conversas de um contato salvo mostra o **nome**, não o número. `numero_do_titulo`
+devolve `""` — comportamento correto, e documentado desde sempre — mas todo o
+casamento planilha-contra-lista era por número:
+
+- na **varredura**, o contato não era alcançado por nenhuma das duas passadas e
+  caía em "não encontrado", o único desfecho que não escreve nada. Na tela, um
+  `-` idêntico ao de quem nunca foi verificado;
+- no **alarme de entrega**, `_absorver_leitura_de_entrega` descartava a linha.
+  Isso não errava leitura nenhuma: mantinha o contato fora da **amostra**. Como
+  o alarme só avalia a partir de `_ENTREGA_AMOSTRA_MINIMA` (8), uma lista
+  majoritariamente de contatos salvos podia nunca juntar amostra e calar o
+  alarme inteiro — justamente o alarme que existe para detectar o número sendo
+  bloqueado.
+
+### O nome como casamento de reserva, nunca como identificador
+
+Número é identificador; nome não é. Dois "João Silva" na planilha são duas
+pessoas, e a lista de conversas não as separa. Então o nome só vale quando
+identifica **um** contato dos dois lados — e a ambiguidade tem dois lados que
+desqualificam igualmente: um nome que aparece em duas linhas da lista, e uma
+linha que casa com dois nomes da planilha. Qualquer um dos dois devolve o
+contato para "não encontrado", que é exatamente o comportamento anterior.
+Silêncio continua batendo invenção: escrever o estado da conversa de outra
+pessoa na linha deste contato não deixaria rastro nenhum na tela.
+
+O anúncio de não-lidas mora no mesmo elemento do título, prefixado e **sem
+espaço no meio** (`"1 mensagem não lidaIsis Campos"`) — o mesmo veneno que já
+tinha quebrado a extração de número, e que atinge exatamente quem respondeu,
+porque só quem respondeu tem badge. Por isso `titulo_casa_com_nome` aceita o
+nome no fim do título, desde que o que sobra na frente comece com dígito:
+anúncio começa com contador, nome de gente não. É independente de idioma. Sem
+essa condição, "Ana" casaria com "Mariana".
+
+### Na busca, a prova mais forte é o filtro em si
+
+Digitamos o número; o WhatsApp acha o contato pela agenda e mostra o nome.
+Casar de volta pelo número é impossível por construção. Mas a lista inteira foi
+filtrada pelo número que digitamos: se sobrou **uma única** conversa, e ela não
+exibe outro número, é a dele. Essa é a regra que cobre o caso comum de a
+planilha e a agenda escreverem o nome diferente ("Isis" contra
+"Isis Campos - Pilates"), que o casamento por nome sozinho não resolveria.
+
+Junto veio uma economia: `_buscar` esperava o `TIMEOUT_BUSCA_SEG` inteiro para
+todo contato salvo, porque a condição de saída era "apareceu uma linha com o
+número" — que nunca acontece para eles. Agora também sai quando o filtro
+estabiliza em uma conversa só (a mesma leitura duas vezes seguidas). Eram 4s
+por contato salvo numa varredura que existe para ser barata.
+
+## 2026-09-12 (a varredura desistia cedo demais, e sem deixar rastro)
+
+Um contato recebeu a mensagem às 13:17 e respondeu na hora. As verificações das
+13:22 e 13:24 gravaram **nada**, e a tela mostrou `-`.
+
+Não era leitura errada do tique: rodando a mesma busca depois, a linha casa em
+0,43s e o resultado sai certo (`Respondeu=Sim`, `RespostaTexto='Hummm'`). O log
+mostra o que realmente aconteceu — a conversa não foi *encontrada*:
+
+```
+13:22:24  ChromeDriver iniciado
+13:22:39  "23 conversa(s) na lista, estável por 6s"        <- declarou pronto
+13:22:39  [varredura] ... 19994229146 icones=['ic-schedule']  <- relógio: ainda enviando
+13:22:39  1 encontrado(s) direto na lista; buscando os outros 1.
+13:22:43  1 conversa(s) não localizadas
+```
+
+Quatro segundos exatos: o `TIMEOUT_BUSCA_SEG` inteiro, nas duas execuções. E o
+Chrome tinha 15 segundos de vida. A conversa era **nova**, criada pelo envio de
+cinco minutos antes, e ainda não existia nem na lista renderizada nem no índice
+da busca — o relógio (`ic-schedule`) numa mensagem já enviada é a assinatura
+disso. O outro número, uma conversa antiga, apareceu normalmente.
+
+É a mesma lição que o `CLAUDE.md` já registra para o envio ("a cold WhatsApp Web
+is the single biggest predictor of failure"), agora mordendo a varredura. E o
+sinal de prontidão é o mesmo que já se sabia não servir: `_aguardar_sincronizacao`
+imprimiu `"23 conversa(s), estável por 6s"` nas duas execuções, idêntico ao que
+imprime numa execução saudável.
+
+### Retentativa, não aquecimento
+
+"Não achei" e "ainda não sincronizou" são a mesma coisa vistas de fora. Em vez
+de aquecer o WhatsApp Web em toda varredura — o que cobraria de todo mundo o
+preço de um problema que quase nunca acontece —, quem não foi encontrado volta
+a ser buscado **uma vez**, depois de 20s. Quem apareceu na passada livre (o caso
+normal, quando a campanha foi a última coisa na conta) não espera nada.
+
+Uma retentativa, não um laço: depois da segunda volta a conversa realmente não
+está lá (contato salvo na agenda, conversa apagada), e insistir só gasta o tempo
+do cliente. A pausa respeita o botão Parar, e quem não chegou a ser consultado
+por causa de uma parada não é contado como "não encontrado" — não foi procurado.
+
+### E o lead mais quente aparecia sem o tempo
+
+Com a varredura funcionando, o mesmo contato apareceu como `Respondeu` — sem o
+tempo de resposta ao lado, que é justamente o dado que a coluna ordena.
+
+A causa é a granularidade do horário. A linha do WhatsApp mostra `13:17`, sem
+segundos, e `interpretar_horario` ancora no segundo 00. O envio terminou às
+13:17:09, então a conta dava **-9s**, e `latencia_segundos` devolvia `None` por
+ser negativa.
+
+A regra do negativo existia para a âncora de "Ontem" na meia-noite, onde o erro
+chega a 24h e afirmar qualquer coisa seria invenção. Mas há dois tamanhos de
+imprecisão, e tratá-los igual jogava fora o caso mais valioso: **negativo por
+menos de um minuto significa que a resposta chegou no mesmo minuto do envio**, e
+"menos de um minuto" é uma afirmação provada, não um chute. Quem responde na
+hora é o lead mais quente da lista — e além de não mostrar o tempo, ele caía
+para o **fim** da ordenação por latência, junto dos "não sei".
+
+Agora esse caso vale `0`, e a coluna mostra `< 1 min`. Curto porque a coluna tem
+80px e `whitespace-nowrap`: "menos de 1 min" foi medido em 85,5px contra 72px de
+caixa útil e vazaria por cima da coluna vizinha. A forma por extenso vive no
+tooltip ("Respondeu em menos de um minuto."), que não tem limite de largura.
+
+### O tooltip mostra o tempo, e só o tempo
+
+O teor da resposta chegou a aparecer no tooltip da coluna Resposta, junto do
+tempo. Foi retirado, e o motivo é uma regra de negócio que estava logo ao lado:
+**a varredura não reconsulta quem já está `Respondeu=Sim`** (`linhas_para_verificar`),
+porque ninguém des-responde e reconsultar custa 2-3s por contato.
+
+Isso vale para o booleano, mas não para o texto. O `RespostaTexto` gravado é o da
+**primeira** leitura e nunca mais é atualizado:
+
+```
+ele responde "Hummm"        → varredura → Respondeu=Sim, texto="Hummm"
+ele manda "quanto custa?"   → varredura → nada acontece, continua "Hummm"
+```
+
+O tempo de resposta é um fato que não muda. O teor pode mudar e a tela não
+ficaria sabendo — exibi-lo daria ao cliente uma impressão errada da conversa.
+
+A coluna continua sendo gravada na planilha. Ali a primeira resposta é
+justamente a certa: é ela que responde à campanha, e é ela que a triagem por
+teor vai consumir. O resto é conversa que o humano já está tendo.
+
+### Aspas não escapadas, achadas no caminho
+
+O tooltip acima expôs um problema latente: **`escapeHtml` não escapava aspas.**
+Ela usa `textContent` → `innerHTML`, que escapa `&`, `<` e `>` e deixa `"`
+passar — e quase todo uso dela aqui é dentro de um atributo (`title="..."`).
+Uma aspa dupla no valor fecha o atributo e o resto vira markup.
+
+`pessoa` e `motivo` já passavam por esse caminho, e vêm da planilha — que nem
+sempre foi digitada por quem está rodando o programa; base de contatos costuma
+vir de terceiros. Agora `escapeHtml` escapa `"` e `'`, o que é seguro nos dois
+contextos: dentro de um atributo o parser devolve a aspa, e como texto `&quot;`
+renderiza como `"`.
+
+### O desfecho que não deixava rastro
+
+"Não localizada" era um contador no resumo final e mais nada: nem qual número,
+nem o que a busca tinha devolvido. Como esse é o único resultado que não escreve
+nada na planilha, a linha fica idêntica à de um contato nunca verificado — os
+dois aparecem como `-` na tela. Não havia como saber, depois do fato, que algo
+tinha falhado.
+
+Foram seis sondas contra o WhatsApp Web real para diagnosticar uma ocorrência.
+Agora `_log_nao_encontrado()` grava número, volta e o que a busca viu, no log de
+arquivo (é evidência de auditoria, não recado para o cliente — mesma divisão do
+`_registrar`).
+
+## 2026-09-12 (o teor da resposta, e o rascunho que virava "respondeu")
+
+A varredura já dizia **se** o contato respondeu e **quando**. Não dizia **o
+quê** — e é exatamente esse o eixo que falta para separar "quente" de "morno".
+Latência e entrega saem de metadado; interesse não sai.
+
+O texto já estava sendo lido e jogado fora: `linha_conversa.interpretar()`
+devolve `ultima_mensagem` desde o começo, extraído no mesmo `execute_script`
+que lê o tique, e `varredura` simplesmente não gravava. Agora grava, na coluna
+`RespostaTexto`.
+
+Isso é a diferença entre poder reclassificar e ter que varrer tudo de novo. É a
+mesma razão pela qual `Entrega` é fato gravado e o rótulo quente/frio é
+derivado na exibição: com o texto na planilha, mudar a régua — por `?`, por
+palavra de opt-out, ou por uma chamada de LLM depois — é mudar uma função pura,
+offline, sem reabrir o Chrome.
+
+### Uma sonda que derrubou a hipótese, e achou outra coisa
+
+`sonda_texto_resposta.js`, rodada contra o WhatsApp Web real (23 linhas
+renderizadas, 19 com a última mensagem sendo do contato). A dúvida era se o
+`[data-testid="last-msg-status"]` — que existe para carregar o tique da NOSSA
+mensagem — some quando a última mensagem é dele, deixando o texto da resposta
+inalcançável justamente nos contatos que interessam.
+
+Não some: 18 das 19. E o `title` dele vem **inteiro**, não truncado (393 e 385
+caracteres capturados sem reticências de corte).
+
+De quebra, a sonda matou o candidato alternativo. O `linha_previa`
+(`cell-frame-secondary`) é `textContent`, então absorve o `<title>` do svg do
+ícone e o prefixo de remetente de grupo: sai `"wds-ic-readEu vim treinar"`,
+`"~Malu Matos: Combinado pessoal..."`. Alimentar uma triagem com isso seria
+ruim na heurística e pior no LLM. `linha_previa` continua sem consumidor, agora
+com motivo escrito.
+
+### A 19ª linha era um rascunho, e lia como resposta
+
+A única sem `last-msg-status` era uma conversa com **rascunho** — texto
+digitado e não enviado, que substitui a prévia e leva o elemento de status
+junto. Sem status, `nomesDeIcone()` devolvia `[]`, a regra por ausência
+concluía "a última mensagem é dele" e a planilha ganhava `Respondeu=Sim` num
+contato que nunca respondeu.
+
+E o caminho é alcançável numa campanha de verdade: um envio interrompido entre
+`_human_type` e `_confirm_message_sent` deixa o texto digitado como rascunho
+naquela conversa.
+
+O conserto segue o princípio que o módulo já usava para a cor do tique — azul
+prova leitura, ausência de azul não prova nada. Aqui: **ausência do elemento de
+status não é evidência de resposta**. O JS passou a devolver `null` (elemento
+ausente) em vez de `[]` (presente, sem tique), e `None` já caía em
+`INDETERMINADO`, que `aplicar_leitura` não grava. O badge de não-lidas continua
+vencendo — uma conversa pode ter rascunho E mensagem nova dele ao mesmo tempo.
+
+### Só quando respondeu
+
+Quando a última mensagem é **nossa**, o mesmo campo do DOM traz o **nosso**
+texto (a sonda capturou `'Show'`, `'Eu vim treinar'`). Gravar sempre encheria a
+coluna com a nossa própria campanha e a triagem classificaria a mensagem que
+nós mandamos como se fosse a resposta do contato. `RespostaTexto` só é escrito
+com `estado == ULTIMA_DELES`.
+
+Dois detalhes de borda: mídia vira rótulo localizado do WhatsApp (`"Foto"`,
+`"Figurinha"`, `"Mensagem apagada"`), não conteúdo — continua sendo resposta,
+só não tem teor para triar; e o texto é cortado em 500 caracteres, porque a
+planilha é aberta no Excel e o campo ainda trafega no `GET /contacts`.
+
+A coluna faz a ida e volta inteira (`GET /contacts` → `dataset` → `POST
+/contacts`), como as outras quatro da varredura: o editor reescreve a planilha
+a partir da tela, então o que não sobe some. E ela entra na exceção do
+`.str.upper()` do `/upload`, junto de `Arquivo` e `Motivo` — normalizar caixa
+faz sentido para `Enviado`/`Invalido`, e devolveria a resposta do contato
+GRITANDO.
+
+O rótulo quente/morno/frio continua **não existindo** como coluna. Isto é a
+matéria-prima dele, não ele.
+
+## 2026-09-12 (o conserto sem build só cobria metade do app)
+
+A camada de seletores remotos (`seletores.py`) existe para que uma mudança no
+DOM do WhatsApp vire uma linha publicada no Supabase em vez de um `.exe` novo
+para todos os clientes. Ela cobria a lista de conversas e a varredura — e não
+cobria o envio.
+
+Isso deixava o risco invertido. Se o WhatsApp mexesse na lista de conversas, a
+verificação de respostas parava e o conserto era uma linha de SQL. Se mexesse no
+campo de digitação do rodapé, **ninguém enviava mais nada** e o conserto era um
+build, uma release e todos os clientes baixando de novo. A quebra barata tinha
+conserto rápido; a cara, não.
+
+O campo de digitação é pior ainda do que parece: além de ser onde o texto é
+escrito, ele é a prova de que a conversa abriu (`_wait_chat_or_invalid_popup`
+espera por ele) e a prova de que a mensagem saiu (`_confirm_message_sent`
+confere se ele esvaziou). Um seletor, três responsabilidades, nenhuma lista de
+fallback.
+
+Agora todo o caminho de envio passa pela camada: campo de mensagem, `input[type=file]`,
+botão de anexar, botão de enviar do preview, campo de legenda, canvas do QR e os
+containers onde se procuram os textos de popup, alerta de conexão e contato
+bloqueado.
+
+### Listas, e por que o tipo não pode vir do payload
+
+Botão de anexar, botão de enviar e campo de legenda nunca foram um seletor só —
+são listas tentadas em ordem, e foi manter os nomes antigos na lista que fez o
+app atravessar as mudanças anteriores do WhatsApp sem release. Então o payload
+passou a aceitar lista de strings, com `lista()` ao lado de `get()`.
+
+O que o payload **não** pode fazer é trocar o tipo de uma chave: o código chama
+`get()` ou `lista()` conforme a chave, e deixar o remoto decidir isso seria
+deixar um conteúdo de terceiro escolher por qual caminho o app passa — e, no
+caso do `get()`, entregar uma lista onde o Selenium espera uma string. O tipo é
+fixado pelo embutido; divergiu, a chave é descartada.
+
+### O `#pane-side` que se consertava em um lugar de sete
+
+`pane_side` estava na tabela desde o começo, mas só um ponto do código
+perguntava por ela. Outros seis tinham `"#pane-side"` escrito à mão, e
+`_conversas_carregadas` ainda redigitava o `linha_conversa` inteiro.
+
+Publicar um conserto nesse estado arrumaria um ponto e deixaria seis quebrados
+— pior do que não ter a camada, porque o log diria "seletores atualizados" e o
+problema continuaria. Um teste agora varre o `whatsapp_sender.py` atrás desses
+literais.
+
+### O refetch novo é contado, não disparado no primeiro erro
+
+A invariante 4 do módulo diz que falha de contato nunca dispara busca remota:
+um número que não existe, a rede caindo ou o WhatsApp lento produzem o mesmo
+timeout, e nenhum deles diz nada sobre seletor.
+
+Por isso `_registrar_campo_mensagem_ausente()` conta contatos **seguidos** em
+que o campo nunca apareceu e só trata como falha estrutural no terceiro. O
+contador zera assim que o campo aparece. Um contato que não abre é o caso comum;
+três seguidos, com o `#pane-side` de pé, não se explica por azar.
+
+### O que continua escrito à mão, de propósito
+
+`footer`, o `div[contenteditable="true"]` genérico do fallback de legenda e a
+varredura `button`/`div[role="button"]`/`li` do menu de anexo: são formas de
+HTML comum, casadas por **texto**, não classes do WhatsApp. Pelo mesmo motivo,
+contato bloqueado, queda de conexão e número inválido continuam decididos por
+marcadores de texto em pt/en/es — esses quebram quando o WhatsApp muda a
+redação, não a classe, e uma lista de marcadores por idioma não cabe na regra de
+uma string por chave do `_validar_payload`.
+
+## 2026-09-09 (programa desligado parecia licença perdida)
+
+Queixa: com o programa fechado, o usuário abria a página no navegador, ela
+carregava normalmente e pedia a chave de ativação. Ao ligar o programa, tudo
+voltava ao normal sozinho. O medo do usuário — "perdi minha licença" — era
+exatamente o oposto do que estava acontecendo.
+
+Eram duas coisas somadas:
+
+1. O navegador guardava o HTML de `/` no cache. Sem servidor no ar, ele servia
+   essa cópia: a tela abria inteira, com aparência de aplicação funcionando.
+2. `checkLicense()` tratava o erro de rede do `fetch('/license/status')` no
+   mesmo `catch` de uma licença inválida, e o catch abria o formulário de
+   ativação. "Não consegui falar com o servidor" virava "sua licença não vale".
+
+Correção nos dois lados. `GET /` agora responde com `Cache-Control: no-store`,
+então abrir a página sem o programa rodando dá o erro de conexão do próprio
+navegador, que é a verdade. E `checkLicense()` separa os três casos: erro de
+rede abre um aviso próprio ("o programa não está rodando, sua licença continua
+ativa") que reconecta sozinho a cada 3s e recarrega a página quando o servidor
+volta; HTTP 500 ainda pede a chave, mas dizendo que a verificação falhou no
+servidor; e só `valida: false` é apresentado como licença de fato inválida.
+
+O aviso de offline é um overlay separado do de licença de propósito — juntar os
+dois textos é justamente o bug que isto corrige.
+
 ## 2026-09-03 (arranque frio do WhatsApp Web e execução interrompida)
 
 Duas queixas do cliente, mesma raiz. "No dia seguinte o sistema começou a

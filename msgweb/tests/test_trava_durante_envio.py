@@ -37,13 +37,24 @@ def rodar(coro):
 
 
 class SenderFalso:
-    """Só o que a trava consulta: se o envio está rodando."""
+    """
+    Só o que a trava consulta: se o envio está rodando, e se a verificação de
+    respostas está rodando.
 
-    def __init__(self, rodando):
+    A varredura entrou aqui porque ela reescreve a MESMA planilha e disputa o
+    mesmo `chrome_profile/` — aceitar uma edição de contatos no meio dela faria
+    os dois gravarem o arquivo ao mesmo tempo.
+    """
+
+    def __init__(self, rodando, varrendo=False):
         self._rodando = rodando
+        self._varrendo = varrendo
 
     def is_running(self):
         return self._rodando
+
+    def is_varrendo(self):
+        return self._varrendo
 
 
 class TravaDuranteEnvioTest(unittest.TestCase):
@@ -128,6 +139,19 @@ class TravaDuranteEnvioTest(unittest.TestCase):
         self.assertEqual(resposta["status"], "ok")
         self.assertEqual(appmod.state.config["total_msgs"], 77)
 
+    def test_contatos_travados_durante_a_verificacao_de_respostas(self):
+        """
+        A varredura reescreve a MESMA `uploads/contatos.xlsx` (colunas
+        Respondeu/DataResposta/Entrega). Salvar a tela no meio dela faria os
+        dois gravarem o arquivo, e o último a escrever venceria — apagando ou
+        as edições do usuário, ou o resultado da varredura.
+        """
+        appmod.state.sender = SenderFalso(rodando=False, varrendo=True)
+        with self.assertRaises(HTTPException) as ctx:
+            appmod._recusar_se_enviando("qualquer motivo")
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("verificação", ctx.exception.detail.lower())
+
     def test_config_aceita_sem_sender_nenhum(self):
         """Primeira abertura do app: `state.sender` é None."""
         appmod.state.sender = None
@@ -153,6 +177,9 @@ class TravaDuranteEnvioTest(unittest.TestCase):
 
             def is_running(self):
                 return True  # is_running() não distingue pausado de enviando
+
+            def is_varrendo(self):
+                return False
 
         appmod.state.sender = SenderPausado()
         with self.assertRaises(HTTPException):

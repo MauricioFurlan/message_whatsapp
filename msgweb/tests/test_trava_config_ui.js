@@ -41,7 +41,7 @@ const ids = [
     'cfg-total-msgs-input', 'cfg-tempo', 'cfg-hora-inicio', 'cfg-hora-fim',
     'cfg-skip-weekends', 'cfg-human-behavior', 'cfg-allow-duplicates',
     'btn-save-config', 'global-msg-toggle', 'global-message',
-    'btn-save-global-msg', 'settings-locked-hint', 'global-msg-toggle-label',
+    'settings-locked-hint', 'global-msg-toggle-label',
     'global-msg-status', 'control-status', 'btn-start', 'btn-stop',
     'contacts-section', 'contacts-tbody', 'contacts-status', 'upload-status',
     'file-input', 'btn-add-contact', 'btn-upload-sheet', 'btn-download-contacts',
@@ -106,8 +106,12 @@ const camposDeConfig = [
         camposDeConfig.filter(id => !elementos[id].disabled), []);
     checar('travado: textarea da mensagem global desabilitado',
         elementos['global-message'].disabled, true);
-    checar('travado: botão de salvar mensagem global desabilitado',
-        elementos['btn-save-global-msg'].disabled, true);
+    // Nao ha mais botao de salvar: a mensagem global grava sozinha ao sair
+    // do campo, como o anexo ja fazia. Quem impede a edicao durante o envio e'
+    // o textarea desabilitado (acima) — e, por baixo, a recusa do proprio
+    // saveGlobalMessage, verificada logo adiante.
+    checar('travado: o botão de salvar não existe mais na tela',
+        html.includes('id="btn-save-global-msg"'), false);
     checar('travado: aviso visível na tela',
         elementos['settings-locked-hint'].classList.contains('hidden'), false);
 
@@ -148,8 +152,7 @@ const camposDeConfig = [
     lockSettingsEditing(false);
     checar('toggle OFF: textarea segue desabilitado mesmo destravado',
         elementos['global-message'].disabled, true);
-    checar('toggle OFF: botão de salvar segue desabilitado',
-        elementos['btn-save-global-msg'].disabled, true);
+    // (nao ha mais botao de salvar — ver o checar la em cima)
 
     // --- startSending ainda grava config e mensagem ANTES do /start --------
     // Este é o caminho que a trava poderia quebrar sem aparecer: startSending
