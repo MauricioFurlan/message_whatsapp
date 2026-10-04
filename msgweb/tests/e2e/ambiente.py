@@ -4,7 +4,7 @@ O ambiente de um teste end-to-end: app de verdade, WhatsApp Web falso.
 
 Entra HTTP, sai planilha. Tudo entre as duas pontas é o código de produção —
 rotas do FastAPI, `AppState`, `WhatsAppSender`, planejamento de rajadas,
-`contact_logic`, `varredura`. Só três coisas são trocadas, e cada uma por um
+`contact_logic`, `varredura`. Só quatro coisas são trocadas, e cada uma por um
 motivo diferente:
 
 1. **O driver** (`_init_driver`), pelo `FakeWhatsAppWeb`. É a costura única que
@@ -18,6 +18,9 @@ motivo diferente:
 3. **A licença e o diálogo do Windows.** São recursos externos ao processo
    (Supabase e a janela nativa de "Abrir arquivo"); nenhum dos dois tem o que
    dizer sobre o envio.
+4. **O histórico de envios** (`stats_log`), que fica na home do usuário e não
+   em `uploads/`. Não é troca de comportamento, só de lugar: grava no
+   diretório do cenário, em `self.historico`.
 
 ## O que este arquivo deliberadamente NÃO isola
 
@@ -159,6 +162,21 @@ class AmbienteE2E:
 
         # Diálogo nativo do Windows (anexos): ctypes contra uma janela real.
         self._aplicar(patch.object(whatsapp_sender.win_dialog, "IS_WINDOWS", False))
+
+        # Histórico de envios: mora na HOME do usuário, não em `uploads/`
+        # (sobrevive às atualizações), então o CWD temporário não o isola.
+        # Sem isto cada campanha simulada somava no histórico REAL da máquina
+        # — em 04/10/2026 o "Baixar histórico" mostrou 1035 envios num dia em
+        # que só uma mensagem de verdade tinha saído. O `path` padrão das
+        # funções é resolvido na definição, então trocar a constante
+        # STATS_LOG_PATH não bastaria: trocam-se as funções.
+        self.historico = self._tmp / "historico_envios.jsonl"
+        stats_log = whatsapp_sender.stats_log
+        for nome in ("registrar_envio", "registrar_rejeitado", "obter_estatisticas"):
+            original = getattr(stats_log, nome)
+            self._aplicar(patch.object(
+                stats_log, nome,
+                lambda *a, _f=original, **k: _f(*a, **{**k, "path": self.historico})))
 
         # --- estado limpo, e o servidor de pé ---
         self._resetar_estado()

@@ -524,6 +524,20 @@
                             </div>
                         </summary>
                         <div class="pt-2">
+                            <div class="mb-2">
+                                <label class="inline-flex items-center gap-1.5 cursor-pointer"
+                                    title="Manda para todo mundo da lista que está como Pendente, um atrás do outro, sem parar para descansar.">
+                                    <input type="checkbox" id="cfg-modo-direto"
+                                        class="w-3.5 h-3.5 text-red-600 border-gray-300 rounded focus:ring-red-500">
+                                    <span class="text-xs text-gray-700">Envio direto</span>
+                                </label>
+                                <p id="cfg-aviso-direto" class="hidden mt-1 text-xs text-red-600">
+                                    ⚠️ <strong>CUIDADO!</strong> O programa vai mandar a mensagem para <strong>todo mundo da lista que está como <span class="text-amber-600">Pendente</span></strong>, um atrás do outro, sem parar para descansar.<br>
+                                    Isso pode fazer o WhatsApp <strong>BLOQUEAR o seu número</strong>.<br>
+                                    Só use se tiver certeza.
+                                </p>
+                                <p id="cfg-direto-horario" class="hidden mt-1 text-xs text-gray-600"></p>
+                            </div>
                             <div class="grid grid-cols-2 gap-2">
                                 <div>
                                     <label class="block text-xs text-gray-600 mb-0.5">Quantas mensagens?</label>
@@ -838,12 +852,16 @@
             const campos = [
                 'cfg-total-msgs-input', 'cfg-tempo', 'cfg-hora-inicio', 'cfg-hora-fim',
                 'cfg-skip-weekends', 'cfg-human-behavior', 'cfg-allow-duplicates',
+                'cfg-modo-direto',
                 'btn-save-config', 'global-msg-toggle', 'global-anexo-toggle',
             ];
             campos.forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.disabled = locked;
             });
+            // Quantidade e tempo dependem TAMBÉM do modo: destravar não pode
+            // reabilitá-los com o envio direto ligado.
+            aplicarModoEnvio();
 
             // Textarea e botão da mensagem global dependem TAMBÉM do toggle:
             // com o toggle desligado eles já ficam desabilitados, e destravar
@@ -853,6 +871,40 @@
 
             const hint = document.getElementById('settings-locked-hint');
             if (hint) hint.classList.toggle('hidden', !locked);
+        }
+
+        function isModoDireto() {
+            const el = document.getElementById('cfg-modo-direto');
+            return !!(el && el.checked);
+        }
+
+        // Envio direto ignora quantidade e tempo: os campos ficam cinza, com
+        // os valores guardados para a volta às rajadas, e o aviso de risco
+        // fica visível enquanto o modo estiver ligado.
+        function aplicarModoEnvio() {
+            const direto = isModoDireto();
+            ['cfg-total-msgs-input', 'cfg-tempo'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = direto || settingsLocked;
+            });
+            const aviso = document.getElementById('cfg-aviso-direto');
+            if (aviso) aviso.classList.toggle('hidden', !direto);
+            const horario = document.getElementById('cfg-direto-horario');
+            if (horario) {
+                horario.classList.toggle('hidden', !direto);
+                horario.textContent = textoHorarioDireto();
+            }
+        }
+
+        // Com os horários que estão na tela, não "o horário configurado": o
+        // cliente é leigo e precisa ver o próprio horário escrito ali.
+        function textoHorarioDireto() {
+            const inicio = document.getElementById('cfg-hora-inicio').value || '08:00';
+            const fim = document.getElementById('cfg-hora-fim').value || '18:00';
+            const semFds = document.getElementById('cfg-skip-weekends').checked;
+            return `🕗 Ele só manda das ${inicio} às ${fim}` +
+                (semFds ? ', e não manda no sábado nem no domingo' : '') +
+                '. Fora desse horário, ele espera e continua depois sozinho.';
         }
 
         function aplicarEstadoMensagemGlobal() {
@@ -1653,6 +1705,10 @@
                     if ('allow_duplicates' in status.config) {
                         document.getElementById('cfg-allow-duplicates').checked = status.config.allow_duplicates;
                     }
+                    if ('modo_envio' in status.config) {
+                        document.getElementById('cfg-modo-direto').checked = status.config.modo_envio === 'direto';
+                    }
+                    aplicarModoEnvio();
                     updateEstimativa();
                 }
             }
@@ -2889,6 +2945,8 @@
                 if ('skip_weekends' in config) document.getElementById('cfg-skip-weekends').checked = config.skip_weekends;
                 if ('human_behavior' in config) document.getElementById('cfg-human-behavior').checked = config.human_behavior;
                 if ('allow_duplicates' in config) document.getElementById('cfg-allow-duplicates').checked = config.allow_duplicates;
+                if ('modo_envio' in config) document.getElementById('cfg-modo-direto').checked = config.modo_envio === 'direto';
+                aplicarModoEnvio();
                 updateEstimativa();
                 configLoaded = true;
 
@@ -2924,6 +2982,7 @@
                 skip_weekends: document.getElementById('cfg-skip-weekends').checked,
                 human_behavior: document.getElementById('cfg-human-behavior').checked,
                 allow_duplicates: document.getElementById('cfg-allow-duplicates').checked,
+                modo_envio: isModoDireto() ? 'direto' : 'rajadas',
             };
 
             // Salva no localStorage
@@ -3122,6 +3181,11 @@
             const avisoEl = document.getElementById('cfg-aviso-ritmo');
             const headerEl = document.getElementById('cfg-total-msgs-header');
 
+            if (isModoDireto()) {
+                updateEstimativaDireto(estimativaEl, avisoEl, headerEl);
+                return;
+            }
+
             if (totalMsgs <= 0) {
                 estimativaEl.textContent = '';
                 avisoEl.classList.add('hidden');
@@ -3192,6 +3256,31 @@
                 } catch (err) {
                     // Sem planilha carregada ainda, ou erro de rede: mantém só a
                     // checagem local acima, sem quebrar a tela.
+                }
+            }, 400);
+        }
+
+
+        // Modo direto: sem prazo, então não há "ritmo apertado" a avisar — só a
+        // previsão de quanto os pendentes vão levar.
+        function updateEstimativaDireto(estimativaEl, avisoEl, headerEl) {
+            avisoEl.classList.add('hidden');
+            estimativaEl.textContent = 'Vai mandar para todo mundo que está como Pendente';
+            if (headerEl) headerEl.textContent = 'Direto · todos';
+            clearTimeout(_estimateDebounceTimer);
+            const seq = ++_estimateRequestSeq;
+            _estimateDebounceTimer = setTimeout(async () => {
+                try {
+                    const resp = await fetch('/estimate?modo_envio=direto');
+                    if (seq !== _estimateRequestSeq) return;
+                    const data = await resp.json();
+                    if (data.status !== 'ok' || !isModoDireto()) return;
+                    estimativaEl.textContent = data.pendentes > 0
+                        ? `${data.pendentes} pessoa(s) como Pendente. Deve levar mais ou menos ${data.tempo_total_estimado_fmt}.`
+                        : 'Ninguém da lista está como Pendente';
+                    if (headerEl) headerEl.textContent = `Direto · ${data.pendentes} msgs`;
+                } catch (err) {
+                    // Sem planilha ou sem servidor: fica o texto genérico acima.
                 }
             }, 400);
         }
@@ -3472,12 +3561,21 @@
         // Recalcula estimativa ao alterar campos de configuração
         document.getElementById('cfg-total-msgs-input').addEventListener('input', updateEstimativa);
         document.getElementById('cfg-tempo').addEventListener('change', updateEstimativa);
+        document.getElementById('cfg-modo-direto').addEventListener('change', () => {
+            aplicarModoEnvio();
+            updateEstimativa();
+        });
+        // A frase do horário do modo direto mostra os valores da tela.
+        ['cfg-hora-inicio', 'cfg-hora-fim', 'cfg-skip-weekends'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('change', aplicarModoEnvio);
+        });
 
         // Sincroniza a configuração com o servidor a cada alteração
         [
             'cfg-total-msgs-input', 'cfg-tempo',
             'cfg-hora-inicio', 'cfg-hora-fim', 'cfg-skip-weekends', 'cfg-human-behavior',
-            'cfg-allow-duplicates',
+            'cfg-allow-duplicates', 'cfg-modo-direto',
         ].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.addEventListener('change', autoSaveConfig);

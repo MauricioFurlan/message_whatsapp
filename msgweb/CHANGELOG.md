@@ -1,5 +1,73 @@
 # Changelog
 
+## 2026-10-04 (os testes somavam no histórico de envios da máquina)
+
+Relato: o "Baixar histórico" mostrou **1035 envios** num dia em que só uma
+mensagem de verdade tinha saído.
+
+**Causa.** O histórico (`stats_log.py`) mora na **home** do usuário
+(`~/.whatsapp_automacao_stats.jsonl`), de propósito, para sobreviver às
+atualizações. O `AmbienteE2E` isola o app trocando o diretório de trabalho por
+um temporário, o que cobre `uploads/`, mas **não a home**. Cada campanha
+simulada gravava "enviado"/"rejeitado" no histórico real. Duas rodadas da suíte
+completa em 04/10 deixaram ~1030 linhas. O mesmo vinha acontecendo desde que a
+bateria e2e existe: em 16/09, 23/09, 30/09 e 03/10 aparecem centenas de linhas
+gravadas no mesmo segundo, o que só um envio simulado faz.
+`tests/test_aviso_lentidao.py` tinha o mesmo problema em escala menor (+10
+"rejeitados" por execução, via `_contar_invalido`).
+
+**Correção.** O `AmbienteE2E` troca `registrar_envio`, `registrar_rejeitado`
+e `obter_estatisticas` por versões que gravam e leem no diretório do cenário
+(`amb.historico`). É preciso trocar as funções, não a constante
+`STATS_LOG_PATH`, porque o `path` padrão é resolvido na definição.
+`test_aviso_lentidao.py` desliga o `registrar_rejeitado`, como
+`test_numeros.py` e `test_mensagem_global.py` já faziam.
+`tests/e2e/test_e2e_historico.py` roda uma campanha e falha se o arquivo real
+mudar de tamanho ou de data. A suíte inteira, rodada arquivo por arquivo, não
+grava mais nada lá.
+
+**O cliente não foi afetado.** O histórico é por máquina, e os testes não vão
+no `.exe` (`test_isolamento_do_build.py`). O problema era só nas máquinas onde
+a suíte roda.
+
+## 2026-10-04 (modo "envio direto", sem rajadas)
+
+Alternativa simples às rajadas, pedida depois do relato do tempo (entrada
+abaixo). Uma opção na Configuração, **"Envio direto (sem rajadas)"**, que envia
+para **todos os pendentes**, um depois do outro, com intervalo sorteado entre
+**15 e 30s** a cada mensagem. Regras decididas pelo usuário em 03/10 e 04/10:
+
+- **Ignora "Quantas mensagens?" e "Em quanto tempo?"**. Os dois campos ficam
+  desabilitados na tela, mas os valores continuam gravados para a volta às
+  rajadas. A estimativa passa a mostrar "N pendente(s), ~Xh Ymin" (envio de
+  cada contato + 22,5s médios de intervalo).
+- **O intervalo não é configurável.** Fica em `DIRETO_INTERVALO_MIN/MAX`.
+- **Falha se comporta como na rajada.** O contato que falhou não espera o
+  intervalo. De quebra, nos dois modos, o laço não espera mais depois do
+  **último** contato da planilha (antes, uma falha no meio fazia sobrar uma
+  espera de 15-30s sem envio nenhum depois dela).
+- **O horário comercial continua valendo**, conferido antes de cada mensagem,
+  pelo mesmo caminho das rajadas.
+- **Aviso de risco** em vermelho na tela enquanto o modo estiver ligado, e
+  registro no log: na configuração, no início do envio e no fim
+  ("em 1h 40min (modo direto)").
+- **O alarme de entrega continua funcionando.** Ele lia a lista de conversas
+  nas pausas entre rajadas, que o modo direto não tem: ficaria mudo justamente
+  no modo mais arriscado. Agora, no modo direto, a leitura roda dentro do
+  intervalo a cada 10 envios (`_VERIFICACAO_DIRETO_A_CADA`), limitada a 25% do
+  intervalo, e o intervalo a absorve sem ficar mais longo.
+
+Por dentro, é o mesmo laço de `start()` com uma "rajada" única do tamanho dos
+pendentes e sem pausa longa: deduplicação, validação, Parar, falhas e retomada
+não ganharam caminho próprio. `modo_envio` (`"rajadas"` | `"direto"`) é
+gravado em `uploads/config.json`, travado durante o envio como o resto da
+configuração, e um valor desconhecido é recusado com 422.
+
+Na mesma data, o **piso da pausa reajustada** das rajadas subiu de 15s para
+metade da planejada (ver a entrada de 03/10).
+
+Testes: `tests/e2e/test_e2e_direto.py`, `tests/test_modo_direto_ui.js`.
+
 ## 2026-10-03 (rajadas: o tempo configurado passa a ser cumprido)
 
 Relato do cliente: o envio em rajadas "não está fiel ao tempo estipulado".

@@ -14,7 +14,7 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from threading import Thread
-from typing import Optional
+from typing import Literal, Optional
 
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -100,6 +100,9 @@ class ConfigModel(BaseModel):
     skip_weekends: bool = True
     human_behavior: bool = True
     allow_duplicates: bool = False
+    # "direto": sem rajadas, todos os pendentes, intervalo de 15-30s. Ignora
+    # total_msgs e tempo_minutos, que ficam guardados para a volta às rajadas.
+    modo_envio: Literal["rajadas", "direto"] = "rajadas"
 
 
 # --- Global State ---
@@ -114,6 +117,7 @@ class AppState:
         "skip_weekends": True,
         "human_behavior": True,
         "allow_duplicates": False,
+        "modo_envio": "rajadas",
     })
     excel_path: Optional[str] = None
     # Procedência da planilha em uso: "upload" (enviada agora), "editor"
@@ -368,9 +372,13 @@ def _restaurar_config_do_disco() -> None:
     conhecidas = set(state.config)
     aplicadas = {k: v for k, v in salvo.items() if k in conhecidas}
     state.config.update(aplicadas)
+    ritmo = (
+        "envio direto (todo mundo da lista, um atrás do outro)"
+        if state.config.get("modo_envio") == "direto"
+        else f"{state.config.get('total_msgs')} msgs em {state.config.get('tempo_minutos')}min"
+    )
     add_log(
-        f"Configuração restaurada da sessão anterior: {state.config.get('total_msgs')} msgs "
-        f"em {state.config.get('tempo_minutos')}min, horário "
+        f"Configuração restaurada da sessão anterior: {ritmo}, horário "
         f"{state.config.get('hora_inicio')}h-{state.config.get('hora_fim')}h, "
         f"duplicados {'permitidos' if state.config.get('allow_duplicates') else 'bloqueados'}."
     )
@@ -882,14 +890,22 @@ async def set_config(config: ConfigModel):
         "skip_weekends": config.skip_weekends,
         "human_behavior": config.human_behavior,
         "allow_duplicates": config.allow_duplicates,
+        "modo_envio": config.modo_envio,
     }
 
     _salvar_config_em_disco()
 
-    add_log(
-        f"Configuração atualizada: {config.total_msgs} msgs em {config.tempo_minutos}min, "
-        f"horário {config.hora_inicio}h-{config.hora_fim}h"
-    )
+    if config.modo_envio == "direto":
+        add_log(
+            f"Configuração atualizada: envio direto (todo mundo da lista, um atrás do "
+            f"outro — pode fazer o WhatsApp bloquear o número), horário "
+            f"{config.hora_inicio}h-{config.hora_fim}h"
+        )
+    else:
+        add_log(
+            f"Configuração atualizada: {config.total_msgs} msgs em {config.tempo_minutos}min, "
+            f"horário {config.hora_inicio}h-{config.hora_fim}h"
+        )
     return {"status": "ok", "config": state.config}
 
 
@@ -1003,7 +1019,7 @@ async def set_global_attachment(payload: GlobalAttachmentModel):
 
 
 @app.get("/estimate")
-async def estimate_time(total_msgs: int = 0, tempo_minutos: int = 0):
+async def estimate_time(total_msgs: int = 0, tempo_minutos: int = 0, modo_envio: str = "rajadas"):
     """
     Prévia do tempo real de envio para o painel, ANTES de clicar em "Iniciar
     Envio". Reaproveita a mesma conta que o sender faz de verdade em
@@ -1016,7 +1032,8 @@ async def estimate_time(total_msgs: int = 0, tempo_minutos: int = 0):
     """
     if not state.excel_path or not os.path.exists(state.excel_path):
         return {"status": "sem_planilha"}
-    if total_msgs <= 0 or tempo_minutos <= 0:
+    direto = modo_envio == "direto"
+    if not direto and (total_msgs <= 0 or tempo_minutos <= 0):
         return {"status": "ok", "session_target": 0, "inviavel": False}
 
     # Os globais entram aqui porque a conta é sobre o que vai ser REALMENTE
@@ -1031,6 +1048,20 @@ async def estimate_time(total_msgs: int = 0, tempo_minutos: int = 0):
     )
     df = sender._load_contacts()
     pending = get_pending_contacts(df)
+
+    if direto:
+        # Sem prazo: todos os pendentes, envio + intervalo médio entre eles.
+        estimado = sender._estimar_tempo_modo_direto(pending)
+        return {
+            "status": "ok",
+            "modo_envio": "direto",
+            "session_target": len(pending),
+            "pendentes": len(pending),
+            "inviavel": False,
+            "tempo_total_estimado_seg": round(estimado),
+            "tempo_total_estimado_fmt": WhatsAppSender._fmt_duracao(estimado),
+        }
+
     session_target = min(total_msgs, len(pending))
 
     if session_target <= 1:

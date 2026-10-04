@@ -548,6 +548,11 @@ class WhatsAppSender:
     # atrasaria a próxima rajada e faria o envio passar do tempo prometido ao
     # usuário — o orçamento do plano é um total, não uma sugestão.
     _VERIFICACAO_FRACAO_DA_PAUSA = 0.25
+    # Modo direto não tem pausa entre rajadas, que é onde a leitura acima
+    # roda — sem isto o alarme ficaria mudo justamente no modo mais arriscado.
+    # Lá a leitura cabe no intervalo de 15-30s, a cada tantos envios
+    # (decisão do usuário, 2026-10-04).
+    _VERIFICACAO_DIRETO_A_CADA = 10
 
     def _registrar_envio_para_entrega(self, numero: str, pessoa: str) -> None:
         """Anota um envio concluído para que a pausa possa conferir a entrega."""
@@ -588,14 +593,25 @@ class WhatsAppSender:
         o tempo gasto aqui é nosso, não do WhatsApp, e poluí-la faria o aviso
         de lentidão disparar por causa do nosso próprio código.
         """
-        if pause_after < self._VERIFICACAO_PAUSA_MINIMA_SEG or self._should_stop():
+        if pause_after < self._VERIFICACAO_PAUSA_MINIMA_SEG:
+            return
+        self._ler_entregas(pause_after * self._VERIFICACAO_FRACAO_DA_PAUSA)
+
+    def _ler_entregas(self, orcamento_seg: float) -> None:
+        """
+        O miolo de `_verificar_entregas_na_pausa`, sem a exigência de pausa
+        longa: também roda dentro do intervalo do modo direto. As três regras
+        de lá valem aqui — nunca levanta, desiste ao passar de `orcamento_seg`,
+        sai na hora com o Parar.
+        """
+        if self._should_stop():
             return
         with self._lock:
             se_tem_o_que_ler = bool(self._enviados_nesta_execucao)
         if not se_tem_o_que_ler or not self._driver:
             return
 
-        limite = time.monotonic() + pause_after * self._VERIFICACAO_FRACAO_DA_PAUSA
+        limite = time.monotonic() + orcamento_seg
         try:
             linhas = linha_conversa.ler_linhas(self._driver)
             if time.monotonic() > limite or self._should_stop():
@@ -2114,6 +2130,15 @@ class WhatsAppSender:
     # coladas arriscam bloqueio; passar do tempo configurado é o preço aceito.
     PAUSA_PISO_FRACAO = 0.5
 
+    # Modo "envio direto" (decidido pelo usuário em 2026-10-03): sem rajadas,
+    # todos os pendentes, intervalo sorteado nesta faixa a cada mensagem. Não
+    # é configurável de propósito — é a alternativa simples às rajadas.
+    DIRETO_INTERVALO_MIN = 15
+    DIRETO_INTERVALO_MAX = 30
+
+    def _modo_direto(self) -> bool:
+        return self.config.get("modo_envio") == "direto"
+
     # Estimativa (não afeta o ritmo real, só a mensagem mostrada ao usuário)
     # de segundos extras que cada anexo costuma acrescentar ao envio de uma
     # mensagem: escolher o input de arquivo, digitar o caminho no diálogo do
@@ -2468,6 +2493,18 @@ class WhatsAppSender:
             "media_gap_disponivel": media_gap_disponivel,
             "inviavel": inviavel,
         }
+
+    def _estimar_tempo_modo_direto(self, pending) -> float:
+        """
+        Tempo previsto do modo direto: o envio de cada pendente (abrir
+        conversa, digitar, anexar — a mesma conta das rajadas) mais o
+        intervalo médio entre eles. Sem prazo para cumprir, é só uma previsão.
+        """
+        n = len(pending)
+        if n == 0:
+            return 0.0
+        intervalo_medio = (self.DIRETO_INTERVALO_MIN + self.DIRETO_INTERVALO_MAX) / 2
+        return self._estimar_tempo_envio_total(pending, n) + (n - 1) * intervalo_medio
 
     @staticmethod
     def _fmt_pausa_amigavel(segundos: float) -> str:
@@ -4150,6 +4187,10 @@ class WhatsAppSender:
             # fato. O painel mostra esta meta em "Pendentes"; antes mostrava a
             # planilha inteira (pedia 5, aparecia 200).
             session_target = min(int(total_msgs), len(pending))
+            # Modo direto ignora a quantidade configurada: vai para todos.
+            direto = self._modo_direto()
+            if direto:
+                session_target = len(pending)
 
             with self._lock:
                 self._session_target = session_target
@@ -4178,60 +4219,85 @@ class WhatsAppSender:
             else:
                 self._envio_iniciado_em = time.time()
 
-                # O tempo configurado é o total que o usuário quer para a
-                # sessão inteira, não só o orçamento de pausas: desconta
-                # primeiro quanto o envio em si (digitar, subir anexo) deve
-                # consumir de verdade, e usa o que sobra para calcular o
-                # ritmo/pausas entre mensagens. Antes o tempo configurado virava
-                # só o piso das pausas e o real sempre passava do configurado
-                # (relato: "configurei 15min e o log mostrou quase 28min").
-                orcamento = self._calcular_orcamento_de_pausas(pending, session_target, tempo_minutos)
-                tempo_de_envio_est = orcamento["tempo_de_envio_seg"]
-                tempo_pausas_seg = orcamento["tempo_pausas_seg"]
-
-                # Se quase não sobra espaço pra pausa real entre as mensagens,
-                # avisa em vez de deixar o ritmo cair pro piso de segurança
-                # (DELAY_INTRA_MIN, já usado por _generate_burst_plan) sem
-                # nenhuma explicação. Não sugere um valor "seguro" — não
-                # existe: o WhatsApp pode limitar a conta a qualquer momento,
-                # mesmo com espaçamento generoso.
-                if orcamento["inviavel"]:
+                if direto:
+                    # Uma "rajada" única com todos os pendentes, sem pausa longa
+                    # e sem prazo: o intervalo de 15-30s é sorteado a cada envio
+                    # no próprio laço. O resto (falha não espera nem gasta vaga,
+                    # horário comercial, Parar) é o mesmo caminho das rajadas.
+                    tempo_de_envio_est = 0.0
+                    burst_plan = [{
+                        "burst_size": session_target,
+                        "intra_delay": 0.0,
+                        "pause_after": 0.0,
+                    }]
+                    total_bursts = 1
                     self._log(
-                        f"⚠️ Nessas condições — {session_target} mensagem(ns), com um tempo de "
-                        f"envio estimado (anexos/digitação) de ~{self._fmt_duracao(tempo_de_envio_est)} "
-                        f"— não sobra espaço real para pausas dentro dos {tempo_minutos}min "
-                        f"configurados; o ritmo sairia praticamente mecânico. Não existe um tempo "
-                        f'"seguro" garantido (o WhatsApp pode limitar a conta a qualquer momento), '
-                        f"mas aumentar o tempo configurado ou reduzir a quantidade de "
-                        f"mensagens/anexos ajuda a manter um espaçamento mais humano."
+                        f"📤 Começando o envio direto: {session_target} pessoa(s) como Pendente, "
+                        f"uma atrás da outra."
                     )
-                elif tempo_de_envio_est >= 30:
                     self._log(
-                        f"⏱️ Dos {tempo_minutos}min configurados, ~{self._fmt_duracao(tempo_de_envio_est)} "
-                        f"é tempo estimado de envio (anexos/digitação) e ~{self._fmt_duracao(tempo_pausas_seg)} "
-                        f"sobra para pausas reais entre as mensagens."
+                        "⚠️ Cuidado: mandar muitas mensagens seguidas pode fazer o "
+                        "WhatsApp bloquear o seu número."
                     )
+                    file_logger.warning(
+                        f"[ritmo] modo direto: {session_target} msg(s), intervalo "
+                        f"{self.DIRETO_INTERVALO_MIN}-{self.DIRETO_INTERVALO_MAX}s"
+                    )
+                else:
+                    # O tempo configurado é o total que o usuário quer para a
+                    # sessão inteira, não só o orçamento de pausas: desconta
+                    # primeiro quanto o envio em si (digitar, subir anexo) deve
+                    # consumir de verdade, e usa o que sobra para calcular o
+                    # ritmo/pausas entre mensagens. Antes o tempo configurado virava
+                    # só o piso das pausas e o real sempre passava do configurado
+                    # (relato: "configurei 15min e o log mostrou quase 28min").
+                    orcamento = self._calcular_orcamento_de_pausas(pending, session_target, tempo_minutos)
+                    tempo_de_envio_est = orcamento["tempo_de_envio_seg"]
+                    tempo_pausas_seg = orcamento["tempo_pausas_seg"]
 
-                # Plano de rajadas dimensionado pela meta REAL e pelo tempo de
-                # pausas que sobrou depois do desconto acima (não o configurado
-                # bruto). Planejar para 10 e ter só 5 pendentes também fazia o
-                # ritmo ser calculado errado — por isso usa session_target.
-                burst_plan = self._generate_burst_plan(session_target, tempo_pausas_seg / 60)
-                total_bursts = len(burst_plan)
+                    # Se quase não sobra espaço pra pausa real entre as mensagens,
+                    # avisa em vez de deixar o ritmo cair pro piso de segurança
+                    # (DELAY_INTRA_MIN, já usado por _generate_burst_plan) sem
+                    # nenhuma explicação. Não sugere um valor "seguro" — não
+                    # existe: o WhatsApp pode limitar a conta a qualquer momento,
+                    # mesmo com espaçamento generoso.
+                    if orcamento["inviavel"]:
+                        self._log(
+                            f"⚠️ Nessas condições — {session_target} mensagem(ns), com um tempo de "
+                            f"envio estimado (anexos/digitação) de ~{self._fmt_duracao(tempo_de_envio_est)} "
+                            f"— não sobra espaço real para pausas dentro dos {tempo_minutos}min "
+                            f"configurados; o ritmo sairia praticamente mecânico. Não existe um tempo "
+                            f'"seguro" garantido (o WhatsApp pode limitar a conta a qualquer momento), '
+                            f"mas aumentar o tempo configurado ou reduzir a quantidade de "
+                            f"mensagens/anexos ajuda a manter um espaçamento mais humano."
+                        )
+                    elif tempo_de_envio_est >= 30:
+                        self._log(
+                            f"⏱️ Dos {tempo_minutos}min configurados, ~{self._fmt_duracao(tempo_de_envio_est)} "
+                            f"é tempo estimado de envio (anexos/digitação) e ~{self._fmt_duracao(tempo_pausas_seg)} "
+                            f"sobra para pausas reais entre as mensagens."
+                        )
 
-                resumo_rajadas = " + ".join(str(b["burst_size"]) for b in burst_plan)
-                self._log(
-                    f"📤 Iniciando envio: {session_target} mensagem(ns) desta vez "
-                    f"({len(pending)} pendente(s) na planilha), "
-                    f"{total_bursts} leva(s) [{resumo_rajadas}] em {tempo_minutos}min"
-                )
+                    # Plano de rajadas dimensionado pela meta REAL e pelo tempo de
+                    # pausas que sobrou depois do desconto acima (não o configurado
+                    # bruto). Planejar para 10 e ter só 5 pendentes também fazia o
+                    # ritmo ser calculado errado — por isso usa session_target.
+                    burst_plan = self._generate_burst_plan(session_target, tempo_pausas_seg / 60)
+                    total_bursts = len(burst_plan)
 
-                self._log_burst_plan_friendly(burst_plan, session_target, tempo_minutos)
-                if total_bursts > 1:
+                    resumo_rajadas = " + ".join(str(b["burst_size"]) for b in burst_plan)
                     self._log(
-                        "   (as pausas são reajustadas durante o envio para terminar "
-                        "dentro do tempo configurado)"
+                        f"📤 Iniciando envio: {session_target} mensagem(ns) desta vez "
+                        f"({len(pending)} pendente(s) na planilha), "
+                        f"{total_bursts} leva(s) [{resumo_rajadas}] em {tempo_minutos}min"
                     )
+
+                    self._log_burst_plan_friendly(burst_plan, session_target, tempo_minutos)
+                    if total_bursts > 1:
+                        self._log(
+                            "   (as pausas são reajustadas durante o envio para terminar "
+                            "dentro do tempo configurado)"
+                        )
 
                 # Relógio do prazo (ver _replanejar_pausa). `ocioso` é o tempo em
                 # que o app esperou de propósito (delays, pausas, horário
@@ -4243,6 +4309,9 @@ class WhatsAppSender:
 
                 # Iterador dos contatos pendentes
                 pending_iter = pending.iterrows()
+                # Quantos já saíram do iterador: esperar o intervalo depois do
+                # último contato da planilha não antecede envio nenhum.
+                contatos_tentados = 0
                 total_enviados_sessao = 0
                 contatos_esgotados = False
 
@@ -4264,10 +4333,11 @@ class WhatsAppSender:
                     with self._lock:
                         self._current_round = burst_idx + 1
 
-                    self._log(
-                        f"▶️ Executando leva {burst_idx + 1} de {total_bursts}: "
-                        f"{self._describe_leva(burst)}"
-                    )
+                    if not direto:
+                        self._log(
+                            f"▶️ Executando leva {burst_idx + 1} de {total_bursts}: "
+                            f"{self._describe_leva(burst)}"
+                        )
 
                     # O laço conta mensagens REALMENTE enviadas, não iterações:
                     # contato inválido não gasta vaga da rajada. Antes era
@@ -4283,6 +4353,7 @@ class WhatsAppSender:
                         # Pega próximo contato pendente
                         try:
                             idx, row = next(pending_iter)
+                            contatos_tentados += 1
                         except StopIteration:
                             # Acabaram os contatos da planilha antes de cumprir a meta
                             self._log("✅ Todos os contatos foram processados!")
@@ -4610,9 +4681,14 @@ class WhatsAppSender:
                             and not browser_died
                             and enviados_burst > enviados_antes_da_tentativa
                             and enviados_burst < burst_size
+                            and contatos_tentados < len(pending)
                         ):
+                            if direto:
+                                delay = random.uniform(
+                                    self.DIRETO_INTERVALO_MIN, self.DIRETO_INTERVALO_MAX
+                                )
                             # Variação gaussiana no intra_delay para ser mais natural
-                            if self._human_behavior_enabled():
+                            elif self._human_behavior_enabled():
                                 delay = self._gaussian_delay(
                                     intra_delay * 0.7, intra_delay * 1.3
                                 )
@@ -4620,13 +4696,24 @@ class WhatsAppSender:
                                 delay = random.uniform(intra_delay * 0.8, intra_delay * 1.2)
                             self._log(f"Aguardando {delay:.0f}s...")
                             t0 = time.monotonic()
-                            self._interruptible_sleep(delay)
+                            # Modo direto não tem pausa entre rajadas, onde o
+                            # alarme de entrega lê a lista; a leitura vem para
+                            # dentro do intervalo, e o intervalo a absorve.
+                            if (
+                                direto
+                                and enviados_burst % self._VERIFICACAO_DIRETO_A_CADA == 0
+                            ):
+                                self._ler_entregas(delay * self._VERIFICACAO_FRACAO_DA_PAUSA)
+                            restante = delay - (time.monotonic() - t0)
+                            if restante > 0:
+                                self._interruptible_sleep(restante)
                             ocioso += time.monotonic() - t0
 
                     # Fim do burst — log e pausa entre bursts
-                    self._log(
-                        f"📊 Rajada {burst_idx + 1} finalizada: {enviados_burst} msg(s) enviada(s)"
-                    )
+                    if not direto:
+                        self._log(
+                            f"📊 Rajada {burst_idx + 1} finalizada: {enviados_burst} msg(s) enviada(s)"
+                        )
 
                     if browser_died or self._should_stop():
                         break
@@ -4771,7 +4858,10 @@ class WhatsAppSender:
                 status = self.get_status()
                 duracao_txt = (
                     f" em {self._fmt_duracao(self._elapsed_seconds)}"
-                    f" (tempo configurado: {self.config.get('tempo_minutos', 60)}min)"
+                    + (
+                        " (modo direto)" if self._modo_direto()
+                        else f" (tempo configurado: {self.config.get('tempo_minutos', 60)}min)"
+                    )
                     if self._elapsed_seconds is not None
                     else ""
                 )

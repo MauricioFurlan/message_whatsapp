@@ -43,11 +43,13 @@ import logging
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pandas as pd  # noqa: E402
 
+import whatsapp_sender  # noqa: E402
 from whatsapp_sender import WhatsAppSender  # noqa: E402
 
 
@@ -144,6 +146,13 @@ class AvisoDeLentidaoTest(unittest.TestCase):
         self.logs = []
         self.sender = novo_sender()
         self.sender.log_callback = self.logs.append
+        # `_contar_invalido` grava no histórico de envios, que mora na home do
+        # usuário: sem isto cada execução somava 10 "rejeitados" falsos no
+        # "Baixar histórico" da máquina de quem roda a suíte.
+        patcher = patch.object(whatsapp_sender.stats_log, "registrar_rejeitado",
+                               lambda *a, **k: None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def registrar(self, resultados):
         for ok in resultados:

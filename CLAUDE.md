@@ -58,8 +58,8 @@ thrown away, and would otherwise open every test session with an
 ## Tests
 
 ```bash
-rodar_testes.bat                    # everything: 654 tests, Python + Node, ~5.5min
-rodar_testes.bat --rapido           # skips the 3 slow files: 421 tests, ~34s
+rodar_testes.bat                    # everything: 668 tests, Python + Node, ~5.5min
+rodar_testes.bat --rapido           # skips the 3 slow files: 435 tests, ~34s
 python rodar_testes.py --so e2e     # one group: e2e, unidade, lentos, node
 ```
 
@@ -125,6 +125,7 @@ Run a single test with standard unittest selection, e.g. `python -m unittest tes
 - `tests/test_linha_conversa.py` — reading a chat-list row: the media-symbol exclusion (a sticker *they* sent must not read as our tick), unknown status icons falling to "not delivered", a broken extraction never being mistaken for "they replied", the draft guard (`None` icons ≠ `[]`), and where the reply text comes from.
 - `tests/test_alerta_entrega.py` / `tests/test_alerta_entrega_ui.js` — the delivery alarm: it must not fire on freshly-sent messages (still-undelivered is normal right after sending), a reply always proves delivery, the popup opens once per `seq`, the pause-time read can never raise into the send loop or overrun the pause, and the popup's wording must stay the opposite of the slowness one (that says "keep going"; this says "stop").
 - `tests/test_varredura.py` / `tests/test_varredura_ui.js` — the reply scan: scope is `Enviado=X` only (an invalid contact never had a delivery, and reading its row would attribute a previous campaign's state to this one), a conversation not found never becomes "didn't reply", no `Classe` column is ever written, "didn't deliver" stays a category of its own rather than collapsing into "cold", and `RespostaTexto` is written only when they actually replied (never our own outbound text).
+- `tests/e2e/test_e2e_direto.py` / `tests/test_modo_direto_ui.js` — the direct send mode: every pending contact regardless of `total_msgs`, 15-30s between messages and no long pause, a failure (or the last contact) never followed by a wait, business hours still checked per message, the delivery read every 10 sends inside the interval, and the UI keeping quantity/time disabled through a lock/unlock cycle.
 - `tests/test_cache_pagina.py` / `tests/test_servidor_offline.js` — with the app closed, the page must not open from browser cache, and a failed `/license/status` must never be presented as an invalid license.
 - `tests/*.js` — Node scripts exercising frontend SSE/tooltip behavior directly.
 
@@ -155,12 +156,15 @@ published selector table are for). It catches our own regressions — a contact
 that should stay pending going invalid, a double send, an attachment sent
 without its text, the reply scan writing on the wrong row.
 
-`ambiente.py` swaps exactly three things, each for a different reason: the
+`ambiente.py` swaps exactly four things, each for a different reason: the
 driver; the **clock** (a campaign is a time budget measured in hours, so
 `time.monotonic`/`time.time` read a virtual clock that only advances when
 something sleeps — every deadline in the app still holds, the pacing logic is
-untouched, and the run costs milliseconds); and the license plus the native
-Windows dialog, which are resources outside the process. It deliberately does
+untouched, and the run costs milliseconds); the license plus the native
+Windows dialog, which are resources outside the process; and the **send history**
+(`stats_log`), which lives in the user's home rather than `uploads/`, so the temp
+cwd doesn't isolate it — until 2026-10-04 every simulated campaign was added to
+the machine's real "Baixar histórico" (`tests/e2e/test_e2e_historico.py` pins it). It deliberately does
 *not* fake the global `AppState` — the app is one campaign per process, and
 pretending otherwise would test an app that doesn't exist; each scenario gets a
 fresh temp cwd with its own `uploads/`, which is what the real process has.
@@ -559,6 +563,8 @@ navigation phase count: a blank number or a duplicate says nothing about the
 network.
 
 `_generate_burst_plan` / `_particiona_rajadas` split a requested "N messages in M minutes" into irregular bursts with pauses between them. The plan fixes only the **shape**; the **scale** comes from a deadline: before each inter-burst pause, `_replanejar_pausa` redistributes the time left until `start + tempo_minutos` using the *measured* average cost per sent message (failures included), floored at half the planned pause (`PAUSA_PISO_FRACAO`, never under `DELAY_INTRA_MIN`) — the user chose overrunning the window over near-back-to-back bursts. Executing the planned pauses blindly is the bug this replaced (2026-10-03: a 60min window ran 74min or 45min depending on real chat-open speed) — `tests/e2e/test_e2e_ritmo.py` pins it. Business-hours waits push the deadline out rather than eating the pauses. The plan is generated **after** deduplication, sized to real pending contacts rather than the requested count, and a message that fails validation does not consume a burst slot — `CHANGELOG.md` documents the historical bugs behind each of these invariants. The `pausado` sender state covers both business-hours waiting and inter-burst pauses; don't treat it as an error state when reading `/status`.
+
+`config.modo_envio == "direto"` (2026-10-04) is the alternative to all of the above: every pending contact, ignoring `total_msgs` and `tempo_minutos`, with `random.uniform(DIRETO_INTERVALO_MIN, DIRETO_INTERVALO_MAX)` (15-30s, deliberately not configurable) between sends and no deadline. It is **not** a separate loop — `start()` builds a single burst the size of the pending list with `pause_after = 0`, so dedup, validation, Stop, failure handling and business hours are the same code. The one thing that had to move is the delivery read: it lived in the inter-burst pause, which this mode doesn't have, so `_ler_entregas` runs inside the interval every `_VERIFICACAO_DIRETO_A_CADA` (10) sends. Without that the delivery alarm would be silent in the riskiest mode.
 
 ### Nothing that feeds a running send may change mid-send
 
