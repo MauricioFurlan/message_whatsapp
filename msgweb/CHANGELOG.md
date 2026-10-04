@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-10-04 (controles fixos na lateral; seções separadas)
+
+**Iniciar/Parar sempre à vista.** Com Configuração e Mensagem Global abertas, a
+barra lateral rolava e os Controles iam para fora da tela, e o Parar é o que
+precisa estar à mão durante o envio. A seção de Controles saiu da área que
+rola e virou um rodapé fixo da lateral.
+
+**Configuração e Mensagem Global viraram cartões.** Abertas juntas, pareciam um
+bloco só de campos. Agora cada uma tem borda e um cabeçalho com fundo próprio,
+que gruda no topo enquanto o conteúdo dela rola. É CSS puro (`.secao-ajuste`),
+porque o `tailwind.css` é pré-compilado e não teria classes novas.
+
+**A explicação da Mensagem Global virou tooltip.** O parágrafo ("Vale para os
+contatos com a coluna Mensagem em branco...") ocupava 4-5 linhas da lateral.
+Agora ele é o `title` de "Ativar mensagem global". Usei o `title` nativo, não
+um balão próprio, porque o `overflow` da lateral cortaria o balão (o mesmo
+motivo do `#invalids-tooltip`).
+
 ## 2026-10-04 (log mais limpo, embaixo só da planilha)
 
 **Sem emojis na tela.** O log usava 15 emojis diferentes, desenhados pelo
