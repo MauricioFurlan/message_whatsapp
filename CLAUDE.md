@@ -127,6 +127,8 @@ Run a single test with standard unittest selection, e.g. `python -m unittest tes
 - `tests/test_varredura.py` / `tests/test_varredura_ui.js` — the reply scan: scope is `Enviado=X` only (an invalid contact never had a delivery, and reading its row would attribute a previous campaign's state to this one), a conversation not found never becomes "didn't reply", no `Classe` column is ever written, "didn't deliver" stays a category of its own rather than collapsing into "cold", and `RespostaTexto` is written only when they actually replied (never our own outbound text).
 - `tests/e2e/test_e2e_direto.py` / `tests/test_modo_direto_ui.js` — the direct send mode: every pending contact regardless of `total_msgs`, 15-30s between messages and no long pause, a failure (or the last contact) never followed by a wait, business hours still checked per message, the delivery read every 10 sends inside the interval, and the UI keeping quantity/time disabled through a lock/unlock cycle.
 - `tests/test_cache_pagina.py` / `tests/test_servidor_offline.js` — with the app closed, the page must not open from browser cache, and a failed `/license/status` must never be presented as an invalid license.
+- `tests/test_painel_log_ui.js` — the bottom log panel: scroll follows only at the bottom, hidden panel counts lines and reopens on 🚫/QR, preferences survive a reload, and the Start/Stop feedback under the buttons.
+- `tests/test_aviso_ritmo_ui.js` / `tests/e2e/test_e2e_estimativa.py` — the time warning: no flash before the server answers, a text with the estimated time for every mismatch case, and the estimate reading the screen (`POST /estimate`) without writing the sheet.
 - `tests/*.js` — Node scripts exercising frontend SSE/tooltip behavior directly.
 
 ### End-to-end battery: HTTP in, spreadsheet out
@@ -539,6 +541,23 @@ conversation is the single largest component of a send (41-58s measured, vs.
 took 2h. It is added in both typing modes — `driver.get` and the `#pane-side`
 wait happen either way.
 
+**The estimate describes the screen, not the disk.** ↺, deleting or adding a
+row only reach `uploads/contatos.xlsx` on "Salvar Alterações", but "Iniciar
+Envio" saves the screen before `/start` — so the screen is what gets sent. The
+page therefore calls `POST /estimate` with `collectContacts()` on every table
+edit (`markUnsaved`), which builds the DataFrame through `_df_dos_contatos`, the
+same function `POST /contacts` writes with, and writes nothing. `GET /estimate`
+(disk) is only the fallback for an empty table or a failed load.
+
+**The warning never just disappears.** The server decides it (`textoAvisoRitmo`
+in `index.html`); the local 15s-floor check only runs when the server can't
+answer. It used to show first and be wiped 400ms later by a server answer that
+knew there was 1 pending — a flashing alert with no explanation. Every case
+where the send won't match the request (fewer pending than asked, a window that
+doesn't fit, both, none pending) has a text, and every text carries the
+estimated time — which is why `/estimate` returns it even for 0 or 1 message.
+`tests/test_aviso_ritmo_ui.js` and `tests/e2e/test_e2e_estimativa.py` pin both.
+
 What the estimate *cannot* know upfront is failures. A contact whose chat never
 opens costs ~3.7min and, by the deliberate invariant that an invalid contact
 doesn't consume a burst slot, the burst pulls in a replacement — so a bad
@@ -653,6 +672,28 @@ state the reply scan's draft guard exists for).
 ### Real-time UI updates
 
 The frontend has no client-side polling loop for logs/status — `GET /events` (SSE) pushes `status` (on-demand plus a 5s heartbeat) and `contact_update` events. Contacts are identified to the frontend by `row_index` (position in the sheet), never by phone number — a blank or repeated number must never be used as a row key (`tests/test_contact_update_backend.py` guards this regression).
+
+### The log is a bottom panel, and hiding it must not hide a blocker
+
+`#log-panel` spans the full width under everything (DevTools-style "dock to
+bottom"); the sidebar version was removed on purpose. Height (drag
+`#log-resizer`, clamped 80px–70% of the window) and open/hidden live in
+`localStorage` under `log_painel`. Two rules, pinned by `tests/test_painel_log_ui.js`:
+
+- **Auto-scroll follows only when already at the bottom** (`logEstaNoFim`). The
+  old unconditional `scrollTop = scrollHeight` yanked anyone reading back down
+  on every line. Trimming past 200 lines compensates `scrollTop` so the text
+  being read doesn't slide.
+- **Hidden, it counts; it reopens for lines that need action** (`linhaPedeAcao`:
+  🚫 and "Escaneie o QR Code"). Those block the send until the user acts, so a
+  hidden panel would stall it silently. Lines replayed by `restoreLogsFromServer`
+  are history, not news — they neither count nor reopen.
+
+`#control-status` (under the Start button) is button feedback only, not a log.
+It must not claim "scan the QR Code" (the backend logs that, and only with a QR
+on screen), and "Parada solicitada" is cleared by `updateDashboard` once nothing
+is running — its animated dots are `.em-andamento::after`, outside
+`textContent`, so the class has to be removed with the text.
 
 ### Security constraints that must not regress
 

@@ -44,6 +44,23 @@
             border-radius: 3px;
             white-space: pre-wrap;
         }
+        /* Reticências animadas em mensagem de espera ("Parada solicitada").
+           Ficam no ::after, fora do textContent: quem compara o texto da
+           mensagem não precisa saber delas. Largura fixa para a frase não
+           tremer a cada ponto. */
+        @keyframes reticencias {
+            0%   { content: ''; }
+            25%  { content: '.'; }
+            50%  { content: '..'; }
+            75%  { content: '...'; }
+        }
+        .em-andamento::after {
+            content: '';
+            display: inline-block;
+            width: 1.2em;
+            text-align: left;
+            animation: reticencias 1.2s steps(1) infinite;
+        }
         @keyframes pulse-dot {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.4; }
@@ -321,7 +338,7 @@
         </div>
     </div>
 
-    <div class="flex-1 flex overflow-hidden">
+    <div class="flex-1 min-h-0 flex overflow-hidden">
 
         <!-- LEFT: Contatos table -->
         <div class="flex-1 flex flex-col overflow-hidden p-3">
@@ -723,25 +740,44 @@
                     <p id="control-status" class="mt-1 text-xs text-gray-400"></p>
                 </section>
 
-                <!-- Log (fills remaining space) -->
-                <section class="flex-1 min-h-0 flex flex-col">
-                    <div class="flex items-center justify-between mb-1">
-                        <h2 class="text-xs font-semibold text-gray-600 uppercase tracking-wide">Log</h2>
-                        <button onclick="clearLogs()"
-                            class="text-xs text-gray-400 hover:text-gray-600 transition-colors">
-                            Limpar
-                        </button>
-                    </div>
-                    <div id="log-area"
-                        class="log-area bg-gray-900 text-gray-300 rounded-md p-3 flex-1 min-h-0 overflow-y-auto">
-                        <p class="text-gray-500">Aguardando atividade...</p>
-                    </div>
-                </section>
-
             </div>
         </div>
 
     </div>
+
+    <!-- Log: painel na largura toda, embaixo (como o "dock to bottom" do
+         DevTools). Na barra lateral ele ficava com a altura que sobrava e
+         com 320px de largura, então as linhas quebravam em várias. Aqui a
+         altura é do usuário (arrastando a borda) e o painel pode ser
+         ocultado; as duas escolhas ficam no localStorage (ver
+         setupPainelLog). -->
+    <section id="log-panel" class="flex-shrink-0 flex flex-col bg-gray-900 border-t border-gray-700">
+        <div id="log-resizer" title="Arraste para mudar a altura do log"
+            class="h-1.5 -mt-1 cursor-row-resize hover:bg-blue-500/60 transition-colors"></div>
+        <div class="flex items-center justify-between px-3 py-1 select-none">
+            <button onclick="alternarPainelLog()" id="log-toggle"
+                class="flex items-center gap-2 text-xs font-semibold text-gray-300 hover:text-white uppercase tracking-wide">
+                <span id="log-toggle-seta">▼</span>
+                <span>Log</span>
+                <span id="log-novas" class="hidden normal-case font-normal bg-blue-600 text-white rounded-full px-1.5"></span>
+            </button>
+            <div class="flex items-center gap-3">
+                <button onclick="clearLogs()"
+                    class="text-xs text-gray-400 hover:text-gray-200 transition-colors">
+                    Limpar
+                </button>
+                <button onclick="alternarPainelLog()" id="log-toggle-texto"
+                    class="text-xs text-gray-400 hover:text-gray-200 transition-colors">
+                    Ocultar
+                </button>
+            </div>
+        </div>
+        <div id="log-area"
+            class="log-area text-gray-300 px-3 pb-2 overflow-y-auto"
+            style="height: 200px;">
+            <p class="text-gray-500">Aguardando atividade...</p>
+        </div>
+    </section>
 
     <!-- Tooltip de detalhamento dos inválidos.
          Mora fora da sidebar de propósito: lá os contêineres têm
@@ -1662,6 +1698,15 @@
             if (!isRunning && !varrendo) {
                 stopping = false;
                 starting = false;
+                // "Parada solicitada..." descreve uma espera que acabou de
+                // terminar; deixá-la na tela diria que ainda está parando.
+                // Só ela: um erro do Iniciar/Parar no mesmo lugar fica.
+                const controlStatus = document.getElementById('control-status');
+                if (controlStatus && controlStatus.textContent.startsWith('Parada solicitada')) {
+                    controlStatus.textContent = '';
+                    // Sem isto os pontinhos do ::after seguiriam animando sozinhos.
+                    controlStatus.classList.remove('em-andamento');
+                }
             }
             const locked = isRunning || starting || varrendo;
             document.getElementById('btn-start').disabled = locked || stopping;
@@ -1740,7 +1785,14 @@
             burstBlockEl = null;
             burstBlockExpected = 0;
             burstBlockSeen = 0;
-            logs.forEach(entry => addLogEntry(entry));
+            // Histórico já visto, não novidade: não conta no "N novas" do
+            // painel oculto nem o reabre por um 🚫 antigo.
+            restaurandoLog = true;
+            try {
+                logs.forEach(entry => addLogEntry(entry));
+            } finally {
+                restaurandoLog = false;
+            }
         }
 
         // Classifica uma linha do log de problema: cor + explicação no tooltip.
@@ -1860,11 +1912,39 @@
         let burstBlockSeen = 0;
         const TS_PREFIX_RE = /^\[\d{2}:\d{2}:\d{2}\]\s*/;
 
+        // Auto-scroll como o do DevTools: só acompanha o fim se o usuário já
+        // estava no fim. Antes toda linha nova fazia scrollTop = scrollHeight,
+        // então quem rolava para cima para ler algo era puxado de volta para
+        // baixo na linha seguinte — durante um envio, o log ficava ilegível.
+        const LOG_MAX_LINHAS = 200;
+        const LOG_FOLGA_FIM_PX = 24;
+
+        function logEstaNoFim(logArea) {
+            // Sem altura (painel oculto, ou stub de teste): não há leitura a
+            // preservar, segue o fim.
+            if (!logArea.clientHeight) return true;
+            return logArea.scrollHeight - logArea.scrollTop - logArea.clientHeight <= LOG_FOLGA_FIM_PX;
+        }
+
+        function acomodarLog(logArea, seguir) {
+            while (logArea.children.length > LOG_MAX_LINHAS) {
+                const altura = logArea.firstChild.offsetHeight || 0;
+                logArea.removeChild(logArea.firstChild);
+                // Quem está lendo lá em cima não pode ver o texto escorregar
+                // quando as linhas mais velhas saem do topo.
+                if (!seguir) logArea.scrollTop -= altura;
+            }
+            if (seguir) logArea.scrollTop = logArea.scrollHeight;
+        }
+
         function addLogEntry(message) {
             const logArea = document.getElementById('log-area');
             if (logArea.querySelector('.text-gray-500')) {
                 logArea.innerHTML = '';
             }
+            // Medido ANTES de acrescentar a linha: depois, o fim já andou.
+            const seguir = logEstaNoFim(logArea);
+            contarLinhaComPainelOculto(message);
 
             const bare = message.replace(TS_PREFIX_RE, '');
             const totalLevasMatch = bare.match(/No total:.*distribuídas em (\d+) leva\(s\)/);
@@ -1875,15 +1955,12 @@
                 burstBlockEl.className = 'log-plano mb-0.5';
                 burstBlockEl.textContent = bare;
                 logArea.appendChild(burstBlockEl);
-                logArea.scrollTop = logArea.scrollHeight;
-                while (logArea.children.length > 200) {
-                    logArea.removeChild(logArea.firstChild);
-                }
+                acomodarLog(logArea, seguir);
                 return;
             }
             if (burstBlockEl && bare.includes('Como o envio vai acontecer')) {
                 burstBlockEl.textContent += '\n' + bare;
-                logArea.scrollTop = logArea.scrollHeight;
+                acomodarLog(logArea, seguir);
                 return;
             }
             if (burstBlockEl && /^\s*•\s*leva \d+ de \d+:/.test(bare)) {
@@ -1892,7 +1969,7 @@
                 if (burstBlockSeen >= burstBlockExpected) {
                     burstBlockEl = null;
                 }
-                logArea.scrollTop = logArea.scrollHeight;
+                acomodarLog(logArea, seguir);
                 return;
             }
 
@@ -1920,14 +1997,115 @@
             }
             entry.textContent = message;
             logArea.appendChild(entry);
-            logArea.scrollTop = logArea.scrollHeight;
-            while (logArea.children.length > 200) {
-                logArea.removeChild(logArea.firstChild);
-            }
+            acomodarLog(logArea, seguir);
         }
 
         function clearLogs() {
             document.getElementById('log-area').innerHTML = '<p class="text-gray-500">Log limpo.</p>';
+        }
+
+        // --- Painel do log (embaixo, largura toda) ---
+        // Duas preferências do usuário, só visuais: aberto/oculto e a altura.
+        // Ficam no localStorage, que pode estar indisponível ou vazio — então
+        // tudo com try/catch e um padrão que funciona sem ele.
+        const LOG_PAINEL_CHAVE = 'log_painel';
+        const LOG_ALTURA_PADRAO = 200;
+        const LOG_ALTURA_MIN = 80;
+        let logPainelAberto = true;
+        let logAltura = LOG_ALTURA_PADRAO;
+        let logNovasOculto = 0;
+        let restaurandoLog = false;
+
+        function limitarAlturaLog(h) {
+            // Teto de 70% da janela: a tabela de contatos nunca some por inteiro.
+            const max = Math.max(LOG_ALTURA_MIN, Math.floor(window.innerHeight * 0.7));
+            return Math.min(max, Math.max(LOG_ALTURA_MIN, Math.round(h)));
+        }
+
+        function salvarPainelLog() {
+            try {
+                localStorage.setItem(LOG_PAINEL_CHAVE, JSON.stringify({ aberto: logPainelAberto, altura: logAltura }));
+            } catch (e) { /* preferência visual: perder não quebra nada */ }
+        }
+
+        function aplicarPainelLog() {
+            const area = document.getElementById('log-area');
+            area.style.height = limitarAlturaLog(logAltura) + 'px';
+            area.classList.toggle('hidden', !logPainelAberto);
+            document.getElementById('log-resizer').classList.toggle('hidden', !logPainelAberto);
+            document.getElementById('log-toggle-seta').textContent = logPainelAberto ? '▼' : '▲';
+            document.getElementById('log-toggle-texto').textContent = logPainelAberto ? 'Ocultar' : 'Mostrar';
+            const novas = document.getElementById('log-novas');
+            novas.textContent = logNovasOculto === 1 ? '1 nova' : `${logNovasOculto} novas`;
+            novas.classList.toggle('hidden', logPainelAberto || logNovasOculto === 0);
+        }
+
+        function alternarPainelLog(abrir) {
+            logPainelAberto = (typeof abrir === 'boolean') ? abrir : !logPainelAberto;
+            if (logPainelAberto) logNovasOculto = 0;
+            aplicarPainelLog();
+            salvarPainelLog();
+            if (logPainelAberto) {
+                // Ao reabrir, mostra o mais recente — é o que o contador prometeu.
+                const area = document.getElementById('log-area');
+                area.scrollTop = area.scrollHeight;
+            }
+        }
+
+        // Linhas que pedem uma ação do usuário, sem a qual o envio não anda:
+        // a 🚫 (log-acao, ex.: fechar o Chrome que segura o perfil) e o pedido
+        // de QR Code, que o backend só escreve quando há um QR na tela.
+        function linhaPedeAcao(message) {
+            return message.includes('🚫') || message.includes('Escaneie o QR Code');
+        }
+
+        // Com o painel oculto, cada linha nova só incrementa o contador da
+        // barra. A exceção são as linhas que pedem ação: reabrem o painel em
+        // vez de esperar o usuário reparar num número.
+        function contarLinhaComPainelOculto(message) {
+            if (logPainelAberto || restaurandoLog) return;
+            if (linhaPedeAcao(message)) {
+                alternarPainelLog(true);
+                return;
+            }
+            logNovasOculto++;
+            aplicarPainelLog();
+        }
+
+        function setupPainelLog() {
+            try {
+                const salvo = JSON.parse(localStorage.getItem(LOG_PAINEL_CHAVE) || 'null');
+                if (salvo && typeof salvo === 'object') {
+                    if (typeof salvo.aberto === 'boolean') logPainelAberto = salvo.aberto;
+                    if (Number.isFinite(salvo.altura)) logAltura = salvo.altura;
+                }
+            } catch (e) { /* sem preferência salva: usa o padrão */ }
+            aplicarPainelLog();
+
+            // Arrastar a borda de cima muda a altura (como o DevTools).
+            const resizer = document.getElementById('log-resizer');
+            const area = document.getElementById('log-area');
+            resizer.addEventListener('pointerdown', (ev) => {
+                ev.preventDefault();
+                const inicioY = ev.clientY;
+                const inicioAltura = area.getBoundingClientRect().height;
+                resizer.setPointerCapture(ev.pointerId);
+                const mover = (e) => {
+                    logAltura = limitarAlturaLog(inicioAltura + (inicioY - e.clientY));
+                    area.style.height = logAltura + 'px';
+                };
+                const soltar = () => {
+                    resizer.removeEventListener('pointermove', mover);
+                    resizer.removeEventListener('pointerup', soltar);
+                    resizer.removeEventListener('pointercancel', soltar);
+                    salvarPainelLog();
+                };
+                resizer.addEventListener('pointermove', mover);
+                resizer.addEventListener('pointerup', soltar);
+                resizer.addEventListener('pointercancel', soltar);
+            });
+            // Janela diminuiu: reaplica o teto de 70% sem perder a altura salva.
+            window.addEventListener('resize', () => aplicarPainelLog());
         }
 
         // --- Upload automático ---
@@ -3046,20 +3224,6 @@
         }
 
         // --- Controles ---
-        // As três seções de ajuste, na ordem em que aparecem na barra lateral.
-        // Enquanto abertas, empurram o log para fora da tela: ele é o último
-        // bloco da coluna e é quem tem `flex-1`, ou seja, fica com a sobra.
-        const SECOES_DE_AJUSTE = ['config-details', 'global-msg-details'];
-
-        function recolherAjustesParaMostrarOLog() {
-            // Só o <details>. Nada aqui mexe em valor, toggle ou estado de
-            // envio — se recolher falhasse, o envio seguiria igual.
-            SECOES_DE_AJUSTE.forEach(id => {
-                const el = document.getElementById(id);
-                if (el) el.open = false;
-            });
-        }
-
         async function startSending() {
             const statusEl = document.getElementById('control-status');
 
@@ -3114,17 +3278,16 @@
                 const data = await response.json();
                 if (response.ok) {
                     resetAllContactsStatus();
-                    // Daqui em diante o que o usuário precisa acompanhar é o
-                    // log. As seções de ajuste já estão travadas pelo envio, e
-                    // abertas só ocupam a altura que o log ia usar.
-                    //
-                    // Recolher só no SUCESSO é deliberado: um /start recusado
-                    // (licença, anexo global sumido, planilha vazia) manda o
-                    // usuário de volta justamente para essas seções, e escondê-las
-                    // seria esconder o que ele tem que corrigir.
-                    recolherAjustesParaMostrarOLog();
-                    statusEl.textContent = 'Envio iniciado. Escaneie o QR Code no navegador.';
+                    // Só confirma o clique. O que acontece depois (inclusive
+                    // pedir o QR Code, e só quando há um QR na tela) é o
+                    // backend que diz, no log — afirmar "escaneie o QR" aqui
+                    // era falso toda vez que a sessão já estava ativa.
+                    const confirmacao = 'Envio iniciado. Acompanhe pelo log abaixo.';
+                    statusEl.textContent = confirmacao;
                     statusEl.className = 'mt-2 text-sm text-green-600';
+                    setTimeout(() => {
+                        if (statusEl.textContent === confirmacao) statusEl.textContent = '';
+                    }, 4000);
                 } else {
                     // Falhou: desfaz o bloqueio
                     starting = false;
@@ -3151,10 +3314,12 @@
                 const response = await fetch('/stop', { method: 'POST' });
                 const data = await response.json();
                 if (response.ok) {
+                    // Os "..." são animados pela classe em-andamento (CSS);
+                    // updateDashboard tira a mensagem e a classe ao terminar.
                     statusEl.textContent = varreduraAtiva
-                        ? 'Parada solicitada. Encerrando a verificação...'
-                        : 'Parada solicitada. Finalizando envio atual...';
-                    statusEl.className = 'mt-2 text-sm text-amber-600';
+                        ? 'Parada solicitada. Encerrando a verificação'
+                        : 'Parada solicitada. Finalizando envio atual';
+                    statusEl.className = 'mt-2 text-sm text-amber-600 em-andamento';
                 } else {
                     // Falhou: reabilita o botão
                     stopping = false;
@@ -3172,6 +3337,24 @@
         // --- Cálculo de estimativa ---
         let _estimateDebounceTimer = null;
         let _estimateRequestSeq = 0; // descarta respostas antigas que cheguem fora de ordem
+
+        // A estimativa olha a TELA, não o disco: o ↺, apagar e adicionar linha
+        // só vão para a planilha no "Salvar Alterações", e é a tela que o
+        // "Iniciar Envio" grava antes de começar. Pelo disco, reenfileirar dez
+        // contatos seguia mostrando "1 pendente".
+        // Só cai no GET (disco) quando a tela não espelha planilha nenhuma:
+        // tabela vazia (primeira vez, sem planilha) ou carga que falhou.
+        function fetchEstimate(params) {
+            const temTabela = document.querySelectorAll('#contacts-tbody tr').length > 0;
+            if (!temTabela || contactsLoadFailed) {
+                return fetch('/estimate?' + new URLSearchParams(params).toString());
+            }
+            return fetch('/estimate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(Object.assign({}, params, { contacts: collectContacts() })),
+            });
+        }
 
         function updateEstimativa() {
             const totalMsgs = parseInt(document.getElementById('cfg-total-msgs-input').value) || 0;
@@ -3201,20 +3384,21 @@
             const intervalos = Math.max(1, totalMsgs - 1);
             const delayMedio = tempoSegundos / intervalos;
 
-            // Checagem rápida e só local (sem esperar o servidor): olha só o piso de
-            // 15s entre mensagens, ignorando quanto tempo a digitação humanizada e os
-            // anexos vão consumir de verdade. Serve de feedback imediato enquanto a
-            // estimativa completa (abaixo) não volta do servidor — é ela quem decide
-            // o aviso final, porque é a única que sabe o tamanho real das mensagens/
-            // anexos desta planilha.
+            // Checagem só local: olha o piso de 15s entre mensagens e nada mais
+            // (não sabe quantos pendentes há, nem o custo de abrir conversa,
+            // digitar e anexar). Por isso só vale quando o servidor NÃO pode
+            // responder — sem planilha ou fora do ar. Antes ela aparecia na hora
+            // e a resposta do servidor a apagava 400ms depois (ex.: 50 msgs em
+            // 5min com 1 pendente na planilha): um alerta que pisca e some.
             const DELAY_MINIMO = 15;
-            if (totalMsgs > 1 && delayMedio < DELAY_MINIMO) {
-                const msgsMaximas = Math.floor(tempoSegundos / DELAY_MINIMO) + 1;
-                avisoEl.textContent = `⚠️ Ritmo apertado para o número de mensagens nesse tempo (espaçamento mínimo cobre até ${msgsMaximas}). Considere aumentar o tempo.`;
-                avisoEl.classList.remove('hidden');
-            } else {
-                avisoEl.classList.add('hidden');
-            }
+            const avisoLocal = () => {
+                if (totalMsgs > 1 && delayMedio < DELAY_MINIMO) {
+                    const msgsMaximas = Math.floor(tempoSegundos / DELAY_MINIMO) + 1;
+                    mostrarAvisoRitmo(avisoEl, `⚠️ Ritmo apertado para o número de mensagens nesse tempo (espaçamento mínimo cobre até ${msgsMaximas}). Considere aumentar o tempo.`, 'erro');
+                } else {
+                    mostrarAvisoRitmo(avisoEl, '');
+                }
+            };
 
             // Formata tempo total
             let tempoTexto;
@@ -3242,22 +3426,55 @@
             const seq = ++_estimateRequestSeq;
             _estimateDebounceTimer = setTimeout(async () => {
                 try {
-                    const resp = await fetch(`/estimate?total_msgs=${totalMsgs}&tempo_minutos=${tempoMin}`);
+                    const resp = await fetchEstimate({ total_msgs: totalMsgs, tempo_minutos: tempoMin });
                     if (seq !== _estimateRequestSeq) return; // input mudou de novo nesse meio tempo
                     const data = await resp.json();
-                    if (data.status !== 'ok') return;
-
-                    if (data.inviavel) {
-                        avisoEl.textContent = `⚠️ Os ${tempoTexto} configurados não vão ser suficientes: contando digitação/anexos, o envio de ${data.session_target} mensagem(ns) deve levar aproximadamente ${data.tempo_total_estimado_fmt}. Não existe um tempo "seguro" garantido, mas aumentar o tempo configurado ou reduzir mensagens/anexos ajuda a manter um espaçamento mais humano.`;
-                        avisoEl.classList.remove('hidden');
-                    } else {
-                        avisoEl.classList.add('hidden');
-                    }
+                    if (data.status !== 'ok') { avisoLocal(); return; }
+                    const [texto, tom] = textoAvisoRitmo(data, totalMsgs, tempoTexto);
+                    mostrarAvisoRitmo(avisoEl, texto, tom);
                 } catch (err) {
-                    // Sem planilha carregada ainda, ou erro de rede: mantém só a
-                    // checagem local acima, sem quebrar a tela.
+                    // Sem servidor: só a checagem local, sem quebrar a tela.
+                    if (seq === _estimateRequestSeq) avisoLocal();
                 }
             }, 400);
+        }
+
+        // O aviso abaixo da configuração, a partir da resposta do /estimate.
+        // Toda situação em que o envio não vai sair como o usuário pediu tem
+        // um texto, e todo texto diz quantas mensagens saem e quanto tempo
+        // deve levar — nenhum caso apaga o aviso sem dizer por quê.
+        // Devolve [texto, tom]; texto vazio = nada a avisar.
+        function textoAvisoRitmo(data, totalMsgs, tempoTexto) {
+            const alvo = data.session_target;
+            const pend = data.pendentes;
+            const msgs = (n) => `${n} mensage${n === 1 ? 'm' : 'ns'}`;
+            if (!pend) {
+                return ['⚠️ Nenhum contato está como Pendente na lista: nada será enviado.', 'atencao'];
+            }
+            const menosPendentes = alvo < totalMsgs
+                ? `Só há ${pend} contato${pend === 1 ? '' : 's'} pendente${pend === 1 ? '' : 's'} na lista, então ${alvo === 1 ? 'será enviada' : 'serão enviadas'} ${msgs(alvo)}, não ${totalMsgs}. `
+                : '';
+            if (data.inviavel) {
+                // O envio não acelera para caber: mantém o espaçamento mínimo
+                // e passa do tempo configurado (ver _replanejar_pausa).
+                return [`⚠️ ${tempoTexto} não é suficiente para ${msgs(alvo)}. ${menosPendentes}`
+                    + `O envio deve levar cerca de ${data.tempo_total_estimado_fmt}: o sistema não acelera `
+                    + 'além do ritmo mínimo seguro, então vai passar do tempo configurado. '
+                    + 'Para caber, aumente o tempo ou diminua a quantidade.', 'erro'];
+            }
+            if (menosPendentes) {
+                // Com 1 mensagem não há pausas para preencher a janela: o
+                // tempo é só o do envio. Com mais, as pausas ocupam o configurado.
+                const duracao = alvo === 1 ? data.tempo_total_estimado_fmt : tempoTexto;
+                return [`ℹ️ ${menosPendentes}Deve levar cerca de ${duracao}.`, 'atencao'];
+            }
+            return ['', null];
+        }
+
+        function mostrarAvisoRitmo(avisoEl, texto, tom) {
+            avisoEl.textContent = texto;
+            avisoEl.className = `text-xs mt-1 ${tom === 'erro' ? 'text-red-600' : 'text-amber-700'}`;
+            avisoEl.classList.toggle('hidden', !texto);
         }
 
 
@@ -3271,7 +3488,7 @@
             const seq = ++_estimateRequestSeq;
             _estimateDebounceTimer = setTimeout(async () => {
                 try {
-                    const resp = await fetch('/estimate?modo_envio=direto');
+                    const resp = await fetchEstimate({ modo_envio: 'direto' });
                     if (seq !== _estimateRequestSeq) return;
                     const data = await resp.json();
                     if (data.status !== 'ok' || !isModoDireto()) return;
@@ -3541,6 +3758,10 @@
                 unsavedChanges = true;
                 document.getElementById('unsaved-indicator').style.display = 'inline-block';
             }
+            // Toda edição da tabela passa por aqui (↺, apagar, adicionar,
+            // digitar, anexo): a estimativa lê a tela, então refaz a conta.
+            // Fora do `if`: a segunda edição muda a conta tanto quanto a primeira.
+            updateEstimativa();
         }
 
         function markSaved() {
@@ -3803,6 +4024,8 @@
             checkLicense();
             // Tooltip de inválidos (posicionado em JS, fora da sidebar)
             setupInvalidsTooltip();
+            // Painel do log: aberto/oculto e altura que o usuário deixou
+            setupPainelLog();
             // Carrega config salva do localStorage (antes do SSE)
             loadConfigFromLocalStorage();
             connectSSE();

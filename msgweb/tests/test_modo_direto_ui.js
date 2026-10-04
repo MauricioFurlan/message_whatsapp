@@ -81,7 +81,7 @@ const sandbox = {
         return Promise.resolve({ ok: true, json: () => json });
     },
     EventSource: function () { return { close() {}, addEventListener() {} }; },
-    setTimeout, clearTimeout, Promise, Number, String, Math, JSON, Error, Set,
+    setTimeout, clearTimeout, Promise, Number, String, Math, JSON, Error, Set, URLSearchParams,
 };
 
 vm.runInNewContext(src, sandbox);

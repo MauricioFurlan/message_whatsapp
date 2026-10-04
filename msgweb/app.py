@@ -1032,6 +1032,11 @@ async def estimate_time(total_msgs: int = 0, tempo_minutos: int = 0, modo_envio:
     """
     if not state.excel_path or not os.path.exists(state.excel_path):
         return {"status": "sem_planilha"}
+    return _estimar(None, total_msgs, tempo_minutos, modo_envio)
+
+
+def _estimar(df, total_msgs: int, tempo_minutos: int, modo_envio: str) -> dict:
+    """`df` None = ler a planilha em disco."""
     direto = modo_envio == "direto"
     if not direto and (total_msgs <= 0 or tempo_minutos <= 0):
         return {"status": "ok", "session_target": 0, "inviavel": False}
@@ -1041,12 +1046,13 @@ async def estimate_time(total_msgs: int = 0, tempo_minutos: int = 0, modo_envio:
     # componente mais caro depois de abrir a conversa —, e sem isto a
     # estimativa mostraria na tela um tempo que o envio não tem como cumprir.
     sender = WhatsAppSender(
-        excel_path=state.excel_path,
+        excel_path=state.excel_path or "",
         config=state.config,
         global_message=state.global_message if state.global_message_active else "",
         global_attachment=_anexo_global_ativo(),
     )
-    df = sender._load_contacts()
+    if df is None:
+        df = sender._load_contacts()
     pending = get_pending_contacts(df)
 
     if direto:
@@ -1065,7 +1071,18 @@ async def estimate_time(total_msgs: int = 0, tempo_minutos: int = 0, modo_envio:
     session_target = min(total_msgs, len(pending))
 
     if session_target <= 1:
-        return {"status": "ok", "session_target": session_target, "pendentes": len(pending), "inviavel": False}
+        # Sem pausas a planejar, mas o tempo vai junto: a tela diz quanto vai
+        # levar em todo caso, inclusive quando a planilha tem menos pendentes
+        # do que o pedido (o aviso não pode só sumir).
+        estimado = sender._estimar_tempo_envio_total(pending, session_target) if session_target else 0.0
+        return {
+            "status": "ok",
+            "session_target": session_target,
+            "pendentes": len(pending),
+            "inviavel": False,
+            "tempo_total_estimado_seg": round(estimado),
+            "tempo_total_estimado_fmt": WhatsAppSender._fmt_duracao(estimado),
+        }
 
     orcamento = sender._calcular_orcamento_de_pausas(pending, session_target, tempo_minutos)
     # Espelha o que _generate_burst_plan faz na prática: quando não sobra
@@ -1487,19 +1504,75 @@ class ContactsPayload(BaseModel):
     contacts: list[ContactModel]
 
 
+class EstimatePayload(BaseModel):
+    total_msgs: int = 0
+    tempo_minutos: int = 0
+    modo_envio: str = "rajadas"
+    contacts: list[ContactModel]
+
+
+@app.post("/estimate")
+async def estimate_time_da_tela(payload: EstimatePayload):
+    """
+    A mesma estimativa do GET /estimate, sobre os contatos da TELA em vez da
+    planilha em disco.
+
+    A tela pode estar à frente do disco: o ↺ (reenviar), apagar ou adicionar
+    uma linha só gravam no "Salvar Alterações". E é a tela que vai para o
+    envio — "Iniciar Envio" grava os contatos antes do /start. Estimar pelo
+    disco mostrava "1 pendente" para quem tinha acabado de reenfileirar dez.
+
+    Não grava nada; monta o DataFrame como o POST /contacts montaria.
+    """
+    return _estimar(
+        _df_dos_contatos(payload.contacts),
+        payload.total_msgs, payload.tempo_minutos, payload.modo_envio,
+    )
+
+
 @app.post("/contacts")
 async def save_contacts(payload: ContactsPayload):
     """Salva os contatos editados na planilha."""
     _recusar_se_enviando("Não é possível editar contatos durante o envio.")
 
+    df = _df_dos_contatos(payload.contacts)
+    if df.empty:
+        raise HTTPException(status_code=400, detail="Nenhum contato válido para salvar.")
+
+    upload_dir = caminhos.uploads_dir()
+    upload_dir.mkdir(exist_ok=True)
+    file_path = upload_dir / "contatos.xlsx"
+    df.to_excel(file_path, index=False)
+    state.excel_path = str(file_path)
+    _set_excel_source("editor", file_path)
+
+    total = len(df)
+    enviados = len(df[df["Enviado"] == "X"])
+    invalidos = len(df[df["Invalido"] == "X"])
+    pendentes = total - enviados - invalidos
+
+    add_log(f"Contatos atualizados via editor: {total} contatos ({pendentes} pendentes, {enviados} enviados, {invalidos} inválidos)")
+
+    return {
+        "status": "ok",
+        "total": total,
+        "pendentes": pendentes,
+        "enviados": enviados,
+        "invalidos": invalidos,
+    }
+
+
+def _df_dos_contatos(contacts: list[ContactModel]) -> pd.DataFrame:
+    """
+    A planilha que os contatos da tela viram. Uma só montagem para quem grava
+    (POST /contacts) e quem só estima (POST /estimate): se divergissem, a
+    estimativa descreveria uma planilha diferente da que o envio vai ler.
+    """
     # Filtra linhas totalmente vazias (sem nome e sem número)
     valid_contacts = [
-        c for c in payload.contacts
+        c for c in contacts
         if c.pessoa.strip() or c.numero.strip()
     ]
-
-    if not valid_contacts:
-        raise HTTPException(status_code=400, detail="Nenhum contato válido para salvar.")
 
     # Monta o DataFrame preservando as colunas de controle
     rows = []
@@ -1526,28 +1599,7 @@ async def save_contacts(payload: ContactsPayload):
         # a varredura anterior sumiria a cada save.
         "Respondeu", "DataResposta", "Entrega", "UltimaVerificacao", "RespostaTexto",
     ])
-
-    upload_dir = caminhos.uploads_dir()
-    upload_dir.mkdir(exist_ok=True)
-    file_path = upload_dir / "contatos.xlsx"
-    df.to_excel(file_path, index=False)
-    state.excel_path = str(file_path)
-    _set_excel_source("editor", file_path)
-
-    total = len(df)
-    enviados = len(df[df["Enviado"] == "X"])
-    invalidos = len(df[df["Invalido"] == "X"])
-    pendentes = total - enviados - invalidos
-
-    add_log(f"Contatos atualizados via editor: {total} contatos ({pendentes} pendentes, {enviados} enviados, {invalidos} inválidos)")
-
-    return {
-        "status": "ok",
-        "total": total,
-        "pendentes": pendentes,
-        "enviados": enviados,
-        "invalidos": invalidos,
-    }
+    return df
 
 
 @app.get("/download-contacts")

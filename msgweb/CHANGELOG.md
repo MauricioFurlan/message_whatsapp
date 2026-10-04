@@ -1,5 +1,57 @@
 # Changelog
 
+## 2026-10-04 (log embaixo da tela; aviso de tempo que não some)
+
+**Log.** Relato: "o log da aplicação está ruim de acompanhar". Ele era o último
+bloco da barra lateral, com `flex-1`: ficava com a altura que sobrava (com
+Configuração e Mensagem Global abertas, quase nada) e com 320px de largura, então
+as linhas quebravam em duas ou três. Virou um painel na largura toda, embaixo,
+como o "dock to bottom" do DevTools. A versão lateral saiu, por decisão do
+usuário. A altura muda arrastando a borda (entre 80px e 70% da janela) e o painel
+pode ser ocultado. As duas escolhas ficam no `localStorage`. Oculto, ele conta as
+linhas novas ("2 novas") e **reabre sozinho** numa linha que pede ação: a 🚫 e o
+pedido de QR Code. Escondidas, o envio ficaria parado esperando alguém que não as
+vê. O histórico restaurado ao recarregar não conta como novidade.
+
+O auto-scroll fazia `scrollTop = scrollHeight` a cada linha, e quem rolava para
+cima para ler era puxado de volta ao fim na linha seguinte. Agora ele só
+acompanha o fim se o usuário já estava no fim. O corte das linhas antigas (200)
+compensa a rolagem para o texto lido não escorregar.
+
+`recolherAjustesParaMostrarOLog()` saiu junto com o seu teste. Ela só existia
+para abrir espaço para o log na lateral.
+
+**Mensagens do Iniciar/Parar.** A confirmação do Iniciar dizia "Escaneie o QR
+Code no navegador" sempre, mesmo com a sessão ativa. Quem pede o QR é o backend,
+no log, e só quando há um QR na tela. Agora a mensagem diz "Envio iniciado.
+Acompanhe pelo log abaixo." e some em 4s. "Parada solicitada…" ficava na tela
+depois que o envio já tinha parado. Agora ela some quando o status chega sem nada
+rodando, e enquanto espera mostra reticências animadas (CSS `::after`, fora do
+`textContent`, para a comparação de texto continuar valendo).
+
+**Aviso de tempo.** Relato: "50 mensagens em 5 minutos" abria um alerta que sumia
+logo depois. A checagem local (só o piso de 15s) mostrava "Ritmo apertado" na
+hora, e 400ms depois a resposta do `/estimate`, que conta os pendentes reais (a
+planilha tinha 1), o apagava sem dizer por quê. Regra do usuário: o aviso não
+some e mostra quanto tempo vai levar. Agora quem decide é o servidor. A checagem
+local só vale sem planilha ou sem servidor. Cada caso em que o envio não sai como
+pedido tem um texto, sempre com o tempo: menos pendentes que o pedido, tempo que
+não cabe ("não acelera além do ritmo mínimo seguro, vai passar do tempo
+configurado"), os dois juntos, e nenhum pendente. Para isso, o `/estimate`
+passou a mandar o tempo também com 0 ou 1 mensagem a enviar.
+
+Segundo relato: o ↺ (voltar a Pendente) não mudava o aviso. Isso porque o ↺ só
+grava no "Salvar Alterações", e a estimativa lia o disco. Mas é a tela que vai
+para o envio, já que o Iniciar grava os contatos antes do `/start`. Por isso o
+novo `POST /estimate` estima sobre os contatos da tela **sem gravar nada**, e a
+tela chama esse endpoint a cada edição (`markUnsaved`). O DataFrame é montado
+por `_df_dos_contatos`, o mesmo do `POST /contacts`: se os dois divergissem, a
+estimativa descreveria uma planilha diferente da que o envio vai ler. O `GET`
+continua valendo quando a tabela está vazia ou a carga falhou.
+
+Testes: `tests/test_painel_log_ui.js`, `tests/test_aviso_ritmo_ui.js`,
+`tests/e2e/test_e2e_estimativa.py`.
+
 ## 2026-10-04 (os testes somavam no histórico de envios da máquina)
 
 Relato: o "Baixar histórico" mostrou **1035 envios** num dia em que só uma
