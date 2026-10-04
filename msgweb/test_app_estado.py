@@ -317,7 +317,7 @@ class FakeSenderCriado:
 
     def __init__(self, excel_path, config, log_callback=None,
                  contact_update_callback=None, global_message="",
-                 global_attachment=""):
+                 global_attachment="", global_order=""):
         self.excel_path = excel_path
         self.config = config
         self.global_message = global_message

@@ -231,19 +231,21 @@ class TestColagemDuplicada(unittest.TestCase):
 
     def test_send_message_confere_o_campo_antes_do_enter(self):
         """
-        A conferência do último instante mora em `_send_message`, entre a pausa
-        humana e o ENTER. Fora dali ela não cobre a colagem atrasada, e os
-        testes acima passariam a medir uma sequência que o envio não executa.
+        A conferência do último instante mora no passo do texto
+        (`_enviar_texto`, extraído de `_send_message` quando a ordem do pacote
+        global passou a ser escolhível), entre a pausa humana e o ENTER. Fora
+        dali ela não cobre a colagem atrasada, e os testes acima passariam a
+        medir uma sequência que o envio não executa.
         """
         import inspect
 
-        fonte = inspect.getsource(WhatsAppSender._send_message)
+        fonte = inspect.getsource(WhatsAppSender._enviar_texto)
         guarda = fonte.find("_garantir_texto_unico_no_campo")
         enter = fonte.find("input_field.send_keys(Keys.ENTER)")
 
         self.assertNotEqual(guarda, -1,
-                            "_send_message parou de conferir o campo antes do ENTER")
-        self.assertNotEqual(enter, -1, "o ENTER do envio de texto sumiu de _send_message")
+                            "_enviar_texto parou de conferir o campo antes do ENTER")
+        self.assertNotEqual(enter, -1, "o ENTER do envio de texto sumiu de _enviar_texto")
         self.assertLess(guarda, enter,
                         "a conferência precisa vir ANTES do ENTER para valer de algo")
 
@@ -252,9 +254,10 @@ class TestColagemDuplicada(unittest.TestCase):
         A legenda do modal de anexo passa pelo mesmo `_paste_text` e é enviada
         por um clique logo depois — a mesma fresta, o mesmo remédio.
 
-        ATENÇÃO: este caminho está DORMENTE hoje. `all_images` é uma constante
-        `False` em `_send_message`, então `_type_caption_in_modal` não chega a
-        ser chamado e o texto sempre sai como mensagem separada. A conferência
+        ATENÇÃO: este caminho está DORMENTE hoje. Nada em `_send_message`
+        chama `_type_caption_in_modal` (a antiga constante `all_images = False`
+        saiu junto com a ordem escolhível), então ela não chega a
+        ser chamada e o texto sempre sai como mensagem separada. A conferência
         fica aqui porque é barata e porque o dia em que a legenda voltar a ser
         usada é justamente o dia em que ninguém vai lembrar desta corrida.
         """

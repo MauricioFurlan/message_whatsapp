@@ -89,7 +89,7 @@ class TestDelayApenasAposEnvioReal(unittest.TestCase):
             {"burst_size": len(resultados), "intra_delay": 20.0, "pause_after": 0.0}
         ]
 
-        def fake_send(pessoa, numero, mensagem, arquivo=""):
+        def fake_send(pessoa, numero, mensagem, arquivo="", ordem=None):
             return por_numero[numero] == "ok"
 
         sender._send_message = fake_send

@@ -93,6 +93,37 @@ class MensagemNaoSaiuError(RuntimeError):
     """
 
 
+class EnvioParcialError(RuntimeError):
+    """
+    O texto do pacote global JÁ saiu e o anexo, que vinha depois, não.
+
+    Só existe na ordem "texto primeiro" (`ORDEM_TEXTO_PRIMEIRO`). Na ordem
+    padrão o anexo vai antes e uma falha dele impede o texto: nada chega, o
+    contato vira inválido e o ↺ reenvia tudo sem duplicar. Aqui não dá: o
+    contato já recebeu o texto, e marcá-lo inválido faria o ↺ mandar o texto
+    DE NOVO.
+
+    Regra decidida pelo usuário (29/09/2026): o contato fica `Enviado=X` e o
+    `Motivo` diz que o anexo não chegou. Perde-se o anexo daquele contato;
+    nunca se duplica o texto.
+
+    `sessao_morta` diz ao laço de envio que, além de marcar o contato, ele
+    tem de abortar — o navegador caiu depois do texto.
+    """
+
+    def __init__(self, motivo: str, sessao_morta: bool = False):
+        super().__init__(motivo)
+        self.sessao_morta = sessao_morta
+
+
+# Ordem do pacote global quando ele tem texto E anexo. Vale só para quem
+# recebe a mensagem global (coluna Mensagem em branco); contato com mensagem
+# própria segue sempre a ordem padrão.
+ORDEM_ANEXO_PRIMEIRO = "anexo_primeiro"
+ORDEM_TEXTO_PRIMEIRO = "texto_primeiro"
+ORDENS_DO_PACOTE = (ORDEM_ANEXO_PRIMEIRO, ORDEM_TEXTO_PRIMEIRO)
+
+
 class ChromeProfileInUseError(RuntimeError):
     """
     Já existe um Chrome aberto usando o perfil do app (`chrome_profile/`).
@@ -283,6 +314,7 @@ class WhatsAppSender:
         contact_update_callback: Optional[Callable[[int, str, str, str], None]] = None,
         global_message: str = "",
         global_attachment: str = "",
+        global_order: str = "",
     ):
         self.excel_path = excel_path
         self.config = config
@@ -290,6 +322,11 @@ class WhatsAppSender:
         self.contact_update_callback = contact_update_callback
         self.global_message = global_message
         self.global_attachment = global_attachment
+        # Ordem do pacote global (texto x anexo). Valor desconhecido cai no
+        # padrão: é o único caminho em que falha de anexo não entrega nada.
+        self.global_order = (
+            global_order if global_order in ORDENS_DO_PACOTE else ORDEM_ANEXO_PRIMEIRO
+        )
 
         # Estado interno (thread-safe)
         self._lock = threading.Lock()
@@ -422,6 +459,35 @@ class WhatsAppSender:
                 "alerta_lentidao": dict(self._alerta_lentidao) if self._alerta_lentidao else None,
                 "alerta_entrega": dict(self._alerta_entrega) if self._alerta_entrega else None,
             }
+
+    def _marcar_enviado(self, df, idx, numero: str, pessoa: str, motivo: str = "") -> str:
+        """
+        Grava `Enviado=X` e faz a contabilidade de um envio que chegou ao
+        contato. Devolve a data gravada.
+
+        `motivo` só vem preenchido no envio PARCIAL (`EnvioParcialError`): o
+        texto chegou e o anexo não. Num envio completo o `Motivo` é zerado —
+        qualquer coisa que estivesse ali descrevia um estado anterior da linha.
+        """
+        df.at[idx, "Enviado"] = "X"
+        data_envio = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        df.at[idx, "DataEnvio"] = data_envio
+        df.at[idx, "Motivo"] = motivo
+        self._save_contacts(df)
+        stats_log.registrar_envio(data_envio)
+
+        with self._lock:
+            self._messages_sent += 1
+        self._sincronizar_pendentes()
+
+        # A conversa abriu: entra como amostra "boa" na
+        # taxa que dispara o aviso de lentidão.
+        self._registrar_resultado_de_abertura(True)
+        # Entregue é outra coisa: a mensagem saiu, mas
+        # só a pausa vai conferir se ela CHEGOU.
+        self._registrar_envio_para_entrega(numero, pessoa)
+        self._notify_contact_update(idx, numero, "enviado", data_envio, motivo)
+        return data_envio
 
     def _contar_invalido(self, motivo: str):
         """
@@ -2043,6 +2109,10 @@ class WhatsAppSender:
     DELAY_INTRA_MIN = 15   # delay mínimo entre msgs dentro de uma rajada
     DELAY_INTRA_MAX = 25   # delay máximo entre msgs dentro de uma rajada
     BURST_MAX = 8          # tamanho máximo de uma rajada
+    # Fração da pausa planejada abaixo da qual o reajuste ao prazo não desce
+    # (decisão do usuário, 2026-10-04): com o envio atrasado, rajadas quase
+    # coladas arriscam bloqueio; passar do tempo configurado é o preço aceito.
+    PAUSA_PISO_FRACAO = 0.5
 
     # Estimativa (não afeta o ritmo real, só a mensagem mostrada ao usuário)
     # de segundos extras que cada anexo costuma acrescentar ao envio de uma
@@ -2195,6 +2265,71 @@ class WhatsAppSender:
             })
 
         return plan
+
+    @classmethod
+    def _replanejar_pausa(
+        cls,
+        pausa_planejada: float,
+        pausas_restantes_planejadas: float,
+        intra_restante: float,
+        segundos_ate_prazo: float,
+        msgs_faltando: int,
+        custo_medio_envio: float,
+    ) -> float:
+        """
+        Recalcula a pausa entre rajadas a partir do PRAZO, não do plano.
+
+        O plano de `_generate_burst_plan` é sorteado uma vez, no início, em cima
+        de uma ESTIMATIVA do tempo de envio (abrir conversa, digitar, anexar). O
+        real nunca bate com ela: abrir a conversa variou de 31s a 58s nos logs, e
+        cada falha de abertura custa ~3,7min sem gastar vaga da rajada. Executar
+        as pausas planejadas às cegas acumulava todo esse erro no fim — o
+        relato do cliente: "não está fiel ao tempo estipulado".
+
+        Aqui, a cada pausa, o que falta até o prazo é redistribuído:
+
+            orçamento = até o prazo - (msgs faltando x custo médio REAL de um
+                        envio) - delays curtos que ainda vão acontecer
+
+        e esta pausa leva a sua fatia, na mesma proporção que tinha entre as
+        pausas que restam — o desenho irregular das rajadas é preservado, só a
+        escala muda. Atrasou, as pausas encolhem; adiantou, crescem.
+
+        Nunca abaixo de `_piso_da_pausa`: metade da planejada, e nunca menos
+        que DELAY_INTRA_MIN. Encolher até 15s cumpria o prazo à custa de
+        rajadas quase seguidas — o padrão que o plano existe para evitar. Com o
+        envio atrasado demais para recuperar, o total passa do configurado —
+        quem avisa disso é o laço de envio, não esta função.
+
+        `pausas_restantes_planejadas` inclui esta pausa.
+        """
+        piso = cls._piso_da_pausa(pausa_planejada)
+        if pausas_restantes_planejadas <= 0:
+            return max(piso, pausa_planejada)
+        orcamento = (
+            segundos_ate_prazo
+            - max(0, msgs_faltando) * max(0.0, custo_medio_envio)
+            - max(0.0, intra_restante)
+        )
+        pausa = orcamento * (pausa_planejada / pausas_restantes_planejadas)
+        return max(piso, pausa)
+
+    @classmethod
+    def _piso_da_pausa(cls, pausa_planejada: float) -> float:
+        """Menor pausa entre rajadas que o reajuste ao prazo pode impor."""
+        return max(float(cls.DELAY_INTRA_MIN), pausa_planejada * cls.PAUSA_PISO_FRACAO)
+
+    def _aguardar_horario_comercial_medindo(self) -> float:
+        """
+        `_wait_for_business_hours` devolvendo quanto tempo esperou.
+
+        A espera fora do horário comercial não é tempo de envio: o prazo do
+        plano é empurrado por ela, senão uma noite de espera faria as pausas
+        seguintes desabarem para o piso.
+        """
+        t0 = time.monotonic()
+        self._wait_for_business_hours()
+        return time.monotonic() - t0
 
     def _estimar_tempo_envio_individual(self, mensagem, arquivo) -> float:
         """
@@ -2435,12 +2570,23 @@ class WhatsAppSender:
 
         return texto, regra
 
-    def _send_message(self, pessoa: str, numero: str, mensagem: str, arquivo: str = "") -> bool:
+    def _send_message(
+        self, pessoa: str, numero: str, mensagem: str, arquivo: str = "",
+        ordem: str = ORDEM_ANEXO_PRIMEIRO,
+    ) -> bool:
         """
         Envia uma mensagem para um contato.
-        Se há arquivo associado, envia primeiro o(s) anexo(s) e depois o texto.
-        Se o anexo falhar (arquivo não encontrado ou erro ao enviar), a mensagem
-        de texto NÃO é enviada e o contato é marcado como inválido (AttachmentError).
+        Se há arquivo associado, por padrão envia primeiro o(s) anexo(s) e
+        depois o texto. Se o anexo falhar (arquivo não encontrado ou erro ao
+        enviar), a mensagem de texto NÃO é enviada e o contato é marcado como
+        inválido (AttachmentError).
+
+        `ordem=ORDEM_TEXTO_PRIMEIRO` (só o pacote global a usa) inverte: texto
+        e depois anexo. Aí uma falha DEPOIS do texto sair vira
+        `EnvioParcialError` — o contato já recebeu algo e não pode voltar para
+        a fila. E o anexo só sai se o texto foi CONFIRMADO: texto que ficou no
+        campo viraria legenda do anexo.
+
         Se não há arquivo, envia apenas texto.
         Retorna True se enviou com sucesso, False se falhou.
         Levanta TimeoutException se número é inválido.
@@ -2485,11 +2631,13 @@ class WhatsAppSender:
                         f"(caminho: {f})"
                     )
         has_media = len(media_files) > 0
+        tem_texto = bool(texto.strip())
 
-        # O anexo é enviado ANTES do texto. Se o anexo falhar, o texto não é
-        # enviado e o contato é marcado como inválido. Imagens/vídeos vão pelo
-        # input de mídia do WhatsApp (foto grande inline); os demais vão como documento.
-        all_images = False
+        # A ordem só existe quando há as duas coisas: pacote só de anexo ou só
+        # de texto não tem o que ordenar.
+        texto_primeiro = (
+            ordem == ORDEM_TEXTO_PRIMEIRO and has_media and tem_texto
+        )
 
         # Navega para o chat (sempre sem texto pré-preenchido quando human ou mídia)
         if human or has_media:
@@ -2650,45 +2798,21 @@ class WhatsAppSender:
                     self._dismiss_on_stop()
                     return False
 
+            if texto_primeiro:
+                return self._enviar_texto_e_depois_anexos(
+                    texto, media_files, pessoa, numero_limpo, human
+                )
+
             # Passo 1: Se tem mídia, envia os anexos PRIMEIRO.
             # Se o anexo falhar, a mensagem de texto NÃO será enviada e o
             # contato será marcado como inválido. Isso garante que não se
             # entrega uma mensagem "solta" (sem o anexo prometido).
             if has_media:
-                # O campo tem que estar vazio ANTES de o menu de anexo abrir:
-                # o WhatsApp promove o que estiver nele a legenda do arquivo.
-                self._exigir_campo_vazio_antes_do_anexo(pessoa)
+                if not self._enviar_anexos(media_files, pessoa, human):
+                    return False
 
-                for media_file in media_files:
-                    if self._should_stop():
-                        self._dismiss_on_stop()
-                        return False
-                    if self._interruptible_sleep(random.uniform(1.0, 2.0)):
-                        self._dismiss_on_stop()
-                        return False
-                    try:
-                        self._send_media(media_file, pessoa, human)
-                    except BrowserClosedError:
-                        raise
-                    except Exception as e:
-                        if self._is_session_dead(e):
-                            raise BrowserClosedError(str(e))
-                        raise AttachmentError(
-                            f"Falha ao enviar anexo {os.path.basename(media_file)}: {e}"
-                        )
-
-            if self._should_stop():
-                self._dismiss_on_stop()
+            if not self._pausa_entre_passos(human):
                 return False
-
-            if human:
-                if self._interruptible_sleep(random.uniform(2.0, 5.0)):
-                    self._dismiss_on_stop()
-                    return False
-            else:
-                if self._interruptible_sleep(random.uniform(2.0, 4.0)):
-                    self._dismiss_on_stop()
-                    return False
 
             # Passo 2: Envia a mensagem de texto.
             #
@@ -2696,98 +2820,21 @@ class WhatsAppSender:
             # pode ser só uma imagem. Aí não há o que digitar, e um ENTER num
             # campo vazio não produz mensagem nenhuma: no melhor caso é inócuo,
             # no pior o WhatsApp reage a uma tecla que ninguém pediu.
-            if not all_images and texto.strip():
-                input_field = self._driver.find_element(
-                    By.CSS_SELECTOR, seletores.get("campo_mensagem")
+            if tem_texto:
+                resultado = self._enviar_texto(
+                    texto, pessoa, numero_limpo, human, has_media
                 )
-
-                # Garante que o campo está vazio antes de digitar (evita sobrescrever
-                # rascunhos ou texto residual de navegação anterior)
-                if human or has_media:
-                    self._clear_input_field(input_field)
-
-                if human:
-                    typing_ok = self._human_type(input_field, texto)
-                    if not typing_ok:
-                        # Stop requested during typing — do NOT send
-                        self._dismiss_on_stop()
-                        return False
-                    if self._interruptible_sleep(random.uniform(0.8, 2.0)):
-                        self._dismiss_on_stop()
-                        return False
-                else:
-                    # Se não usou human, o texto já está no campo via URL (exceto com mídia)
-                    if has_media:
-                        # Envia texto com suporte a quebras de linha (Shift+Enter)
-                        self._type_with_newlines(input_field, texto)
-                        if self._interruptible_sleep(random.uniform(0.5, 1.0)):
-                            self._dismiss_on_stop()
-                            return False
-
-                # Verifica stop antes de pressionar ENTER (ponto sem retorno)
-                if self._should_stop():
-                    self._dismiss_on_stop()
+                if resultado == self._TEXTO_PARADO:
                     return False
-
-                # Se a mensagem contém um link, o WhatsApp gera um preview card.
-                has_link = "http://" in texto or "https://" in texto or "www." in texto
-                if has_link:
-                    if self._interruptible_sleep(random.uniform(2.0, 4.0)):
-                        self._dismiss_on_stop()
-                        return False
-
-                # Linha de base das bolhas falhadas ANTES do nosso ENTER.
-                # Ver `_detectar_falha_de_saida`: o que acusa e' o crescimento,
-                # porque uma falha antiga fica parada na conversa para sempre.
-                falhas_antes = self._contar_falhas_de_saida()
-
-                # Última conferência antes do ponto sem retorno: o que
-                # estiver no campo AGORA é o que vira o balão. Só o caminho da
-                # colagem (emoji fora do BMP) consegue escrever duas vezes
-                # sozinho — digitar caractere a caractere não tem como —, então
-                # é só nele que vale pagar a leitura do DOM. Ver `_paste_text`.
-                if self._has_non_bmp(texto):
-                    self._garantir_texto_unico_no_campo(input_field, texto)
-
-                input_field.send_keys(Keys.ENTER)
-
-                # Confirma que a mensagem saiu de fato.
-                confirm_timeout = 8.0 if has_link else 6.0
-                if not self._confirm_message_sent(texto, timeout=confirm_timeout):
-                    self._log(f"⚠️ {pessoa} — campo não esvaziou, tentando ENTER novamente...")
-                    file_logger.warning(f"ENTER não enviou a mensagem de {pessoa}, tentando novamente")
-                    try:
-                        input_field = self._driver.find_element(
-                            By.CSS_SELECTOR, seletores.get("campo_mensagem")
-                        )
-                        input_field.send_keys(Keys.ENTER)
-                    except StaleElementReferenceException:
-                        pass
-
-                    if not self._confirm_message_sent(texto, timeout=confirm_timeout):
-                        file_logger.error(
-                            f"NÃO CONFIRMADO: mensagem de {pessoa} ({numero_limpo}) pode "
-                            f"não ter sido enviada — campo de texto ainda continha o "
-                            f"texto após 2 tentativas de ENTER. Seguindo adiante."
-                        )
-                        self._log(
-                            f"⚠️ {pessoa} — não foi possível confirmar o envio. "
-                            f"Verifique manualmente esta conversa."
-                        )
-
-                # O campo esvaziar so' prova que a BOLHA foi criada. Se ela
-                # nascer com o container de falha, a mensagem nao saiu da
-                # maquina — e era isso que o app vinha gravando como
-                # `Enviado=X` (caso de 19/09/2026, contato "Lucas" as 13:22).
-                if self._detectar_falha_de_saida(falhas_antes):
-                    raise MensagemNaoSaiuError(
-                        "o WhatsApp marcou a mensagem com erro de envio"
-                    )
+                # Texto não confirmado aqui é o último passo: segue adiante
+                # como sempre seguiu (o log já pediu conferência manual).
 
             return True
 
         except BrowserClosedError:
             raise  # Sessão morta: aborta o envio inteiro
+        except EnvioParcialError:
+            raise  # Texto saiu, anexo não: o contato NÃO pode voltar para a fila
         except AttachmentError:
             raise  # Falha no anexo: contato será marcado inválido sem retentativa
         except MensagemNaoSaiuError:
@@ -2808,6 +2855,219 @@ class WhatsAppSender:
             file_logger.error(f"Erro no envio Selenium para {pessoa} ({numero_limpo}): {e}\n{traceback.format_exc()}")
             self._log(f"Erro ao enviar para {pessoa}: {e}")
             return False
+
+    # Desfechos de `_enviar_texto`.
+    _TEXTO_PARADO = "parado"                  # Stop antes do ENTER: nada saiu
+    _TEXTO_CONFIRMADO = "confirmado"          # o campo esvaziou: saiu
+    _TEXTO_NAO_CONFIRMADO = "nao_confirmado"  # dois ENTERs e o texto seguiu no campo
+
+    def _pausa_entre_passos(self, human: bool) -> bool:
+        """Respiro entre anexo e texto. False = Stop pedido (já dispensado)."""
+        if self._should_stop():
+            self._dismiss_on_stop()
+            return False
+        if self._interruptible_sleep(
+            random.uniform(2.0, 5.0) if human else random.uniform(2.0, 4.0)
+        ):
+            self._dismiss_on_stop()
+            return False
+        return True
+
+    def _enviar_anexos(self, media_files: list, pessoa: str, human: bool) -> bool:
+        """
+        Envia os anexos na conversa aberta. False = Stop pedido antes de um
+        deles (já dispensado); falha vira `AttachmentError`.
+        """
+        # O campo tem que estar vazio ANTES de o menu de anexo abrir:
+        # o WhatsApp promove o que estiver nele a legenda do arquivo.
+        self._exigir_campo_vazio_antes_do_anexo(pessoa)
+
+        for media_file in media_files:
+            if self._should_stop():
+                self._dismiss_on_stop()
+                return False
+            if self._interruptible_sleep(random.uniform(1.0, 2.0)):
+                self._dismiss_on_stop()
+                return False
+            try:
+                self._send_media(media_file, pessoa, human)
+            except BrowserClosedError:
+                raise
+            except Exception as e:
+                if self._is_session_dead(e):
+                    raise BrowserClosedError(str(e))
+                raise AttachmentError(
+                    f"Falha ao enviar anexo {os.path.basename(media_file)}: {e}"
+                )
+        return True
+
+    def _enviar_texto(
+        self, texto: str, pessoa: str, numero_limpo: str, human: bool, has_media: bool
+    ) -> str:
+        """
+        Digita (ou confere o pré-preenchido) e dá ENTER. Devolve um dos
+        `_TEXTO_*`; levanta `MensagemNaoSaiuError` se a bolha nascer falhada.
+        """
+        input_field = self._driver.find_element(
+            By.CSS_SELECTOR, seletores.get("campo_mensagem")
+        )
+
+        # Garante que o campo está vazio antes de digitar (evita sobrescrever
+        # rascunhos ou texto residual de navegação anterior)
+        if human or has_media:
+            self._clear_input_field(input_field)
+
+        if human:
+            typing_ok = self._human_type(input_field, texto)
+            if not typing_ok:
+                # Stop requested during typing — do NOT send
+                self._dismiss_on_stop()
+                return self._TEXTO_PARADO
+            if self._interruptible_sleep(random.uniform(0.8, 2.0)):
+                self._dismiss_on_stop()
+                return self._TEXTO_PARADO
+        else:
+            # Se não usou human, o texto já está no campo via URL (exceto com mídia)
+            if has_media:
+                # Envia texto com suporte a quebras de linha (Shift+Enter)
+                self._type_with_newlines(input_field, texto)
+                if self._interruptible_sleep(random.uniform(0.5, 1.0)):
+                    self._dismiss_on_stop()
+                    return self._TEXTO_PARADO
+
+        # Verifica stop antes de pressionar ENTER (ponto sem retorno)
+        if self._should_stop():
+            self._dismiss_on_stop()
+            return self._TEXTO_PARADO
+
+        # Se a mensagem contém um link, o WhatsApp gera um preview card.
+        has_link = "http://" in texto or "https://" in texto or "www." in texto
+        if has_link:
+            if self._interruptible_sleep(random.uniform(2.0, 4.0)):
+                self._dismiss_on_stop()
+                return self._TEXTO_PARADO
+
+        # Linha de base das bolhas falhadas ANTES do nosso ENTER.
+        # Ver `_detectar_falha_de_saida`: o que acusa e' o crescimento,
+        # porque uma falha antiga fica parada na conversa para sempre.
+        falhas_antes = self._contar_falhas_de_saida()
+
+        # Última conferência antes do ponto sem retorno: o que
+        # estiver no campo AGORA é o que vira o balão. Só o caminho da
+        # colagem (emoji fora do BMP) consegue escrever duas vezes
+        # sozinho — digitar caractere a caractere não tem como —, então
+        # é só nele que vale pagar a leitura do DOM. Ver `_paste_text`.
+        if self._has_non_bmp(texto):
+            self._garantir_texto_unico_no_campo(input_field, texto)
+
+        input_field.send_keys(Keys.ENTER)
+
+        resultado = self._TEXTO_CONFIRMADO
+        # Confirma que a mensagem saiu de fato.
+        confirm_timeout = 8.0 if has_link else 6.0
+        if not self._confirm_message_sent(texto, timeout=confirm_timeout):
+            self._log(f"⚠️ {pessoa} — campo não esvaziou, tentando ENTER novamente...")
+            file_logger.warning(f"ENTER não enviou a mensagem de {pessoa}, tentando novamente")
+            try:
+                input_field = self._driver.find_element(
+                    By.CSS_SELECTOR, seletores.get("campo_mensagem")
+                )
+                input_field.send_keys(Keys.ENTER)
+            except StaleElementReferenceException:
+                pass
+
+            if not self._confirm_message_sent(texto, timeout=confirm_timeout):
+                resultado = self._TEXTO_NAO_CONFIRMADO
+                file_logger.error(
+                    f"NÃO CONFIRMADO: mensagem de {pessoa} ({numero_limpo}) pode "
+                    f"não ter sido enviada — campo de texto ainda continha o "
+                    f"texto após 2 tentativas de ENTER. Seguindo adiante."
+                )
+                self._log(
+                    f"⚠️ {pessoa} — não foi possível confirmar o envio. "
+                    f"Verifique manualmente esta conversa."
+                )
+
+        # O campo esvaziar so' prova que a BOLHA foi criada. Se ela
+        # nascer com o container de falha, a mensagem nao saiu da
+        # maquina — e era isso que o app vinha gravando como
+        # `Enviado=X` (caso de 19/09/2026, contato "Lucas" as 13:22).
+        if self._detectar_falha_de_saida(falhas_antes):
+            raise MensagemNaoSaiuError(
+                "o WhatsApp marcou a mensagem com erro de envio"
+            )
+
+        return resultado
+
+    def _enviar_texto_e_depois_anexos(
+        self, texto: str, media_files: list, pessoa: str, numero_limpo: str, human: bool
+    ) -> bool:
+        """
+        A ordem "texto primeiro" do pacote global.
+
+        Até o ENTER do texto nada saiu, e os desfechos são os de sempre (Stop
+        deixa pendente, bolha falhada vira inválido). Depois dele o contato JÁ
+        recebeu algo, então qualquer desfecho do anexo — falha, Stop, bolha
+        falhada, navegador fechado — vira `EnvioParcialError`: `Enviado=X` com
+        o motivo, nunca de volta para a fila, porque o ↺ duplicaria o texto.
+
+        Texto não confirmado também não segue para o anexo. Se ele ficou no
+        campo, abrir o anexo o promoveria a legenda (ou a limpeza de
+        `_exigir_campo_vazio_antes_do_anexo` o apagaria e só a imagem sairia,
+        marcada como envio completo). Pode ou não ter saído; na dúvida o
+        contato não volta para a fila, pela mesma regra.
+        """
+        resultado = self._enviar_texto(
+            texto, pessoa, numero_limpo, human, has_media=True
+        )
+        if resultado == self._TEXTO_PARADO:
+            return False
+        if resultado == self._TEXTO_NAO_CONFIRMADO:
+            raise EnvioParcialError(
+                "Não deu para confirmar que o texto saiu, e por isso o anexo NÃO "
+                "foi enviado (o texto que ficou no campo iria junto com ele). "
+                "Confira esta conversa no WhatsApp."
+            )
+
+        # Daqui em diante o texto chegou.
+        interrompido = (
+            "Só o texto chegou: o envio foi interrompido (Parar) antes do anexo."
+        )
+        try:
+            if not self._pausa_entre_passos(human):
+                raise EnvioParcialError(interrompido)
+            # O anexo agora é a última bolha: quem confere se ela saiu é esta
+            # linha de base, como o texto faz para si em `_enviar_texto`.
+            falhas_antes = self._contar_falhas_de_saida()
+            if not self._enviar_anexos(media_files, pessoa, human):
+                raise EnvioParcialError(interrompido)
+            if self._detectar_falha_de_saida(falhas_antes):
+                raise EnvioParcialError(
+                    "Só o texto chegou: o WhatsApp marcou o anexo com erro de envio."
+                )
+        except EnvioParcialError:
+            raise
+        except BrowserClosedError as e:
+            raise EnvioParcialError(
+                f"Só o texto chegou: o navegador fechou antes do anexo ({e}).",
+                sessao_morta=True,
+            )
+        except AttachmentError as e:
+            if self._should_stop():
+                # `_finalizar_envio_de_anexo` levanta RuntimeError no Stop, e
+                # `_enviar_anexos` o embrulha em AttachmentError.
+                raise EnvioParcialError(interrompido)
+            raise EnvioParcialError(f"Só o texto chegou: {e}")
+        except Exception as e:
+            if self._is_session_dead(e):
+                raise EnvioParcialError(
+                    f"Só o texto chegou: o navegador fechou antes do anexo ({e}).",
+                    sessao_morta=True,
+                )
+            if self._should_stop():
+                raise EnvioParcialError(interrompido)
+            raise EnvioParcialError(f"Só o texto chegou: erro ao enviar o anexo ({e}).")
+        return True
 
     # Extensões que devem ser enviadas como "Fotos e Vídeos" (aparecem inline no chat)
     _IMAGE_VIDEO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".3gp", ".mov"}
@@ -3967,6 +4227,19 @@ class WhatsAppSender:
                 )
 
                 self._log_burst_plan_friendly(burst_plan, session_target, tempo_minutos)
+                if total_bursts > 1:
+                    self._log(
+                        "   (as pausas são reajustadas durante o envio para terminar "
+                        "dentro do tempo configurado)"
+                    )
+
+                # Relógio do prazo (ver _replanejar_pausa). `ocioso` é o tempo em
+                # que o app esperou de propósito (delays, pausas, horário
+                # comercial); o resto é o custo real de enviar, falhas incluídas.
+                inicio_mono = time.monotonic()
+                prazo_mono = inicio_mono + tempo_minutos * 60
+                ocioso = 0.0
+                avisou_atraso = False
 
                 # Iterador dos contatos pendentes
                 pending_iter = pending.iterrows()
@@ -3978,7 +4251,9 @@ class WhatsAppSender:
                         break
 
                     # Verifica horário comercial antes de cada burst
-                    self._wait_for_business_hours()
+                    espera = self._aguardar_horario_comercial_medindo()
+                    ocioso += espera
+                    prazo_mono += espera
                     if self._should_stop():
                         break
 
@@ -4015,7 +4290,9 @@ class WhatsAppSender:
                             break
 
                         # Verifica horário comercial antes de cada mensagem
-                        self._wait_for_business_hours()
+                        espera = self._aguardar_horario_comercial_medindo()
+                        ocioso += espera
+                        prazo_mono += espera
                         if self._should_stop():
                             break
 
@@ -4054,11 +4331,22 @@ class WhatsAppSender:
                             # próximo contato, sem esperar o delay entre mensagens.
                             continue
 
+                        # A ordem escolhida vale só para o pacote global: quem
+                        # escreveu a própria mensagem segue a ordem padrão.
+                        ordem = (
+                            self.global_order if usou_global else ORDEM_ANEXO_PRIMEIRO
+                        )
+
                         marcas = []
                         if usou_global:
                             marcas.append("mensagem global")
                         if usou_anexo_global:
                             marcas.append("anexo global")
+                        if (
+                            ordem == ORDEM_TEXTO_PRIMEIRO
+                            and arquivo and str(mensagem).strip()
+                        ):
+                            marcas.append("texto antes do anexo")
                         self._log(
                             f"Enviando para {pessoa} ({numero})"
                             f"{' [' + ' + '.join(marcas) + ']' if marcas else ''}..."
@@ -4069,29 +4357,15 @@ class WhatsAppSender:
                         enviados_antes_da_tentativa = enviados_burst
 
                         try:
-                            success = self._send_message(pessoa, numero, mensagem, arquivo)
+                            success = self._send_message(
+                                pessoa, numero, mensagem, arquivo, ordem=ordem
+                            )
 
                             if success:
-                                df.at[idx, "Enviado"] = "X"
-                                data_envio = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                df.at[idx, "DataEnvio"] = data_envio
-                                self._save_contacts(df)
-                                stats_log.registrar_envio(data_envio)
-
-                                with self._lock:
-                                    self._messages_sent += 1
-                                self._sincronizar_pendentes()
-
+                                self._marcar_enviado(df, idx, numero, pessoa)
                                 enviados_burst += 1
                                 total_enviados_sessao += 1
-                                # A conversa abriu: entra como amostra "boa" na
-                                # taxa que dispara o aviso de lentidão.
-                                self._registrar_resultado_de_abertura(True)
-                                # Entregue é outra coisa: a mensagem saiu, mas
-                                # só a pausa vai conferir se ela CHEGOU.
-                                self._registrar_envio_para_entrega(numero, pessoa)
                                 self._log(f"✅ {pessoa} — mensagem enviada com sucesso.")
-                                self._notify_contact_update(idx, numero, "enviado", data_envio)
                             else:
                                 if self._should_stop():
                                     # Interrompido pelo usuário no meio do envio —
@@ -4119,6 +4393,36 @@ class WhatsAppSender:
                             )
                             browser_died = True
                             break
+
+                        except EnvioParcialError as e:
+                            # Ordem "texto primeiro": o texto JÁ chegou e o
+                            # anexo não. Regra do usuário (29/09/2026): conta
+                            # como enviado, com o motivo dizendo o que faltou.
+                            # Inválido seria pior — o ↺ mandaria o texto de
+                            # novo.
+                            motivo_parcial = str(e)
+                            self._marcar_enviado(
+                                df, idx, numero, pessoa, motivo=motivo_parcial
+                            )
+                            enviados_burst += 1
+                            total_enviados_sessao += 1
+                            file_logger.error(
+                                f"ENVIO PARCIAL para {pessoa} ({numero}): {e} — "
+                                f"marcado como enviado (texto já entregue)."
+                            )
+                            self._log(
+                                f"⚠️ {pessoa} ({numero}) — {motivo_parcial} "
+                                f"Contato marcado como enviado para o texto não "
+                                f"ser repetido."
+                            )
+                            if e.sessao_morta:
+                                self._log(
+                                    "🛑 O navegador foi fechado ou perdeu a conexão. "
+                                    "Envio abortado — os pendentes continuam para a "
+                                    "próxima execução."
+                                )
+                                browser_died = True
+                                break
 
                         except MensagemNaoSaiuError as e:
                             # A mensagem NAO chegou a sair da maquina. O
@@ -4315,7 +4619,9 @@ class WhatsAppSender:
                             else:
                                 delay = random.uniform(intra_delay * 0.8, intra_delay * 1.2)
                             self._log(f"Aguardando {delay:.0f}s...")
+                            t0 = time.monotonic()
                             self._interruptible_sleep(delay)
+                            ocioso += time.monotonic() - t0
 
                     # Fim do burst — log e pausa entre bursts
                     self._log(
@@ -4352,6 +4658,64 @@ class WhatsAppSender:
                         and burst_idx < total_bursts - 1
                         and not self._should_stop()
                     ):
+                        # O plano é a forma; o prazo é a escala. Reajusta esta
+                        # pausa com o custo REAL medido até aqui (ver
+                        # _replanejar_pausa).
+                        agora = time.monotonic()
+                        ocupado = max(0.0, (agora - inicio_mono) - ocioso)
+                        if total_enviados_sessao > 0:
+                            custo_medio = ocupado / total_enviados_sessao
+                        else:
+                            custo_medio = tempo_de_envio_est / max(1, session_target)
+                        futuras = burst_plan[burst_idx + 1:]
+                        pausas_restantes = sum(
+                            b["pause_after"] for b in burst_plan[burst_idx:]
+                        )
+                        intra_restante = sum(
+                            (b["burst_size"] - 1) * b["intra_delay"] for b in futuras
+                        )
+                        ate_o_prazo = prazo_mono - agora
+                        pausa_planejada = pause_after
+                        pause_after = self._replanejar_pausa(
+                            pausa_planejada, pausas_restantes, intra_restante,
+                            ate_o_prazo, falta, custo_medio,
+                        )
+                        file_logger.info(
+                            f"[ritmo] leva {burst_idx + 1}: pausa planejada "
+                            f"{pausa_planejada:.0f}s -> reajustada {pause_after:.0f}s "
+                            f"(até o prazo {ate_o_prazo:.0f}s, faltam {falta} msg(s), "
+                            f"custo médio real {custo_medio:.0f}s/msg, "
+                            f"delays curtos restantes {intra_restante:.0f}s)"
+                        )
+
+                        # Atrasado demais para recuperar: as pausas já estão no
+                        # piso de segurança e o total vai passar do configurado.
+                        # Avisa uma vez, com a projeção — antes isso acontecia
+                        # calado e o cliente só descobria olhando o relógio.
+                        if not avisou_atraso:
+                            pausas_no_piso = sum(
+                                self._piso_da_pausa(b["pause_after"])
+                                for b in burst_plan[burst_idx:total_bursts - 1]
+                            )
+                            fim_projetado = (
+                                falta * custo_medio + intra_restante + pausas_no_piso
+                            )
+                            atraso = fim_projetado - ate_o_prazo
+                            if atraso > 60:
+                                avisou_atraso = True
+                                file_logger.warning(
+                                    f"[ritmo] envio atrasado: deve passar ~{atraso:.0f}s "
+                                    f"do tempo configurado ({tempo_minutos}min)."
+                                )
+                                self._log(
+                                    f"⚠️ O envio está mais lento que o previsto (custo real "
+                                    f"de ~{self._fmt_duracao(custo_medio)} por mensagem, "
+                                    f"falhas incluídas). As pausas foram reduzidas ao "
+                                    f"mínimo, mas o envio deve passar ~"
+                                    f"{self._fmt_duracao(atraso)} dos {tempo_minutos}min "
+                                    f"configurados."
+                                )
+
                         pause_min = pause_after / 60
                         self._log(
                             f"⏸️ Pausa de ~{pause_min:.1f} min antes da próxima leva "
@@ -4370,14 +4734,18 @@ class WhatsAppSender:
                         # conversas (mandar mensagem sobe a conversa). Ler dali
                         # se as mensagens foram entregues custa um
                         # execute_script e não atrasa nada. Nunca levanta.
+                        t_pausa = time.monotonic()
                         self._verificar_entregas_na_pausa(pause_after)
 
-                        # Espera em intervalos curtos para poder parar
-                        elapsed = 0.0
+                        # Espera em intervalos curtos para poder parar. A leitura
+                        # acima já gastou parte da pausa — começar do zero depois
+                        # dela somava esse tempo por fora.
+                        elapsed = time.monotonic() - t_pausa
                         while elapsed < pause_after and not self._should_stop():
                             fatia = min(2.0, pause_after - elapsed)
                             self._interruptible_sleep(fatia)
                             elapsed += fatia
+                        ocioso += time.monotonic() - t_pausa
 
                         self._pause_until = None
                         self._next_leva_size = None
@@ -4403,6 +4771,7 @@ class WhatsAppSender:
                 status = self.get_status()
                 duracao_txt = (
                     f" em {self._fmt_duracao(self._elapsed_seconds)}"
+                    f" (tempo configurado: {self.config.get('tempo_minutos', 60)}min)"
                     if self._elapsed_seconds is not None
                     else ""
                 )

@@ -370,5 +370,163 @@ class TestAnexoGlobal(unittest.TestCase):
                 self.assertEqual(msg.anexos, [])
 
 
+class TestOrdemDoPacoteGlobal(unittest.TestCase):
+    """
+    A ordem texto x anexo do pacote global, escolhida pelo usuário.
+
+    O dublê não modela um anexo que dá certo (ver `TestAnexoGlobal`), então
+    aqui `_send_media` é trocado por um gravador: o que se testa é a FIAÇÃO —
+    qual ordem cada contato recebe e o que a planilha registra —, não o modal
+    do WhatsApp. O texto continua saindo pelo ENTER do dublê.
+
+    A regra da falha parcial é do usuário (29/09/2026): texto saiu e anexo não
+    -> `Enviado=X` com o motivo, nunca inválido, porque o ↺ repetiria o texto.
+    """
+
+    def _arquivo(self, nome="promo.jpg"):
+        from pathlib import Path
+        destino = Path("uploads") / "media" / nome
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_bytes(b"\xff\xd8\xff\xd9")
+        return str(destino.resolve())
+
+    def _gravar_eventos(self, amb, anexo_falha=False):
+        """Liga o gravador: devolve a lista de (numero, 'texto'|'anexo')."""
+        from unittest.mock import patch
+        import whatsapp_sender
+
+        eventos = []
+        driver = amb.driver
+        enter_original = driver.apertar_enter
+
+        def _enter():
+            antes = len(driver.enviadas)
+            enter_original()
+            if len(driver.enviadas) > antes:
+                eventos.append((driver.numero_atual, "texto"))
+
+        def _send_media(_self, media_path, pessoa, human=False):
+            if anexo_falha:
+                raise RuntimeError("o preview não abriu depois de escolher o arquivo")
+            eventos.append((driver.numero_atual, "anexo"))
+
+        driver.apertar_enter = _enter
+        amb._aplicar(patch.object(
+            whatsapp_sender.WhatsAppSender, "_send_media", _send_media))
+        return eventos
+
+    def _ligar_pacote(self, amb, ordem):
+        r = amb.cliente.post("/global-attachment", json={
+            "arquivo": self._arquivo(), "ativo": True, "ordem": ordem})
+        self.assertEqual(r.status_code, 200, r.text)
+
+    def _por_numero(self, eventos, numero):
+        return [e for n, e in eventos if n.endswith(numero)]
+
+    def test_texto_primeiro_so_vale_para_o_pacote_global(self):
+        with AmbienteE2E(contatos=[], mensagem_global="Olá {nome}!") as amb:
+            # O arquivo próprio tem de existir no cwd do cenário, que só nasce
+            # dentro do `with` — por isso a planilha é escrita aqui.
+            contatos = [
+                contato("Ana", "19990000001", mensagem=""),
+                # Mensagem e arquivo próprios: fora do pacote, ordem padrão.
+                contato("Bruno", "19990000002", mensagem="Oi Bruno",
+                        Arquivo=self._arquivo("proprio.pdf")),
+            ]
+            amb.contatos = contatos
+            amb._escrever_planilha(contatos)
+            self._ligar_pacote(amb, "texto_primeiro")
+            eventos = self._gravar_eventos(amb)
+
+            amb.configurar(total_msgs=2, tempo_minutos=10)
+            amb.iniciar_envio()
+            amb.esperar_envio()
+
+            self.assertEqual(self._por_numero(eventos, "19990000001"), ["texto", "anexo"])
+            self.assertEqual(self._por_numero(eventos, "19990000002"), ["anexo", "texto"])
+            df = amb.planilha()
+            self.assertTrue((df["Enviado"] == "X").all())
+            self.assertTrue((df["Motivo"] == "").all())
+
+    def test_padrao_continua_anexo_primeiro(self):
+        with AmbienteE2E(contatos=[contato("Ana", "19990000001", mensagem="")],
+                         mensagem_global="Olá {nome}!") as amb:
+            r = amb.cliente.post("/global-attachment", json={
+                "arquivo": self._arquivo(), "ativo": True})
+            self.assertEqual(r.status_code, 200, r.text)
+            eventos = self._gravar_eventos(amb)
+
+            amb.configurar(total_msgs=1, tempo_minutos=10)
+            amb.iniciar_envio()
+            amb.esperar_envio()
+
+            self.assertEqual(self._por_numero(eventos, "19990000001"), ["anexo", "texto"])
+
+    def test_anexo_falha_depois_do_texto_fica_enviado_com_motivo(self):
+        """
+        O texto já chegou. Inválido aqui faria o ↺ mandar o texto de novo —
+        por isso `Enviado=X`, com o motivo dizendo que o anexo não foi.
+        """
+        with AmbienteE2E(contatos=[contato("Ana", "19990000001", mensagem="")],
+                         mensagem_global="Olá {nome}!") as amb:
+            self._ligar_pacote(amb, "texto_primeiro")
+            eventos = self._gravar_eventos(amb, anexo_falha=True)
+
+            amb.configurar(total_msgs=1, tempo_minutos=10)
+            amb.iniciar_envio()
+            amb.esperar_envio()
+
+            self.assertEqual(self._por_numero(eventos, "19990000001"), ["texto"])
+            linha = amb.linha("Ana")
+            self.assertEqual(linha["Enviado"], "X")
+            self.assertEqual(linha["Invalido"], "")
+            self.assertIn("só o texto chegou", linha["Motivo"].lower())
+            self.assertNotEqual(linha["DataEnvio"], "")
+
+            # E a tela recebe o motivo junto com o "enviado": sem ele, salvar
+            # os contatos apagaria o aviso da planilha.
+            tela = amb.contatos_da_tela()["contacts"][0]
+            self.assertTrue(tela["enviado"])
+            self.assertIn("anexo", tela["motivo"].lower())
+
+    def test_ordem_anexo_primeiro_com_falha_segue_invalido(self):
+        """A regra antiga não muda: anexo falhou antes do texto -> nada saiu."""
+        with AmbienteE2E(contatos=[contato("Ana", "19990000001", mensagem="")],
+                         mensagem_global="Olá {nome}!") as amb:
+            self._ligar_pacote(amb, "anexo_primeiro")
+            eventos = self._gravar_eventos(amb, anexo_falha=True)
+
+            amb.configurar(total_msgs=1, tempo_minutos=10)
+            amb.iniciar_envio()
+            amb.esperar_envio()
+
+            self.assertEqual(eventos, [])
+            linha = amb.linha("Ana")
+            self.assertEqual(linha["Enviado"], "")
+            self.assertEqual(linha["Invalido"], "X")
+
+    def test_ordem_e_gravada_e_um_post_sem_ela_nao_a_desfaz(self):
+        with AmbienteE2E(contatos=[]) as amb:
+            caminho = self._arquivo()
+            amb.cliente.post("/global-attachment", json={
+                "arquivo": caminho, "ativo": True, "ordem": "texto_primeiro"})
+            # Cliente antigo, que não conhece o campo:
+            amb.cliente.post("/global-attachment", json={
+                "arquivo": caminho, "ativo": False})
+
+            self.assertEqual(
+                amb.cliente.get("/global-attachment").json()["ordem"],
+                "texto_primeiro")
+
+    def test_ordem_desconhecida_e_recusada(self):
+        with AmbienteE2E(contatos=[]) as amb:
+            r = amb.cliente.post("/global-attachment", json={
+                "arquivo": "", "ativo": False, "ordem": "legenda"})
+            self.assertEqual(r.status_code, 400)
+            self.assertEqual(
+                amb.cliente.get("/global-attachment").json()["ordem"],
+                "anexo_primeiro")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

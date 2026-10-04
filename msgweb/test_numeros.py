@@ -660,7 +660,7 @@ class TestCotaDaRodada(unittest.TestCase):
             log_callback=lambda m: None,
         )
 
-        def fake_send(pessoa, numero, mensagem, arquivo=""):
+        def fake_send(pessoa, numero, mensagem, arquivo="", ordem=None):
             tentados.append(numero)
             resultado = por_numero[numero]
             if resultado == "timeout":

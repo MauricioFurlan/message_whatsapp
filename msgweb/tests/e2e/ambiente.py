@@ -205,6 +205,12 @@ class AmbienteE2E:
         st.sse_queues = []
         st.global_message = ""
         st.global_message_active = False
+        # O anexo global e a ordem do pacote moram no mesmo AppState global:
+        # sem zerar aqui, um cenário que liga "texto primeiro" o deixaria
+        # ligado para o próximo.
+        st.global_attachment = ""
+        st.global_attachment_active = False
+        st.global_order = self._app_mod.ORDEM_ANEXO_PRIMEIRO
         st.config = {
             "total_msgs": 10, "tempo_minutos": 60,
             "hora_inicio": "08:00", "hora_fim": "18:00",

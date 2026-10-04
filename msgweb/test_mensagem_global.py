@@ -252,7 +252,7 @@ class TestMensagemGlobalNoLoop(BaseSenderTest):
 
         sender = self.novo_sender(config=cfg, global_message=global_message)
 
-        def fake_send(pessoa, numero, mensagem, arquivo=""):
+        def fake_send(pessoa, numero, mensagem, arquivo="", ordem=None):
             # Reaproveita a mesma montagem usada no envio real
             texto, _ = WhatsAppSender._format_texto(pessoa, mensagem)
             enviados.append({"pessoa": pessoa, "numero": numero, "texto": texto})

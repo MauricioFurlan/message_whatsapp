@@ -58,7 +58,7 @@ thrown away, and would otherwise open every test session with an
 ## Tests
 
 ```bash
-rodar_testes.bat                    # everything: 567 tests, Python + Node, ~4.5min
+rodar_testes.bat                    # everything: 654 tests, Python + Node, ~5.5min
 rodar_testes.bat --rapido           # skips the 3 slow files: 421 tests, ~34s
 python rodar_testes.py --so e2e     # one group: e2e, unidade, lentos, node
 ```
@@ -558,7 +558,7 @@ right after the user closes it. Only attempts that actually reached the
 navigation phase count: a blank number or a duplicate says nothing about the
 network.
 
-`_generate_burst_plan` / `_particiona_rajadas` split a requested "N messages in M minutes" into irregular bursts with pauses between them. The plan is generated **after** deduplication, sized to real pending contacts rather than the requested count, and a message that fails validation does not consume a burst slot — `CHANGELOG.md` documents the historical bugs behind each of these invariants. The `pausado` sender state covers both business-hours waiting and inter-burst pauses; don't treat it as an error state when reading `/status`.
+`_generate_burst_plan` / `_particiona_rajadas` split a requested "N messages in M minutes" into irregular bursts with pauses between them. The plan fixes only the **shape**; the **scale** comes from a deadline: before each inter-burst pause, `_replanejar_pausa` redistributes the time left until `start + tempo_minutos` using the *measured* average cost per sent message (failures included), floored at half the planned pause (`PAUSA_PISO_FRACAO`, never under `DELAY_INTRA_MIN`) — the user chose overrunning the window over near-back-to-back bursts. Executing the planned pauses blindly is the bug this replaced (2026-10-03: a 60min window ran 74min or 45min depending on real chat-open speed) — `tests/e2e/test_e2e_ritmo.py` pins it. Business-hours waits push the deadline out rather than eating the pauses. The plan is generated **after** deduplication, sized to real pending contacts rather than the requested count, and a message that fails validation does not consume a burst slot — `CHANGELOG.md` documents the historical bugs behind each of these invariants. The `pausado` sender state covers both business-hours waiting and inter-burst pauses; don't treat it as an error state when reading `/status`.
 
 ### Nothing that feeds a running send may change mid-send
 
@@ -599,6 +599,24 @@ contact has one — the most expensive part of a send after opening the chat —
 an estimate reading the columns raw would promise a time the send cannot keep
 (the 2026-09-06 bug: predicted 45min for a 2h run).
 
+**The package's order is the user's choice, and the two orders fail
+differently.** `global_order` (`anexo_primeiro`, the default, or
+`texto_primeiro`) is stored with the attachment in `uploads/anexo_global.json`
+and applies **only to package contacts** (`usou_global`); a contact with their
+own message always gets attachment-first. Attachment-first keeps the old
+guarantee: an attachment failure delivers nothing, so the contact goes invalid
+and ↺ resends everything. Text-first cannot keep it, because once the text's
+ENTER lands the contact has already received something. From that point every
+outcome (attachment failure, Stop, a failed attachment bubble, a dead browser)
+raises `EnvioParcialError`, which the loop records as **`Enviado=X` with a
+`Motivo`** (the user's rule, 2026-09-29). Marking it invalid would make ↺
+send the text twice. Two consequences: unconfirmed text in text-first order
+never proceeds to the attachment (the text left in the field would become its
+caption), and `Enviado` with a non-empty `Motivo` now *means* "partial". So a
+full send clears `Motivo`, and the UI shows "Enviado ⚠" and keeps the motivo
+in the row's dataset. `_send_message` must re-raise `EnvioParcialError` before
+its generic `except Exception`, or the partial send turns into an invalid one.
+
 In the UI the attachment lives **inside** the Mensagem Global `<details>`, not in
 a section of its own, and its state derives from the message's
 (`aplicarEstadoMensagemGlobal` calls `aplicarEstadoAnexoGlobal`) so every path
@@ -616,7 +634,7 @@ should never have received it (reported in testing, 2026-09-23).
 `_clear_input_field` already existed but ran in **Passo 2**, after the attachment
 had been sent — it protected the typing, not the attachment. Nothing on the
 attachment path touched that field: `_type_caption_in_modal` is never called
-(`all_images` is a hardcoded `False`), so the modal is sent by
+(nothing in `_send_message` reaches it), so the modal is sent by
 `_finalizar_envio_de_anexo`, which clicks send without looking at the caption.
 
 `_exigir_campo_vazio_antes_do_anexo()` now runs before any attachment, and

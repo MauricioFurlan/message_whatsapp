@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 import requests as http_requests
 
-from whatsapp_sender import WhatsAppSender
+from whatsapp_sender import ORDEM_ANEXO_PRIMEIRO, ORDENS_DO_PACOTE, WhatsAppSender
 from contact_logic import get_pending_contacts
 import license as license_mod
 from license import validar_licenca, ativar_licenca, desativar_licenca, get_cached_key
@@ -139,6 +139,9 @@ class AppState:
     # `Arquivo` vazia. Ver `WhatsAppSender._resolver_globais`.
     global_attachment: str = ""
     global_attachment_active: bool = False
+    # Ordem do pacote quando ele tem texto E anexo. Mora junto do anexo (e é
+    # gravada com ele em `anexo_global.json`) porque só existe por causa dele.
+    global_order: str = ORDEM_ANEXO_PRIMEIRO
 
 
 state = AppState()
@@ -219,6 +222,7 @@ def _persistir_anexo_global() -> None:
             json.dumps({
                 "arquivo": state.global_attachment,
                 "ativo": state.global_attachment_active,
+                "ordem": state.global_order,
             }, ensure_ascii=False),
             encoding="utf-8",
         )
@@ -244,6 +248,12 @@ def _restaurar_anexo_global() -> None:
         return
     if not isinstance(salvo, dict):
         return
+
+    # A ordem vale mesmo sem arquivo: é uma escolha do usuário, e ele não
+    # deveria refazê-la toda vez que troca o anexo. Valor desconhecido (ou
+    # arquivo de uma versão anterior, sem a chave) volta ao padrão.
+    ordem = salvo.get("ordem")
+    state.global_order = ordem if ordem in ORDENS_DO_PACOTE else ORDEM_ANEXO_PRIMEIRO
 
     caminho = str(salvo.get("arquivo", "") or "").strip()
     ativo = bool(salvo.get("ativo", False))
@@ -893,6 +903,9 @@ class GlobalMessageModel(BaseModel):
 class GlobalAttachmentModel(BaseModel):
     arquivo: str = ""
     ativo: bool = False
+    # None = manter a ordem atual. Um cliente que não conhece o campo não pode
+    # desfazer calado a escolha do usuário.
+    ordem: Optional[str] = None
 
 
 @app.get("/global-message")
@@ -936,6 +949,7 @@ async def get_global_attachment():
         "nome": Path(caminho).name if caminho else "",
         "ativo": state.global_attachment_active,
         "existe": bool(caminho) and Path(caminho).is_file(),
+        "ordem": state.global_order,
     }
 
 
@@ -959,10 +973,25 @@ async def set_global_attachment(payload: GlobalAttachmentModel):
             status_code=400,
             detail=f"Arquivo do anexo global não encontrado: {caminho}",
         )
+    if payload.ordem is not None and payload.ordem not in ORDENS_DO_PACOTE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ordem do anexo global desconhecida: {payload.ordem}",
+        )
 
+    ordem_mudou = payload.ordem is not None and payload.ordem != state.global_order
     state.global_attachment = caminho
     state.global_attachment_active = bool(payload.ativo)
+    if payload.ordem is not None:
+        state.global_order = payload.ordem
     _persistir_anexo_global()
+
+    if ordem_mudou:
+        add_log(
+            "Ordem do pacote global: "
+            + ("texto primeiro, anexo depois" if state.global_order != ORDEM_ANEXO_PRIMEIRO
+               else "anexo primeiro, texto depois")
+        )
 
     if state.global_attachment_active and caminho:
         add_log(f"Anexo global ativado: {Path(caminho).name}")
@@ -1079,6 +1108,7 @@ async def start_sending():
     file_logger.info(
         f"  Anexo global: {Path(_anexo_global_ativo()).name if _anexo_global_ativo() else 'inativo'}"
     )
+    file_logger.info(f"  Ordem do pacote global: {state.global_order}")
 
     # Mesmas informações no log da tela: são as três perguntas que sempre
     # aparecem quando o cliente relata comportamento inesperado.
@@ -1116,6 +1146,7 @@ async def start_sending():
         contact_update_callback=broadcast_contact_update,
         global_message=state.global_message if state.global_message_active else "",
         global_attachment=_anexo_global_ativo(),
+        global_order=state.global_order,
     )
 
     # Seta estado como "iniciando" imediatamente para que o frontend saiba que está rodando

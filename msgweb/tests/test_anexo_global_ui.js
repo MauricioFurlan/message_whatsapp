@@ -58,11 +58,13 @@ const ids = [
     'global-anexo-toggle-label', 'global-anexo-nome', 'global-anexo-status',
     'btn-global-anexo-escolher', 'btn-global-anexo-remover',
     'estimativa-aviso', 'verificar-progresso',
+    'global-anexo-ordem',
 ];
 const elementos = {};
 ids.forEach(id => { elementos[id] = stubEl(); });
 elementos['cfg-total-msgs-input'].value = '50';
 elementos['cfg-tempo'].value = '60';
+elementos['global-anexo-ordem'].value = 'anexo_primeiro';
 
 // Duas linhas com a coluna Mensagem EM BRANCO — as duas entram no pacote
 // global —, mas uma tem arquivo próprio e a outra não. É essa diferença que o
@@ -265,8 +267,71 @@ function checar(titulo, obtido, esperado) {
     if (postAnexo) {
         checar('o POST do anexo preserva o caminho e só zera o ativo',
             JSON.parse(postAnexo.body),
-            { arquivo: 'C:/media/promo.jpg', ativo: false });
+            { arquivo: 'C:/media/promo.jpg', ativo: false, ordem: 'anexo_primeiro' });
     }
+
+    // --- a ordem do pacote (texto x anexo) ---------------------------------
+    // Só faz sentido com o anexo ligado; e mora dentro da trava do envio pelo
+    // mesmo motivo do resto do pacote: o sender lê isto a cada contato.
+    const { mudarOrdemAnexoGlobal, statusBadgeHtml, applyContactRowStatus,
+            lockSettingsEditing } = sandbox;
+    checar('anexo desligado: o seletor de ordem fica desabilitado',
+        elementos['global-anexo-ordem'].disabled, true);
+
+    elementos['global-msg-toggle'].checked = true;
+    elementos['global-anexo-toggle'].checked = true;
+    aplicarEstadoAnexoGlobal();
+    checar('anexo ligado: o seletor de ordem libera',
+        elementos['global-anexo-ordem'].disabled, false);
+
+    elementos['global-anexo-ordem'].value = 'texto_primeiro';
+    posts = [];
+    await mudarOrdemAnexoGlobal();
+    const postOrdem = posts.filter(p => p.url === '/global-attachment').pop();
+    checar('mudar a ordem grava no servidor',
+        postOrdem ? JSON.parse(postOrdem.body).ordem : null, 'texto_primeiro');
+
+    lockSettingsEditing(true);
+    checar('durante o envio o seletor de ordem trava',
+        elementos['global-anexo-ordem'].disabled, true);
+    lockSettingsEditing(false);
+    checar('fim do envio: o seletor de ordem destrava',
+        elementos['global-anexo-ordem'].disabled, false);
+
+    // Sem valor legível, a tela não inventa uma ordem: manda null e o
+    // servidor mantém a gravada.
+    elementos['global-anexo-ordem'].value = '';
+    posts = [];
+    await mudarOrdemAnexoGlobal();
+    const postSemOrdem = posts.filter(p => p.url === '/global-attachment').pop();
+    checar('seletor sem valor não sobrescreve a ordem gravada',
+        postSemOrdem ? JSON.parse(postSemOrdem.body).ordem : 'sem post', null);
+    elementos['global-anexo-ordem'].value = 'anexo_primeiro';
+
+    // --- envio parcial na tabela -------------------------------------------
+    // Texto chegou e anexo não: segue "Enviado" (o ↺ repetiria o texto), mas
+    // não pode parecer um envio completo.
+    const motivoParcial = 'Só o texto chegou: o preview não abriu';
+    const badgeParcial = statusBadgeHtml(true, false, motivoParcial);
+    checar('parcial: o selo diz Enviado com aviso',
+        badgeParcial.includes('Enviado ⚠'), true);
+    // O conteúdo passa por escapeHtml, que depende de innerHTML — que este
+    // DOM falso não tem. Aqui basta o tooltip existir.
+    checar('parcial: o selo tem tooltip',
+        badgeParcial.includes('title="'), true);
+    checar('envio completo: selo verde de sempre',
+        statusBadgeHtml(true, false, ''), '<span class="text-xs text-green-600">Enviado</span>');
+
+    // O motivo tem de ficar na linha: "Salvar" reescreve a planilha a partir
+    // dos datasets, e perdê-lo aqui apagaria o aviso do arquivo.
+    const linhaParcial = stubEl();
+    applyContactRowStatus(linhaParcial, 'enviado', '2026-09-30 10:00:00', motivoParcial);
+    checar('parcial: o motivo sobrevive no dataset da linha',
+        linhaParcial.dataset.motivo, motivoParcial);
+    const linhaCompleta = stubEl();
+    applyContactRowStatus(linhaCompleta, 'enviado', '2026-09-30 10:00:00', '');
+    checar('envio completo: motivo vazio no dataset',
+        linhaCompleta.dataset.motivo, '');
 
     console.log(falhas === 0 ? '\nTudo passou.' : `\n${falhas} falha(s).`);
     process.exit(falhas === 0 ? 0 : 1);

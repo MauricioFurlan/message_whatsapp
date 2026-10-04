@@ -140,19 +140,20 @@ class TestOrdem(unittest.TestCase):
     O bug era de ORDEM: limpar depois do anexo não serve para nada.
 
     Por isso a garantia é estrutural — a limpeza tem que vir antes do
-    `_send_media` dentro do `_send_message`.
+    `_send_media` dentro de `_enviar_anexos`, que é o único caminho pelo qual
+    `_send_message` manda anexo, nas duas ordens do pacote global.
     """
 
     def test_limpeza_vem_antes_do_envio_do_anexo(self):
         import inspect
 
-        fonte = inspect.getsource(WhatsAppSender._send_message)
+        fonte = inspect.getsource(WhatsAppSender._enviar_anexos)
         limpeza = fonte.find("_exigir_campo_vazio_antes_do_anexo")
         anexo = fonte.find("self._send_media(")
 
         self.assertNotEqual(limpeza, -1,
-                            "_send_message parou de limpar o campo antes do anexo")
-        self.assertNotEqual(anexo, -1, "a chamada de _send_media sumiu de _send_message")
+                            "_enviar_anexos parou de limpar o campo antes do anexo")
+        self.assertNotEqual(anexo, -1, "a chamada de _send_media sumiu de _enviar_anexos")
         self.assertLess(
             limpeza, anexo,
             "a limpeza voltou para depois do anexo — é exatamente o bug relatado")

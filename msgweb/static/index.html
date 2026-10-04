@@ -663,7 +663,15 @@
                                     <button onclick="removerAnexoGlobal()" id="btn-global-anexo-remover" title="Remover anexo"
                                         class="hidden text-gray-300 hover:text-red-500 transition-colors text-xs flex-shrink-0">&#10005;</button>
                                 </div>
-                                <p class="mt-1 text-xs text-gray-500">O arquivo vai primeiro, a mensagem depois. Deixando o texto em branco, s&oacute; o anexo &eacute; enviado. Contato com arquivo pr&oacute;prio na coluna Arquivo continua com o dele.</p>
+                                <div class="flex items-center gap-2 mt-1.5">
+                                    <label for="global-anexo-ordem" class="text-xs text-gray-700">Ordem:</label>
+                                    <select id="global-anexo-ordem" onchange="mudarOrdemAnexoGlobal()" disabled
+                                        class="border border-gray-300 rounded-md px-2 py-1 text-xs focus:border-green-500 focus:ring-1 focus:ring-green-500 focus:outline-none disabled:opacity-50 disabled:bg-gray-100">
+                                        <option value="anexo_primeiro">Arquivo primeiro, depois o texto</option>
+                                        <option value="texto_primeiro">Texto primeiro, depois o arquivo</option>
+                                    </select>
+                                </div>
+                                <p class="mt-1 text-xs text-gray-500">Deixando o texto em branco, s&oacute; o anexo &eacute; enviado. Contato com arquivo pr&oacute;prio na coluna Arquivo continua com o dele.</p>
                                 <p id="global-anexo-status" class="mt-1 text-xs text-gray-400"></p>
                             </div>
                         </div>
@@ -2092,6 +2100,13 @@
                 const catInfo = INVALID_CATEGORIES[categoria] || INVALID_CATEGORIES['Outros'];
                 return `<span class="text-xs ${catInfo.badgeColor} font-medium"${tip}>Inválido</span>`;
             }
+            // Enviado COM motivo = envio parcial: o texto chegou, o anexo nao
+            // (ordem "texto primeiro" do pacote global). Segue "Enviado" de
+            // proposito — o ↺ mandaria o texto de novo —, mas nao pode
+            // parecer um envio completo.
+            if (enviado && motivo) {
+                return `<span class="text-xs text-amber-600 font-medium" title="${escapeHtml(motivo)}" style="cursor:help;">Enviado ⚠</span>`;
+            }
             if (enviado) return '<span class="text-xs text-green-600">Enviado</span>';
             return '<span class="text-xs text-amber-600">Pendente</span>';
         }
@@ -2222,8 +2237,10 @@
                 tr.dataset.enviado = '1';
                 tr.dataset.invalido = '0';
                 tr.dataset.dataEnvio = dataEnvio || '';
-                tr.dataset.motivo = '';
-                tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(true, false);
+                // Vazio num envio completo; no parcial diz o que faltou, e tem
+                // de sobreviver aqui para "Salvar" nao apaga-lo da planilha.
+                tr.dataset.motivo = motivo || '';
+                tr.querySelector('.contact-status').innerHTML = statusBadgeHtml(true, false, motivo || '');
                 tr.querySelector('.contact-data').textContent = formatDataEnvio(dataEnvio);
                 applyRowColor(tr, false, '');
             } else if (status === 'invalido') {
@@ -3206,6 +3223,8 @@
             const label = document.getElementById('global-anexo-toggle-label');
             if (toggle) toggle.disabled = !msgAtiva || settingsLocked;
             if (btnEscolher) btnEscolher.disabled = !active || settingsLocked;
+            const ordem = document.getElementById('global-anexo-ordem');
+            if (ordem) ordem.disabled = !active || settingsLocked;
             if (label) {
                 label.textContent = active ? 'ON' : 'OFF';
                 label.className = active
@@ -3214,13 +3233,28 @@
             }
         }
 
+        // null = "nao sei": o servidor mantem a ordem gravada em vez de
+        // trocar a escolha do usuario por um valor que nao veio da tela.
+        function ordemAnexoGlobal() {
+            const el = document.getElementById('global-anexo-ordem');
+            return el && el.value ? el.value : null;
+        }
+
+        // Recusado pelo servidor, o seletor volta ao que esta gravado: a tela
+        // nao pode mostrar uma ordem que o envio nao vai usar.
+        async function mudarOrdemAnexoGlobal() {
+            aplicarEstadoAnexoGlobal();
+            const ok = await salvarAnexoGlobal(anexoGlobalPath, isGlobalAnexoActive());
+            if (!ok) loadGlobalAnexo();
+        }
+
         async function salvarAnexoGlobal(arquivo, ativo) {
             const statusEl = document.getElementById('global-anexo-status');
             try {
                 const resp = await fetch('/global-attachment', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ arquivo: arquivo, ativo: ativo }),
+                    body: JSON.stringify({ arquivo: arquivo, ativo: ativo, ordem: ordemAnexoGlobal() }),
                 });
                 const data = await resp.json();
                 if (!resp.ok) {
@@ -3322,6 +3356,7 @@
                 const data = await resp.json();
                 mostrarAnexoGlobal(data.arquivo, data.nome, data.existe);
                 document.getElementById('global-anexo-toggle').checked = !!data.ativo;
+                if (data.ordem) document.getElementById('global-anexo-ordem').value = data.ordem;
                 aplicarEstadoAnexoGlobal();
                 // O servidor e' a fonte da verdade aqui, e ele ja desliga o
                 // anexo sozinho quando o arquivo sumiu do disco. So avisamos.
@@ -3683,11 +3718,28 @@
             loadGlobalMessage();
             // Carrega anexo global (este vem do servidor, nao do localStorage)
             loadGlobalAnexo();
+            // Versão no tooltip do "!" do cabeçalho
+            loadAppVersion();
             // Verifica atualizações
             checkForUpdates();
             // Carrega o histórico persistente de envios (hoje/semana/mês)
             loadStats();
         });
+
+        // --- Versão ---
+        // Vem de /version (version.py, reescrito pelo build.bat), não de um
+        // texto fixo aqui: cada build nova aparece sem ninguém editar o HTML.
+        async function loadAppVersion() {
+            try {
+                const resp = await fetch('/version');
+                const data = await resp.json();
+                if (!data.version) return;
+                const el = document.getElementById('precautions-help');
+                el.title = `Versão ${data.version}\n\n` + el.title;
+            } catch (e) {
+                // Sem versão o tooltip continua só com os cuidados.
+            }
+        }
 
         // --- Atualização ---
         async function checkForUpdates() {

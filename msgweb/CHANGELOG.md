@@ -1,5 +1,90 @@
 # Changelog
 
+## 2026-10-03 (rajadas: o tempo configurado passa a ser cumprido)
+
+Relato do cliente: o envio em rajadas "não está fiel ao tempo estipulado".
+
+**Causa.** O plano de rajadas era sorteado uma vez, no início, em cima de uma
+*estimativa* do custo de cada envio (40s fixos para abrir a conversa, 18s por
+anexo, o orçamento de digitação), e as pausas eram executadas às cegas. O real
+nunca bate com essa estimativa (abrir a conversa variou de 31s a 58s nos
+logs), e cada falha de abertura custa ~3,7min sem gastar vaga da rajada. Todo
+o erro caía inteiro no total. Reproduzido no e2e com relógio virtual: uma janela
+de 60min terminava em **74min** com conversas lentas e em **45min** com
+conversas rápidas.
+
+**Correção.** O plano passa a definir só a *forma* (tamanho das rajadas e
+proporção entre as pausas); a *escala* vem do prazo (início + tempo
+configurado). Antes de cada pausa, `_replanejar_pausa` redistribui o que falta
+até o prazo, descontando as mensagens que faltam vezes o **custo médio real**
+medido até ali (falhas incluídas) e os delays curtos restantes. Se o envio
+atrasou, as pausas encolhem; se adiantou, crescem. Com isso as mesmas campanhas
+fecham em 60min ±5%.
+
+Três detalhes que vieram junto:
+
+- **Piso de segurança.** A pausa nunca fica abaixo de **metade da planejada**
+  (`PAUSA_PISO_FRACAO`), nem de `DELAY_INTRA_MIN` (15s). Decidido pelo usuário
+  em 04/10/2026: com o piso só em 15s, um envio muito atrasado virava rajadas
+  quase coladas, que é o padrão de bloqueio que as pausas existem para evitar;
+  passar do tempo configurado é o preço aceito. Quando o atraso não dá mais
+  para recuperar, o log avisa **uma vez**, com a projeção de quanto vai passar
+  do configurado. Antes isso acontecia em silêncio.
+- **A espera de horário comercial empurra o prazo.** Não é tempo de envio, e
+  sem isso uma noite de espera faria as pausas seguintes desabarem para o piso.
+- **A leitura de entregas na pausa agora conta dentro da pausa.** Antes, a
+  pausa recomeçava do zero depois dela.
+
+O fim do envio passa a mostrar o tempo configurado ao lado do real
+("em 1h 0min (tempo configurado: 60min)"). O detalhe de cada reajuste vai para
+o `log.txt` (`[ritmo] leva N: pausa planejada Xs -> reajustada Ys ...`).
+Teste: `tests/e2e/test_e2e_ritmo.py`.
+
+## 2026-09-30 (ordem do pacote global: texto ou anexo primeiro)
+
+Pedido: deixar o usuário escolher se o pacote global manda o **arquivo
+primeiro** (como sempre foi, e continua o padrão) ou o **texto primeiro**. O
+seletor mora dentro do bloco do anexo, na Mensagem Global, e é gravado com o
+anexo em `uploads/anexo_global.json` (chave `ordem`). Vale **só para o pacote
+global**: contato com mensagem própria segue a ordem padrão — decidido pelo
+usuário em 29/09/2026.
+
+Trocar dois blocos de lugar parecia bastar, e não bastava. A ordem padrão
+tinha uma propriedade da qual o resto dependia: **falha no anexo não entrega
+nada**. O contato vira inválido e o ↺ reenvia tudo sem duplicar. Com o texto
+primeiro, uma falha no anexo acontece com o texto **já entregue**, e o mesmo
+tratamento faria o ↺ mandar o texto de novo.
+
+**Regra decidida pelo usuário (29/09/2026, opção A):** texto chegou e anexo
+não → `Enviado=X`, com o `Motivo` dizendo o que faltou. Perde-se o anexo
+daquele contato, mas o texto nunca é duplicado. Na tabela a linha aparece como
+**"Enviado ⚠"**, com o motivo no tooltip. Vale para todo desfecho depois do
+texto (`EnvioParcialError`): o anexo falhou, Parar entre os passos ou durante o
+anexo, a bolha do anexo nasceu com erro, e navegador fechado (nesse caso o
+envio também é abortado, como antes).
+
+Três cuidados que vieram junto:
+
+- **Texto não confirmado não segue para o anexo.** Na ordem padrão, "não deu
+  para confirmar" é o último passo e o envio segue adiante. Aqui o texto que
+  ficou no campo viraria **legenda** do anexo, ou seria apagado pela limpeza
+  de 23/09 e só a imagem sairia, gravada como envio completo. Então o anexo
+  não é enviado e a linha fica parcial, pedindo conferência.
+- **A detecção de bolha falhada passou a cobrir o anexo** quando ele é o
+  último passo. Até aqui ela só olhava o ENTER do texto.
+- **Um POST sem `ordem` mantém a ordem gravada** (o campo é opcional), e um
+  valor desconhecido é recusado com 400. No arquivo, ausente ou desconhecido
+  volta ao padrão, que é a ordem em que falha de anexo não entrega nada.
+
+Envio completo agora **zera o `Motivo`** da linha (antes ficava o que
+estivesse lá). Isso é necessário porque `Enviado` com `Motivo` passou a
+significar "parcial".
+
+`_send_message` foi dividido em `_enviar_anexos`, `_enviar_texto` e
+`_pausa_entre_passos`, para as duas ordens usarem os mesmos passos. Os testes
+estruturais (limpeza antes do anexo, conferência antes do ENTER) passaram a
+olhar para esses métodos.
+
 ## 2026-09-23 (o anexo global virou parte da mensagem global)
 
 Revisão da regra logo depois de implementar a versão anterior. O anexo global
