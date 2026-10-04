@@ -675,8 +675,10 @@ The frontend has no client-side polling loop for logs/status — `GET /events` (
 
 ### The log is a bottom panel, and hiding it must not hide a blocker
 
-`#log-panel` spans the full width under everything (DevTools-style "dock to
-bottom"); the sidebar version was removed on purpose. Height (drag
+`#log-panel` sits under the contacts table, as wide as it (DevTools-style "dock
+to bottom"), while the sidebar runs the full height beside both; the sidebar
+version was removed on purpose, and the full-width one (2026-10-04) took height
+from the Start/Stop controls. Height (drag
 `#log-resizer`, clamped 80px–70% of the window) and open/hidden live in
 `localStorage` under `log_painel`. Two rules, pinned by `tests/test_painel_log_ui.js`:
 
@@ -688,6 +690,14 @@ bottom"); the sidebar version was removed on purpose. Height (drag
   🚫 and "Escaneie o QR Code"). Those block the send until the user acts, so a
   hidden panel would stall it silently. Lines replayed by `restoreLogsFromServer`
   are history, not news — they neither count nor reopen.
+
+The backend still writes emojis (`log.txt` and "Baixar log" keep them), but on
+screen `addLogEntry` drops the leading emoji and draws each line as
+time | text marker (`✓ ▲ ✕ … ! ▸ ·`) | text, coloured by level (`logNivel`).
+Classification reads the **original** line, which is how `linhaPedeAcao` still
+sees the 🚫 that the screen no longer shows. Only the *leading* emoji is
+stripped: one mid-line may be the contact's own text. Default is neutral grey,
+not green — green means success and nothing else.
 
 `#control-status` (under the Start button) is button feedback only, not a log.
 It must not claim "scan the QR Code" (the backend logs that, and only with a QR

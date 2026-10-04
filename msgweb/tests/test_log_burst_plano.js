@@ -16,6 +16,17 @@ const html = fs.readFileSync(path.join(raiz, 'static', 'index.html'), 'utf8');
 const src = html.split('<script>')[1].split('</script>')[0];
 const css = html.split('<style>')[1].split('</style>')[0];
 
+// Elemento mínimo: a linha do log agora é montada com <span>s filhos
+// (horário | marcador | texto), e textContent junta os filhos como no DOM.
+function novoElemento(extra) {
+    return Object.assign({
+        className: '', title: '', children: [], _texto: '',
+        appendChild(c) { this.children.push(c); return c; },
+        get textContent() { return this._texto + this.children.map(c => c.textContent).join(''); },
+        set textContent(v) { this._texto = String(v); this.children = []; },
+    }, extra || {});
+}
+
 function stubEl() {
     return {
         value: '', innerHTML: '', textContent: '', title: '', placeholder: '',
@@ -46,7 +57,7 @@ const sandbox = {
     document: {
         getElementById: (id) => (id === 'log-area' ? logArea : stubEl()),
         addEventListener() {},
-        createElement: () => ({ className: '', title: '', textContent: '' }),
+        createElement: () => novoElemento(),
         querySelectorAll: () => [],
         activeElement: null,
     },

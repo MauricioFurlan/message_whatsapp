@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-10-04 (log mais limpo, embaixo só da planilha)
+
+**Sem emojis na tela.** O log usava 15 emojis diferentes, desenhados pelo
+Windows, e toda linha comum saía verde, a cor do sucesso. Agora cada linha tem
+horário numa coluna própria, um marcador de texto (`✓ ▲ ✕ … ! ▸ ·`) e a cor do
+nível. Linhas comuns ficam em cinza neutro. O backend continua escrevendo os
+emojis, então o `log.txt` e o "Baixar log" não mudaram. A classificação lê a
+linha original (o 🚫 ainda reabre o painel oculto) e só o emoji do começo sai da
+tela, porque um emoji no meio da linha pode ser do texto do contato. O pedido de
+QR Code agora aparece como faixa de ação, como a 🚫. Antes ele saía verde.
+
+**Log só embaixo da planilha.** Na largura toda, o painel tirava altura da barra
+lateral, onde ficam o status e os botões Iniciar/Parar. Agora ele ocupa só a
+coluna da planilha, e a lateral vai até o fim da tela.
+
+**Recolher Configuração e Mensagem Global ao iniciar voltou**
+(`recolherAjustesAoIniciar`, com o teste `tests/test_recolher_ajustes_ui.js`).
+Ela tinha saído na entrada abaixo, porque só servia para abrir espaço ao log na
+lateral. Voltou a pedido do usuário por outro motivo: abertas, essas seções
+empurram o status e o botão Parar para fora da tela. Continua recolhendo só
+quando o `/start` dá certo. Um início recusado deixa as seções abertas, porque é
+nelas que o usuário corrige o motivo.
+
 ## 2026-10-04 (log embaixo da tela; aviso de tempo que não some)
 
 **Log.** Relato: "o log da aplicação está ruim de acompanhar". Ele era o último
